@@ -1031,9 +1031,9 @@ function renderLayer(surface, entry) {
 function createLayerElement(surface, layer, entry) {
   switch (layer.type) {
     case "video":
-      return createVideoLayerElement(layer);
+      return createVideoLayerElement(layer, surface);
     case "image":
-      return createImageLayerElement(layer);
+      return createImageLayerElement(layer, surface);
     case "beat":
       return createBeatLayerElement(surface, layer, entry);
     case "pattern":
@@ -1052,14 +1052,46 @@ function teardownLayerContent(entry) {
   }
   entry.beatToken = null; // any in-flight rAF callback checks this and bails
   if (entry.contentEl) {
-    if (entry.contentEl.tagName === "VIDEO") {
-      registeredVideoEls.delete(entry.contentEl);
-      entry.contentEl.pause();
-      entry.contentEl.removeAttribute("src");
-      entry.contentEl.load();
+    // Media layers are a .layer-box wrapper with the <video>/<img> inside
+    // (so a failure note can overlay them) - release any video found.
+    const video =
+      entry.contentEl.tagName === "VIDEO"
+        ? entry.contentEl
+        : entry.contentEl.querySelector && entry.contentEl.querySelector("video");
+    if (video) {
+      registeredVideoEls.delete(video);
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
     }
     entry.contentEl = null;
   }
+}
+
+// Wraps a media element in a box with an overlay note that appears when the
+// media has no source or fails to load. Black-on-black failures are
+// undebuggable mid-calibration at a projector - failures must be VISIBLE on
+// the output itself.
+function wrapMediaWithFailureNote(mediaEl, surface, layer, kindLabel) {
+  const box = document.createElement("div");
+  box.className = "layer-box";
+
+  const note = document.createElement("div");
+  note.className = "layer-note";
+  note.hidden = true;
+
+  if (!layer.src) {
+    note.textContent = `${surface.name}\nno ${kindLabel} source set`;
+    note.hidden = false;
+  } else {
+    mediaEl.addEventListener("error", () => {
+      note.textContent = `${surface.name}\n${kindLabel} failed to load:\n${layer.src}`;
+      note.hidden = false;
+    });
+  }
+
+  box.append(mediaEl, note);
+  return box;
 }
 
 // =========================================================================
@@ -1104,7 +1136,7 @@ function applyTransportAction(action) {
 // LAYER ELEMENT FACTORIES (video / image / beat)
 // =========================================================================
 
-function createVideoLayerElement(layer) {
+function createVideoLayerElement(layer, surface) {
   const video = document.createElement("video");
   video.className = "layer-video";
   video.src = layer.src || "";
@@ -1116,10 +1148,10 @@ function createVideoLayerElement(layer) {
   // A surface switched to 'video' (or added) while transport is already
   // playing should join the shared clock rather than sit on its first frame.
   if (transportPlaying) playVideoQuietly(video);
-  return video;
+  return wrapMediaWithFailureNote(video, surface, layer, "video");
 }
 
-function createImageLayerElement(layer) {
+function createImageLayerElement(layer, surface) {
   const src = layer.src || "";
   if (/\.webm$/i.test(src)) {
     // Alpha WebM stretch goal (VP9 transparency) - Chrome-only, autoplays
@@ -1132,13 +1164,13 @@ function createImageLayerElement(layer) {
     video.playsInline = true;
     video.autoplay = true;
     playVideoQuietly(video);
-    return video;
+    return wrapMediaWithFailureNote(video, surface, layer, "video");
   }
   const img = document.createElement("img");
   img.className = "layer-image";
   img.src = src;
   img.alt = "";
-  return img;
+  return wrapMediaWithFailureNote(img, surface, layer, "image");
 }
 
 function createBeatLayerElement(surface, layer, entry) {

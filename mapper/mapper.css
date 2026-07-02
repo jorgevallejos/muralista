@@ -417,6 +417,33 @@ body.role-output {
   object-fit: fill;
 }
 
+/* Media layer box: fills the warped wrapper; holds the <video>/<img> plus
+   an overlay note that appears when the media is missing or fails to load
+   (black-on-black failures are invisible at a projector). */
+.layer-box {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.layer-note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: pre-line;
+  padding: 60px;
+  background: rgba(120, 40, 20, 0.35);
+  border: 6px dashed rgba(248, 113, 113, 0.8);
+  color: #fca5a5;
+  font-size: 52px;
+  font-weight: 700;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
 .output-identify {
   position: absolute;
   top: 0;

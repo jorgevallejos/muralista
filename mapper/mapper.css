@@ -306,6 +306,8 @@ button.danger:hover {
   fill: rgba(94, 234, 212, 0.06);
   stroke: #565d70;
   stroke-width: 2;
+  cursor: move;
+  touch-action: none; /* stop the browser hijacking whole-surface drags as scroll/zoom */
 }
 
 .preview-surface-outline.selected {
@@ -331,16 +333,33 @@ button.danger:hover {
 
 .corner-handle {
   cursor: grab;
-  touch-action: none; /* stop the browser hijacking drags as scroll/zoom */
+}
+
+.corner-handle:active {
+  cursor: grabbing;
 }
 
 .corner-handle circle {
+  touch-action: none; /* stop the browser hijacking drags as scroll/zoom */
+}
+
+/* Invisible larger hit circle behind the visible dot (r=18 vs the visible
+   r=10) - widens what counts as "on the handle" for hurried, imprecise
+   projector-session use. pointer-events:all is required: a transparent fill
+   wouldn't otherwise be hit-tested (SVG's default is visiblePainted, which
+   only counts painted areas). */
+.corner-handle-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.corner-handle circle:not(.corner-handle-hit) {
   fill: rgba(17, 19, 24, 0.85);
   stroke: var(--accent);
   stroke-width: 2;
 }
 
-.corner-handle.active circle {
+.corner-handle.active circle:not(.corner-handle-hit) {
   fill: var(--accent);
 }
 

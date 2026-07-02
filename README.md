@@ -13,10 +13,10 @@ Open `http://localhost:8123/mapper.html` — that's the control window. Click "O
 
 ## Calibrating
 
-1. **Add a surface** in the sidebar, then **select** it.
-2. **Drag** its corner handles in the preview to roughly match the physical surface's shape/position.
+1. **Add a surface** in the sidebar, or **click a surface's polygon** directly in the preview to select it (the topmost polygon wins where surfaces overlap).
+2. **Drag** to place it: from a polygon's interior, drag to move the whole surface at once (coarse placement); drag a corner handle to reshape just that corner. Both work as a single click-and-drag gesture, even on a surface that wasn't selected yet.
 3. Switch its layer to **pattern** (the calibration grid) so you have something visible to align on the wall.
-4. Press **1–4** to pick which corner is active (matches the numbered markers baked into the pattern), then use the **arrow keys** to nudge it in real output pixels while watching the projected result — Shift = 1px fine nudge, unshifted = 5px. This works even while focus is in the control window, so you don't have to click back into the preview between nudges.
+4. For precision, use the **arrow keys** to nudge in real output pixels while watching the projected result — Shift = 1px fine nudge, unshifted = 5px. This works even while focus is in the control window, so you don't have to click back into the preview between nudges. **Keys 1–4** pick which corner is active (matches the numbered markers baked into the pattern) so arrows nudge just that corner; **0 or Escape** clears the active corner back to whole-surface mode, so arrows move the entire surface instead. A freshly selected surface starts in whole-surface mode.
 5. Use **Identify** to flash each surface's name/ID on the output when you lose track of which physical surface is which.
 
 ## Layers

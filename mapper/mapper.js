@@ -75,8 +75,13 @@ let project = emptyProject();
 let selectedSurfaceId = null;
 
 // Which of the selected surface's 4 corners (0=TL,1=TR,2=BR,3=BL) arrow-key
-// nudges apply to. Selected via the 1-4 keys. Control-local, never persisted.
-let activeCornerIndex = 0;
+// nudges apply to. Selected via the 1-4 keys. `null` means "whole surface"
+// mode (0 or Escape clears back to this): arrow keys translate all 4
+// corners together instead of nudging a single one. Control-local, never
+// persisted. Defaults to null on every fresh selection so a click-select
+// can be followed straight by arrow-key coarse placement, no extra keypress
+// needed - corner precision is opt-in via 1-4.
+let activeCornerIndex = null;
 
 // Latest output-window size in real screen pixels, learned from the
 // 'outputSize' broadcast (see WARP/SYNC below) so arrow-key nudges can be
@@ -84,11 +89,46 @@ let activeCornerIndex = 0;
 // common projector resolution until an output window has reported in.
 let outputSize = { w: 1920, h: 1080 };
 
+// Corners are normalized 0-1 output-space, but we allow slight overshoot
+// beyond the frame since projector framing sometimes needs a surface's
+// corner to sit just off-screen. Shared by single-corner clamping
+// (clampCoord) and whole-surface translate clamping (clampTranslateDelta)
+// so both use the same overshoot range.
+const CORNER_OVERSHOOT_MIN = -0.2;
+const CORNER_OVERSHOOT_MAX = 1.2;
+
 function clampCoord(v) {
-  // Corners are normalized 0-1 output-space, but we allow slight overshoot
-  // beyond the frame since projector framing sometimes needs a surface's
-  // corner to sit just off-screen.
-  return Math.max(-0.2, Math.min(1.2, v));
+  return Math.max(CORNER_OVERSHOOT_MIN, Math.min(CORNER_OVERSHOOT_MAX, v));
+}
+
+// Clamps a proposed [dx, dy] translation so that applying it to EVERY corner
+// in `corners` keeps every corner's coordinate inside the overshoot range,
+// clamping each axis as a whole rather than per-corner - a per-corner clamp
+// would distort the quad (e.g. one corner stops while the others keep
+// moving); this instead finds the tightest corner on each axis and freezes
+// the whole surface's motion on that axis at the point that corner would
+// cross the bound, leaving the other axis free to keep moving.
+function clampTranslateDelta(corners, [dx, dy]) {
+  let dxMin = -Infinity, dxMax = Infinity, dyMin = -Infinity, dyMax = Infinity;
+  corners.forEach(([x, y]) => {
+    dxMin = Math.max(dxMin, CORNER_OVERSHOOT_MIN - x);
+    dxMax = Math.min(dxMax, CORNER_OVERSHOOT_MAX - x);
+    dyMin = Math.max(dyMin, CORNER_OVERSHOOT_MIN - y);
+    dyMax = Math.min(dyMax, CORNER_OVERSHOOT_MAX - y);
+  });
+  return [Math.min(Math.max(dx, dxMin), dxMax), Math.min(Math.max(dy, dyMin), dyMax)];
+}
+
+// Shared pointer -> normalized output-space conversion for the preview SVG.
+// preview-svg's viewBox (1600x900) matches its rendered aspect ratio exactly
+// (.preview-box is 16/9), so no letterboxing - a fraction of the element's
+// own bounding box is already the normalized 0-1 coord. Unclamped: callers
+// decide whether/how to clamp (a single corner clamps itself directly; a
+// whole-surface drag clamps the aggregate delta instead - see
+// clampTranslateDelta).
+function svgPointerToNormalized(evt, svg) {
+  const rect = svg.getBoundingClientRect();
+  return [(evt.clientX - rect.left) / rect.width, (evt.clientY - rect.top) / rect.height];
 }
 
 function getSelectedSurface() {
@@ -103,7 +143,7 @@ function addSurface() {
   const surface = defaultSurface(project.surfaces.length + 1);
   project.surfaces.push(surface);
   selectedSurfaceId = surface.id;
-  activeCornerIndex = 0;
+  activeCornerIndex = null;
   commitProjectChange();
 }
 
@@ -188,14 +228,14 @@ function loadBackdropPhotoFile(file) {
 
 function selectSurface(id) {
   selectedSurfaceId = id;
-  activeCornerIndex = 0;
+  activeCornerIndex = null;
   renderControl(); // selection is local UI state, no save/broadcast needed
 }
 
 function replaceProject(newProject) {
   project = newProject;
   selectedSurfaceId = null;
-  activeCornerIndex = 0;
+  activeCornerIndex = null;
   commitProjectChange();
 }
 
@@ -505,6 +545,11 @@ function renderPreview() {
       poly.setAttribute("points", points);
       poly.setAttribute("class", "preview-surface-outline");
       if (surface.id === selectedSurfaceId) poly.classList.add("selected");
+      // Click-to-select + whole-surface drag in one gesture. Polygons are
+      // appended in list order, so paint order already makes a later surface
+      // sit on top of an earlier one - the browser's own hit-testing picks
+      // the topmost polygon under the pointer with no extra bookkeeping.
+      poly.addEventListener("pointerdown", (e) => startSurfaceDrag(e, svg, surface));
       svg.appendChild(poly);
 
       // Cheap authoring aid: badge the surface with its layer type near its
@@ -554,10 +599,25 @@ function renderCornerHandles(svg, surface) {
     const group = document.createElementNS(SVG_NS, "g");
     group.setAttribute("class", "corner-handle" + (i === activeCornerIndex ? " active" : ""));
 
+    // Larger invisible hit target behind the visible dot. Projector-session
+    // use is hurried and imprecise - pointer events bubble from either
+    // circle up to the group's single listener below, so this just widens
+    // what counts as "on the handle" without changing the drag logic.
+    // pointer-events:all (set in CSS) is required because the fill is
+    // transparent: SVG's default hit-testing (visiblePainted) only counts
+    // painted areas, so an unpainted circle would otherwise be a click-
+    // through hole even though it's present in the DOM.
+    const hitTarget = document.createElementNS(SVG_NS, "circle");
+    hitTarget.setAttribute("cx", cx);
+    hitTarget.setAttribute("cy", cy);
+    hitTarget.setAttribute("r", 18);
+    hitTarget.setAttribute("class", "corner-handle-hit");
+    group.appendChild(hitTarget);
+
     const circle = document.createElementNS(SVG_NS, "circle");
     circle.setAttribute("cx", cx);
     circle.setAttribute("cy", cy);
-    circle.setAttribute("r", 12);
+    circle.setAttribute("r", 10);
     group.appendChild(circle);
 
     const label = document.createElementNS(SVG_NS, "text");
@@ -582,18 +642,13 @@ function startCornerDrag(e, svg, surface, cornerIndex) {
   activeCornerIndex = cornerIndex;
 
   const handle = e.currentTarget;
-  handle.setPointerCapture(e.pointerId);
+  capturePointerSafely(handle, e.pointerId);
 
   const THROTTLE_MS = 80;
   let lastCommitAt = 0;
 
   function pointerToNormalized(evt) {
-    // preview-svg's viewBox (1600x900) matches its rendered aspect ratio
-    // exactly (.preview-box is 16/9), so no letterboxing - a fraction of
-    // the element's own bounding box is already the normalized 0-1 coord.
-    const rect = svg.getBoundingClientRect();
-    const nx = (evt.clientX - rect.left) / rect.width;
-    const ny = (evt.clientY - rect.top) / rect.height;
+    const [nx, ny] = svgPointerToNormalized(evt, svg);
     return [clampCoord(nx), clampCoord(ny)];
   }
 
@@ -609,7 +664,7 @@ function startCornerDrag(e, svg, surface, cornerIndex) {
   }
 
   function onUp() {
-    handle.releasePointerCapture(e.pointerId);
+    releasePointerSafely(handle, e.pointerId);
     handle.removeEventListener("pointermove", onMove);
     handle.removeEventListener("pointerup", onUp);
     handle.removeEventListener("pointercancel", onUp);
@@ -619,6 +674,84 @@ function startCornerDrag(e, svg, surface, cornerIndex) {
   handle.addEventListener("pointermove", onMove);
   handle.addEventListener("pointerup", onUp);
   handle.addEventListener("pointercancel", onUp);
+}
+
+// setPointerCapture/releasePointerCapture require a genuinely "active"
+// pointer (per spec) and throw an InvalidPointerId DOMException otherwise -
+// which happens for untrusted/synthetic pointerdown events (e.g. the smoke-
+// test harness) and, per some browsers, in rarer real-world edge cases too.
+// Capture is an optimization (keeps the drag alive if the cursor leaves the
+// element mid-gesture) - a failure to acquire/release it must never abort
+// the gesture itself (selection, dragging, and the final commit all still
+// need to happen via the plain addEventListener fallback).
+function capturePointerSafely(el, pointerId) {
+  try {
+    el.setPointerCapture(pointerId);
+  } catch (err) {
+    console.warn("Wall Mapper: setPointerCapture failed, continuing without capture.", err);
+  }
+}
+
+function releasePointerSafely(el, pointerId) {
+  try {
+    el.releasePointerCapture(pointerId);
+  } catch (err) {
+    // Already released/never captured - nothing to do.
+  }
+}
+
+// Drag a whole surface (pointerdown inside its polygon, not on a corner
+// handle): translate all 4 corners by the same delta, so the quad keeps its
+// shape. Also handles click-to-select - if the surface wasn't already
+// selected, selecting it and starting the drag happen in this one gesture
+// (matches sidebar-click selection: updates selectedSurfaceId, resets to
+// whole-surface nudge mode, re-renders sidebar/preview/layer panel). Same
+// "render fast, commit throttled, final commit on release" pattern as
+// startCornerDrag.
+function startSurfaceDrag(e, svg, surface) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  const target = e.currentTarget;
+  capturePointerSafely(target, e.pointerId);
+
+  if (selectedSurfaceId !== surface.id) {
+    selectedSurfaceId = surface.id;
+    activeCornerIndex = null;
+    renderControl(); // full re-render (sidebar highlight, layer panel, handles)
+  }
+
+  const originalCorners = surface.corners.map(([x, y]) => [x, y]);
+  const start = svgPointerToNormalized(e, svg);
+
+  const THROTTLE_MS = 80;
+  let lastCommitAt = 0;
+
+  function onMove(evt) {
+    const p = svgPointerToNormalized(evt, svg);
+    const rawDelta = [p[0] - start[0], p[1] - start[1]];
+    const [dx, dy] = clampTranslateDelta(originalCorners, rawDelta);
+    surface.corners = originalCorners.map(([x, y]) => [x + dx, y + dy]);
+    renderPreview(); // local-only, fast
+    const now = Date.now();
+    if (now - lastCommitAt >= THROTTLE_MS) {
+      lastCommitAt = now;
+      saveProject(project);
+      broadcastState();
+    }
+  }
+
+  function onUp() {
+    releasePointerSafely(target, e.pointerId);
+    target.removeEventListener("pointermove", onMove);
+    target.removeEventListener("pointerup", onUp);
+    target.removeEventListener("pointercancel", onUp);
+    commitProjectChange(); // final save+broadcast+render, guarantees no drift
+  }
+
+  target.addEventListener("pointermove", onMove);
+  target.addEventListener("pointerup", onUp);
+  target.addEventListener("pointercancel", onUp);
 }
 
 // =========================================================================
@@ -795,10 +928,13 @@ function updateLayerPanelValues(container, layer) {
 // =========================================================================
 // CALIBRATION (arrow-key nudge)
 // =========================================================================
-// The critical live-calibration UX: select a surface, press 1-4 to pick a
-// corner, then arrow-key nudge it in real output pixels while watching the
-// projected result. Nudges are discrete (no throttle needed) and route
-// through the normal commitProjectChange() choke point.
+// The critical live-calibration UX: select a surface, then arrow-key nudge
+// it in real output pixels while watching the projected result. With no
+// active corner (the default on selection, or after 0/Escape), arrows move
+// the WHOLE surface - fast coarse placement. Press 1-4 to pick a single
+// corner for fine precision nudging instead. Nudges are discrete (no
+// throttle needed) and route through the normal commitProjectChange() choke
+// point.
 
 function isTextInputFocused() {
   const el = document.activeElement;
@@ -825,6 +961,19 @@ function nudgeActiveCorner(dxPx, dyPx) {
   commitProjectChange();
 }
 
+// Whole-surface counterpart to nudgeActiveCorner: translates all 4 corners
+// by the same output-pixel delta, using the same axis-wise clamp as
+// pointer-drag translation (clampTranslateDelta) so an arrow nudge can't
+// distort the quad at the overshoot boundary either.
+function nudgeWholeSurface(dxPx, dyPx) {
+  const surface = getSelectedSurface();
+  if (!surface) return;
+  const rawDelta = [dxPx / outputSize.w, dyPx / outputSize.h];
+  const [dx, dy] = clampTranslateDelta(surface.corners, rawDelta);
+  surface.corners = surface.corners.map(([x, y]) => [x + dx, y + dy]);
+  commitProjectChange();
+}
+
 function handleControlKeydown(e) {
   if (isTextInputFocused()) return;
   if (!selectedSurfaceId) return;
@@ -835,11 +984,21 @@ function handleControlKeydown(e) {
     return;
   }
 
+  if (e.key === "0" || e.key === "Escape") {
+    activeCornerIndex = null; // back to whole-surface nudge mode
+    renderPreview();
+    return;
+  }
+
   const delta = NUDGE_ARROW_DELTAS[e.key];
   if (delta) {
     e.preventDefault(); // don't let arrows scroll the page
     const step = e.shiftKey ? 1 : 5; // output px; shift = fine
-    nudgeActiveCorner(delta[0] * step, delta[1] * step);
+    if (activeCornerIndex == null) {
+      nudgeWholeSurface(delta[0] * step, delta[1] * step);
+    } else {
+      nudgeActiveCorner(delta[0] * step, delta[1] * step);
+    }
   }
 }
 

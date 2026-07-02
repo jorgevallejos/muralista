@@ -1,0 +1,70 @@
+# Wall Mapper v1
+
+A browser-based projection-mapping spike for Chango Pepper concerts: corner-pin Jorge's animations onto multiple physical surfaces (wall + boxes) with one projector, calibrated live without a camera. Plain HTML/JS/CSS, no framework or build step, Chrome only. The single page (`mapper/mapper.html`) serves two roles — a **control** window (performer UI: surface list, calibration, layers, transport) and an **output** window (`?output`, the projector image) — kept in sync over `BroadcastChannel`.
+
+## Running it
+
+```
+cd mapper/
+python3 -m http.server 8123
+```
+
+Open `http://localhost:8123/mapper.html` — that's the control window. Click "Open output window", drag the new window onto the projector's display, and press `F` (or double-click) to fullscreen it.
+
+## Calibrating
+
+1. **Add a surface** in the sidebar, or **click a surface's polygon** directly in the preview to select it (the topmost polygon wins where surfaces overlap).
+2. **Drag** to place it: from a polygon's interior, drag to move the whole surface at once (coarse placement); drag a corner handle to reshape just that corner. Both work as a single click-and-drag gesture, even on a surface that wasn't selected yet.
+3. Switch its layer to **pattern** (the calibration grid) so you have something visible to align on the wall.
+4. For precision, use the **arrow keys** to nudge in real output pixels while watching the projected result — Shift = 1px fine nudge, unshifted = 5px. This works even while focus is in the control window, so you don't have to click back into the preview between nudges. **Keys 1–4** pick which corner is active (matches the numbered markers baked into the pattern) so arrows nudge just that corner; **0 or Escape** clears the active corner back to whole-surface mode, so arrows move the entire surface instead. A freshly selected surface starts in whole-surface mode.
+5. Use **Identify** to flash each surface's name/ID on the output when you lose track of which physical surface is which.
+
+## Layers
+
+Each surface has one of four layer types:
+
+- **pattern** — the calibration grid (numbered corners, surface name). Good default while aligning.
+- **video** — plays a file from `mapper/media/`; `cerdo.mp4` (the Tragedia de Cerdo Asado master) is already there. Reference video/image files as `media/<name>` in the layer's source field. All video layers share one global transport (Play/Pause/Restart).
+- **image** — a still image, or an alpha WebM for transparency (Chrome-only feature). Transparent PNG is the slot for AI-generated plasticine-style assets. **A `.webm` source is a transport-synced overlay, not a static picture**: it joins the same Play/Pause/Restart transport as `video` layers (registered, autoplay off, joins mid-playback if transport is already running) instead of looping on its own — so an AI-generated animation designed against the show timeline starts on the same downbeat as everything else. It's badged "▶ overlay" in the preview (rather than "🖼 image") to make that distinction visible at a glance.
+- **beat** — a canvas layer that pulses at a given BPM, phase-locked across surfaces to a shared downbeat — or, in **Mic mode**, pulses with the room's sound instead (see Sound reactivity below).
+
+Video/image files must be dropped into `mapper/media/` by hand first — the file picker in the layer panel only fills in the `media/<name>` path, it doesn't copy anything.
+
+### Stacking order (z-order)
+
+The surface list's order **is** the render order **is** the stacking order, in both the preview and the output — a surface further down the list paints on top of the ones above it. Each surface row has **▲ / ▼** buttons to move it up/down the list (and so back/forward in the stack). Moving a surface only changes the stacking order — corners, layer, and visibility are untouched.
+
+### Duplicate (registering an overlay onto a video surface)
+
+Each surface row also has a **⧉ duplicate** button: it creates a copy with identical corners and an identical layer, named `<original> copy`, dropped in immediately after the original (so it renders on top of it) and selected. This is the one-gesture way to put an alpha-WebM overlay in **exact registration** with an existing video surface — duplicate the video surface, then switch the copy's layer source to the overlay `.webm`. No manual corner-matching required.
+
+## Sound reactivity
+
+Layers can react to the room's sound live — no AI at runtime, just a microphone and control logic:
+
+1. **Enable the mic** in the control sidebar (Mic section, below Backdrop). Chrome asks for microphone permission once for localhost — allow it. The level meter starts moving with the room; the dot next to it flashes on each detected onset (a transient clearly louder than the running room average). If the mic can't be opened (e.g. permission denied), the reason shows inline in the section.
+2. **Beat layer, Mic mode** — a beat layer's panel now has a Mode selector: **BPM** (the existing clock-locked pulse, the default) or **Mic (sound-reactive)**. In Mic mode the pulse follows the room instead of a clock: a core glow breathes with the loudness, and each onset fires an expanding ring. Same per-surface hue as BPM mode. Switching modes (like editing BPM) never restarts the canvas.
+3. **Mic reactivity on media layers** — video and image layers have a **Mic reactivity** slider (0–1, default 0 = off). Above 0, the room's loudness fades the layer in on the output: effective opacity = `opacity × (1 − reactivity + reactivity × level)`. At 1, the layer is invisible in silence and fully visible when the room is loud — point it at an alpha-WebM/PNG character and the character "appears when the room gets going".
+
+How it works: audio analysis runs **in the control window** (mic capture + Web Audio analyser, ~30 Hz), which streams a compact level/onset envelope to the output over the same `BroadcastChannel` the rest of the app uses — the mic stays with the performer's machine, and the output never touches it. The audio signal is ephemeral: never persisted, not part of the project JSON. If the control window closes or the mic is disabled, output layers decay to their silent state within a second rather than freezing on the last value.
+
+Capture deliberately disables Chrome's voice processing (`echoCancellation`, `noiseSuppression`, `autoGainControl` all off): the point is the real room signal — music dynamics included — not a cleaned-up voice call.
+
+## Desk smoke test (no projector)
+
+One end-to-end pass that exercises sync, warp, calibration, and video — worth running before any projector session:
+
+1. Start the server, open the control window, click **Open output window**. Keep the output windowed next to the control window (no need for a second display).
+2. **Add a surface.** It should appear in both windows at once — a quad in the control preview, a colored grid pattern with numbered corners in the output. *(Proves the BroadcastChannel sync.)*
+3. **Drag the corner handles** into a trapezoid — narrow top, wide bottom. In the output, the grid must **keystone**: grid lines converge toward the narrow edge, like looking at a floor. If it merely stretches/skews linearly, the warp is broken. *(Proves the homography.)*
+4. Press **2** (top-right corner goes active), then tap the **arrow keys** — that corner alone should creep in the output. Hold **Shift** for visibly finer steps. *(Proves the calibration UX.)*
+5. Set the surface's layer to **video**, source `media/test.mp4` (or `media/cerdo.mp4`), press **Play** in the header. While it plays, nudge a corner — the video must **keep playing without restarting or flickering**. *(Proves live calibration during playback.)*
+6. **Export** the JSON, reload the control page, **Import** it back — same surfaces, same corners, video still configured. *(Proves a venue mapping survives.)*
+
+Pass = all six behave as described. Then repeat step 3–5 thinking of the output window as the wall: that's exactly the M1/M2 projector flow.
+
+## Notes
+
+- Mappings autosave to `localStorage` as you edit, and can be exported/imported as a JSON file — export one per venue so a calibration can be reloaded on the next visit.
+- `python3 -m http.server` doesn't support HTTP Range requests, so scrubbing/seeking on the `cerdo.mp4` layer may feel sluggish. If that's a problem, `npx http-server` is a drop-in, Range-aware alternative.
+- Chrome is the target browser (alpha WebM transparency and the autoplay behavior this relies on are Chrome-specific).

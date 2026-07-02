@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wall Mapper</title>
+  <link rel="stylesheet" href="mapper.css">
+</head>
+<body>
+
+  <!-- ============ CONTROL ROLE (plain URL) ============ -->
+  <div id="control-root" class="control-root" hidden>
+    <header class="header-bar">
+      <h1>Wall Mapper</h1>
+      <div class="header-actions">
+        <div class="transport-group">
+          <button id="btn-play" type="button" title="Play all video/beat layers">&#9654; Play</button>
+          <button id="btn-pause" type="button" title="Pause all video layers">&#9208; Pause</button>
+          <button id="btn-restart" type="button" title="Restart all video/beat layers from the top">&#8635; Restart</button>
+        </div>
+        <button id="btn-open-output" type="button">Open output window</button>
+        <button id="btn-identify" type="button">Identify</button>
+        <button id="btn-export" type="button">Export</button>
+        <button id="btn-import" type="button">Import</button>
+        <input type="file" id="file-import" accept="application/json" hidden>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h2>Surfaces</h2>
+          <button id="btn-add-surface" type="button">+ Add surface</button>
+        </div>
+        <ul id="surface-list" class="surface-list"></ul>
+
+        <div class="sidebar-section">
+          <div class="sidebar-header">
+            <h2>Layer</h2>
+          </div>
+          <div id="layer-panel" class="layer-panel"></div>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-header">
+            <h2>Backdrop</h2>
+          </div>
+          <div class="backdrop-controls">
+            <button id="btn-backdrop" type="button">Choose photo&hellip;</button>
+            <button id="btn-backdrop-clear" type="button">Clear</button>
+            <input type="file" id="file-backdrop" accept="image/*" hidden>
+          </div>
+          <p class="layer-hint">Authoring aid only (planning canvas) &mdash; shown at reduced opacity under the surface outlines, never sent to the output.</p>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-header">
+            <h2>Mic</h2>
+          </div>
+          <div class="mic-controls">
+            <button id="btn-mic-toggle" type="button">Enable mic</button>
+            <span id="mic-status" class="mic-status"></span>
+          </div>
+          <div class="mic-meter-row">
+            <div class="mic-meter"><div id="mic-meter-fill" class="mic-meter-fill"></div></div>
+            <div id="mic-onset-dot" class="mic-onset-dot" title="Flashes on each detected onset"></div>
+          </div>
+          <p class="layer-hint">Analyzes the room's sound in this window and streams a compact level/onset signal to the output &mdash; the mic itself never leaves this machine.</p>
+        </div>
+      </aside>
+
+      <main class="preview-area">
+        <div class="preview-box">
+          <img id="preview-backdrop" class="preview-backdrop" alt="" hidden>
+          <svg id="preview-svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ============ OUTPUT ROLE (?output) ============ -->
+  <div id="output-root" class="output-root" hidden>
+    <!-- Per-surface matrix3d-warped wrapper divs land here (see WARP / OUTPUT
+         RENDERING in mapper.js). Replaces the slice-1 SVG placeholder. -->
+    <div id="output-surfaces" class="output-surfaces"></div>
+    <!-- Identify overlay: unwarped screen-space labels at each surface's
+         centroid, shown briefly in response to a broadcast 'identify'. -->
+    <div id="output-identify" class="output-identify"></div>
+  </div>
+
+  <script src="mapper.js"></script>
+</body>
+</html>

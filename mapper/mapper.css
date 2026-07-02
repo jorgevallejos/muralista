@@ -1,0 +1,550 @@
+/* Wall Mapper — dark theme (used in a dark venue) */
+
+:root {
+  --bg: #111318;
+  --bg-raised: #191c23;
+  --bg-row: #1f232c;
+  --bg-row-hover: #262b36;
+  --border: #2c3140;
+  --text: #e6e8ee;
+  --text-dim: #8a90a3;
+  --accent: #5eead4;
+  --danger: #f87171;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The hidden attribute must always win. Without this, any rule that sets
+   display (e.g. .control-root's display:flex) silently overrides the UA's
+   [hidden] { display:none } — which is exactly how the output window ended
+   up showing the control skeleton on top of (well, instead of) the output. */
+[hidden] {
+  display: none !important;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+}
+
+button {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-row);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--bg-row-hover);
+}
+
+button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+button:disabled:hover {
+  background: var(--bg-row);
+}
+
+button.icon-btn {
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+button.danger:hover {
+  background: var(--danger);
+  color: #1a1a1a;
+  border-color: var(--danger);
+}
+
+/* ===== Control root ===== */
+
+.control-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.header-bar h1 {
+  font-size: 16px;
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.transport-group {
+  display: flex;
+  gap: 6px;
+  padding-right: 10px;
+  margin-right: 4px;
+  border-right: 1px solid var(--border);
+}
+
+.main-layout {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* ===== Sidebar ===== */
+
+.sidebar {
+  width: 280px;
+  flex: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+}
+
+.sidebar-header h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.surface-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.surface-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-row);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.surface-row:hover {
+  background: var(--bg-row-hover);
+}
+
+.surface-row.selected {
+  border-color: var(--accent);
+  background: rgba(94, 234, 212, 0.08);
+}
+
+.surface-row .surface-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surface-row.hidden-surface .surface-name {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+.surface-row .surface-actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.surface-list-empty {
+  padding: 16px 10px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* ===== Sidebar: layer panel + backdrop (slice 3) ===== */
+
+.sidebar-section {
+  border-top: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.layer-panel {
+  padding: 0 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.layer-panel-empty {
+  padding: 0 16px 14px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.layer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.layer-field label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.layer-field input[type="text"],
+.layer-field input[type="number"],
+.layer-field select {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-row);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.layer-field input[type="range"] {
+  width: 100%;
+}
+
+.layer-opacity-value {
+  font-size: 12px;
+  color: var(--text-dim);
+  align-self: flex-end;
+}
+
+.layer-hint {
+  margin: 0 16px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.layer-field .layer-hint {
+  margin: 0;
+}
+
+.backdrop-controls {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+
+/* ===== Sidebar: mic (v2.3) ===== */
+
+.mic-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+
+.mic-status {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--danger);
+}
+
+.mic-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+
+.mic-meter {
+  flex: 1;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--bg-row);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.mic-meter-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  /* No transition: the meter is driven every analysis tick (~30Hz) and
+     should track the room in real time, not ease toward stale targets. */
+}
+
+.mic-onset-dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg-row);
+  border: 1px solid var(--border);
+}
+
+.mic-onset-dot.flash {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ===== Preview area ===== */
+
+.preview-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  min-width: 0;
+}
+
+.preview-box {
+  position: relative;
+  width: 100%;
+  max-width: 1100px;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.preview-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+#preview-svg {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.preview-surface-outline {
+  fill: rgba(94, 234, 212, 0.06);
+  stroke: #565d70;
+  stroke-width: 2;
+  cursor: move;
+  touch-action: none; /* stop the browser hijacking whole-surface drags as scroll/zoom */
+}
+
+.preview-surface-outline.selected {
+  stroke: var(--accent);
+  stroke-width: 4;
+  fill: rgba(94, 234, 212, 0.14);
+}
+
+.preview-layer-badge {
+  fill: #fff;
+  font-size: 20px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.65);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+/* ===== Corner handles (calibration drag) ===== */
+
+.corner-handle {
+  cursor: grab;
+}
+
+.corner-handle:active {
+  cursor: grabbing;
+}
+
+.corner-handle circle {
+  touch-action: none; /* stop the browser hijacking drags as scroll/zoom */
+}
+
+/* Invisible larger hit circle behind the visible dot (r=18 vs the visible
+   r=10) - widens what counts as "on the handle" for hurried, imprecise
+   projector-session use. pointer-events:all is required: a transparent fill
+   wouldn't otherwise be hit-tested (SVG's default is visiblePainted, which
+   only counts painted areas). */
+.corner-handle-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.corner-handle circle:not(.corner-handle-hit) {
+  fill: rgba(17, 19, 24, 0.85);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.corner-handle.active circle:not(.corner-handle-hit) {
+  fill: var(--accent);
+}
+
+.corner-handle text {
+  fill: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
+
+.corner-handle.active text {
+  fill: #0a0a0a;
+}
+
+/* ===== Output root ===== */
+
+body.role-output {
+  background: #000;
+  cursor: none;
+  overflow: hidden;
+}
+
+.output-root {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  background: #000;
+  cursor: none;
+  overflow: hidden;
+}
+
+.output-surfaces {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Per-surface wrapper: fixed 1000x1000 "unit square" content box, warped
+   onto the surface's corners via an inline matrix3d (see mapper.js WARP).
+   transform-origin 0 0 + top:0/left:0 makes the wrapper's own (0,0)-(1000,1000)
+   local pixel space the homography's source domain. */
+.surface-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.pattern-canvas,
+.beat-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.layer-video,
+.layer-image-webm {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  background: #000;
+}
+
+.layer-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+/* Media layer box: fills the warped wrapper; holds the <video>/<img> plus
+   an overlay note that appears when the media is missing or fails to load
+   (black-on-black failures are invisible at a projector). */
+.layer-box {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.layer-note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: pre-line;
+  padding: 60px;
+  background: rgba(120, 40, 20, 0.35);
+  border: 6px dashed rgba(248, 113, 113, 0.8);
+  color: #fca5a5;
+  font-size: 52px;
+  font-weight: 700;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.output-identify {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.identify-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 8px 14px;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  white-space: pre-line;
+}

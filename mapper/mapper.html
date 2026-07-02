@@ -14,6 +14,7 @@
       <h1>Wall Mapper</h1>
       <div class="header-actions">
         <button id="btn-open-output" type="button">Open output window</button>
+        <button id="btn-identify" type="button">Identify</button>
         <button id="btn-export" type="button">Export</button>
         <button id="btn-import" type="button">Import</button>
         <input type="file" id="file-import" accept="application/json" hidden>
@@ -39,7 +40,12 @@
 
   <!-- ============ OUTPUT ROLE (?output) ============ -->
   <div id="output-root" class="output-root" hidden>
-    <svg id="output-svg"></svg>
+    <!-- Per-surface matrix3d-warped wrapper divs land here (see WARP / OUTPUT
+         RENDERING in mapper.js). Replaces the slice-1 SVG placeholder. -->
+    <div id="output-surfaces" class="output-surfaces"></div>
+    <!-- Identify overlay: unwarped screen-space labels at each surface's
+         centroid, shown briefly in response to a broadcast 'identify'. -->
+    <div id="output-identify" class="output-identify"></div>
   </div>
 
   <script src="mapper.js"></script>

@@ -211,6 +211,37 @@ button.danger:hover {
   fill: rgba(94, 234, 212, 0.14);
 }
 
+/* ===== Corner handles (calibration drag) ===== */
+
+.corner-handle {
+  cursor: grab;
+  touch-action: none; /* stop the browser hijacking drags as scroll/zoom */
+}
+
+.corner-handle circle {
+  fill: rgba(17, 19, 24, 0.85);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.corner-handle.active circle {
+  fill: var(--accent);
+}
+
+.corner-handle text {
+  fill: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
+
+.corner-handle.active text {
+  fill: #0a0a0a;
+}
+
 /* ===== Output root ===== */
 
 body.role-output {
@@ -220,6 +251,7 @@ body.role-output {
 }
 
 .output-root {
+  position: relative;
   height: 100%;
   width: 100%;
   background: #000;
@@ -227,20 +259,51 @@ body.role-output {
   overflow: hidden;
 }
 
-#output-svg {
+.output-surfaces {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Per-surface wrapper: fixed 1000x1000 "unit square" content box, warped
+   onto the surface's corners via an inline matrix3d (see mapper.js WARP).
+   transform-origin 0 0 + top:0/left:0 makes the wrapper's own (0,0)-(1000,1000)
+   local pixel space the homography's source domain. */
+.surface-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.pattern-canvas {
   display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.output-surface-outline {
-  fill: none;
-  stroke: #3a3a3a;
-  stroke-width: 2;
+.output-identify {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
-.output-surface-label {
-  fill: #555;
-  font-size: 16px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  text-anchor: middle;
-  dominant-baseline: middle;
+.identify-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 8px 14px;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  white-space: pre-line;
 }

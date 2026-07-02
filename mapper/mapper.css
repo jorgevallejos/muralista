@@ -83,7 +83,16 @@ button.danger:hover {
 
 .header-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.transport-group {
+  display: flex;
+  gap: 6px;
+  padding-right: 10px;
+  margin-right: 4px;
+  border-right: 1px solid var(--border);
 }
 
 .main-layout {
@@ -172,6 +181,79 @@ button.danger:hover {
   font-size: 13px;
 }
 
+/* ===== Sidebar: layer panel + backdrop (slice 3) ===== */
+
+.sidebar-section {
+  border-top: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.layer-panel {
+  padding: 0 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.layer-panel-empty {
+  padding: 0 16px 14px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.layer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.layer-field label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.layer-field input[type="text"],
+.layer-field input[type="number"],
+.layer-field select {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-row);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.layer-field input[type="range"] {
+  width: 100%;
+}
+
+.layer-opacity-value {
+  font-size: 12px;
+  color: var(--text-dim);
+  align-self: flex-end;
+}
+
+.layer-hint {
+  margin: 0 16px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.layer-field .layer-hint {
+  margin: 0;
+}
+
+.backdrop-controls {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+
 /* ===== Preview area ===== */
 
 .preview-area {
@@ -184,6 +266,7 @@ button.danger:hover {
 }
 
 .preview-box {
+  position: relative;
   width: 100%;
   max-width: 1100px;
   aspect-ratio: 16 / 9;
@@ -193,7 +276,19 @@ button.danger:hover {
   overflow: hidden;
 }
 
+.preview-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 #preview-svg {
+  position: relative;
   width: 100%;
   height: 100%;
   display: block;
@@ -209,6 +304,19 @@ button.danger:hover {
   stroke: var(--accent);
   stroke-width: 4;
   fill: rgba(94, 234, 212, 0.14);
+}
+
+.preview-layer-badge {
+  fill: #fff;
+  font-size: 20px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.65);
+  stroke-width: 4px;
+  stroke-linejoin: round;
 }
 
 /* ===== Corner handles (calibration drag) ===== */
@@ -278,10 +386,27 @@ body.role-output {
   transform-origin: 0 0;
 }
 
-.pattern-canvas {
+.pattern-canvas,
+.beat-canvas {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.layer-video,
+.layer-image-webm {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  background: #000;
+}
+
+.layer-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
 }
 
 .output-identify {

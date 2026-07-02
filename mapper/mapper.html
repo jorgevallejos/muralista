@@ -13,6 +13,11 @@
     <header class="header-bar">
       <h1>Wall Mapper</h1>
       <div class="header-actions">
+        <div class="transport-group">
+          <button id="btn-play" type="button" title="Play all video/beat layers">&#9654; Play</button>
+          <button id="btn-pause" type="button" title="Pause all video layers">&#9208; Pause</button>
+          <button id="btn-restart" type="button" title="Restart all video/beat layers from the top">&#8635; Restart</button>
+        </div>
         <button id="btn-open-output" type="button">Open output window</button>
         <button id="btn-identify" type="button">Identify</button>
         <button id="btn-export" type="button">Export</button>
@@ -28,10 +33,30 @@
           <button id="btn-add-surface" type="button">+ Add surface</button>
         </div>
         <ul id="surface-list" class="surface-list"></ul>
+
+        <div class="sidebar-section">
+          <div class="sidebar-header">
+            <h2>Layer</h2>
+          </div>
+          <div id="layer-panel" class="layer-panel"></div>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-header">
+            <h2>Backdrop</h2>
+          </div>
+          <div class="backdrop-controls">
+            <button id="btn-backdrop" type="button">Choose photo&hellip;</button>
+            <button id="btn-backdrop-clear" type="button">Clear</button>
+            <input type="file" id="file-backdrop" accept="image/*" hidden>
+          </div>
+          <p class="layer-hint">Authoring aid only (planning canvas) &mdash; shown at reduced opacity under the surface outlines, never sent to the output.</p>
+        </div>
       </aside>
 
       <main class="preview-area">
         <div class="preview-box">
+          <img id="preview-backdrop" class="preview-backdrop" alt="" hidden>
           <svg id="preview-svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid meet"></svg>
         </div>
       </main>

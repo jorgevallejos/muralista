@@ -129,6 +129,63 @@ function toggleSurfaceVisible(id) {
   commitProjectChange();
 }
 
+// --- Layer mutators (slice 3). All route through commitProjectChange() like
+// every other control-side mutation. ---
+
+function setLayerType(id, type) {
+  const surface = project.surfaces.find((s) => s.id === id);
+  if (!surface) return;
+  surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1, bpm: 96 };
+  surface.layer.type = type;
+  commitProjectChange();
+}
+
+function setLayerField(id, field, value) {
+  const surface = project.surfaces.find((s) => s.id === id);
+  if (!surface || !surface.layer) return;
+  surface.layer[field] = value;
+  commitProjectChange();
+}
+
+// --- Photo backdrop mutators (slice 3). Authoring aid only - output never
+// sees project.photo (renderOutput/renderLayer never read it). ---
+
+function setBackdropPhoto(dataUrl) {
+  project.photo = dataUrl;
+  commitProjectChange();
+}
+
+function clearBackdropPhoto() {
+  project.photo = null;
+  commitProjectChange();
+}
+
+// Phone photos can be huge; downscale to a max width via an offscreen canvas
+// before storing as a dataURL so autosave stays well under localStorage's
+// ~5-10MB budget.
+const BACKDROP_MAX_WIDTH = 1600;
+
+function loadBackdropPhotoFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, BACKDROP_MAX_WIDTH / img.width);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      setBackdropPhoto(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => window.alert("Could not read that image.");
+    img.src = reader.result;
+  };
+  reader.onerror = () => window.alert("Could not read that file.");
+  reader.readAsDataURL(file);
+}
+
 function selectSurface(id) {
   selectedSurfaceId = id;
   activeCornerIndex = 0;
@@ -168,6 +225,28 @@ function broadcastTransport(action) {
   channel.postMessage({ kind: "transport", action, nonce: Date.now() });
 }
 
+// Control -> output: the downbeat timestamp all beat layers phase-lock to,
+// so multiple beat surfaces pulse in sync. Re-anchored on every Play/Restart
+// (see handleTransportButton) and replied to any output's 'hello' so a
+// window opened mid-set still lands on the current phase.
+let controlBeatAnchorT0 = null;
+
+function broadcastBeatAnchor() {
+  if (controlBeatAnchorT0 == null) return;
+  channel.postMessage({ kind: "beatAnchor", t0: controlBeatAnchorT0, nonce: Date.now() });
+}
+
+// Wired to the header Play/Pause/Restart buttons. Play and Restart both
+// re-anchor the beat phase to "now" (that moment becomes the new downbeat)
+// before broadcasting the transport action itself.
+function handleTransportButton(action) {
+  if (action === "play" || action === "restart") {
+    controlBeatAnchorT0 = Date.now();
+    broadcastBeatAnchor();
+  }
+  broadcastTransport(action);
+}
+
 // Control -> output: flash each visible surface's name/id on the output
 // window for a couple seconds so Jorge can tell which physical surface is
 // which while standing at the wall. Always carries a changing nonce (project
@@ -191,6 +270,7 @@ function handleControlMessage(event) {
   if (msg.kind === "hello") {
     // A fresh output window just opened and wants the current state.
     broadcastState();
+    broadcastBeatAnchor(); // no-op if no anchor set yet (nothing has played)
   } else if (msg.kind === "outputSize" && typeof msg.w === "number" && typeof msg.h === "number") {
     outputSize = { w: msg.w, h: msg.h };
   }
@@ -204,8 +284,11 @@ function handleOutputMessage(event) {
     renderOutput();
   } else if (msg.kind === "identify") {
     showIdentifyOverlay();
+  } else if (msg.kind === "transport" && typeof msg.action === "string") {
+    applyTransportAction(msg.action);
+  } else if (msg.kind === "beatAnchor" && typeof msg.t0 === "number") {
+    beatAnchorT0 = msg.t0;
   }
-  // 'transport' messages have no consumer yet in this slice.
 }
 
 // =========================================================================
@@ -318,6 +401,8 @@ function surfaceMatrix3d(surface, w, h) {
 function renderControl() {
   renderSurfaceList();
   renderPreview();
+  renderBackdrop();
+  renderLayerPanel();
 }
 
 function renderSurfaceList() {
@@ -402,12 +487,43 @@ function renderPreview() {
       poly.setAttribute("class", "preview-surface-outline");
       if (surface.id === selectedSurfaceId) poly.classList.add("selected");
       svg.appendChild(poly);
+
+      // Cheap authoring aid: badge the surface with its layer type near its
+      // centroid, rather than actually rendering media in the preview
+      // (explicitly out of scope for v1 - not worth it).
+      const layerType = surface.layer && surface.layer.type;
+      if (layerType === "video" || layerType === "image") {
+        const [cx, cy] = surfaceCentroidNormalized(surface);
+        const badge = document.createElementNS(SVG_NS, "text");
+        badge.setAttribute("x", cx * PREVIEW_W);
+        badge.setAttribute("y", cy * PREVIEW_H);
+        badge.setAttribute("class", "preview-layer-badge");
+        badge.textContent = layerType === "video" ? "▶ video" : "\u{1F5BC} image";
+        svg.appendChild(badge);
+      }
     });
 
   // Draggable corner handles for the selected surface only. Non-selected
   // surfaces stay plain outlines (drawn above).
   const selected = getSelectedSurface();
   if (selected) renderCornerHandles(svg, selected);
+}
+
+function surfaceCentroidNormalized(surface) {
+  const xs = surface.corners.map((c) => c[0]);
+  const ys = surface.corners.map((c) => c[1]);
+  return [xs.reduce((a, b) => a + b, 0) / xs.length, ys.reduce((a, b) => a + b, 0) / ys.length];
+}
+
+function renderBackdrop() {
+  const img = document.getElementById("preview-backdrop");
+  if (project.photo) {
+    img.src = project.photo;
+    img.hidden = false;
+  } else {
+    img.hidden = true;
+    img.removeAttribute("src");
+  }
 }
 
 function renderCornerHandles(svg, surface) {
@@ -484,6 +600,175 @@ function startCornerDrag(e, svg, surface, cornerIndex) {
   handle.addEventListener("pointermove", onMove);
   handle.addEventListener("pointerup", onUp);
   handle.addEventListener("pointercancel", onUp);
+}
+
+// =========================================================================
+// LAYER PANEL (sidebar, selected surface's layer)
+// =========================================================================
+// Rebuilds the panel's DOM only when its "key" (surface id + layer type)
+// changes - typing in the src field or dragging the opacity slider fires
+// commitProjectChange() on every keystroke/input, which would otherwise
+// recreate the input mid-edit and lose focus/cursor position. Same-key
+// re-renders instead just refresh field values, skipping whichever field
+// currently has focus.
+
+let layerPanelKey = null;
+
+function renderLayerPanel() {
+  const container = document.getElementById("layer-panel");
+  const surface = getSelectedSurface();
+
+  if (!surface) {
+    layerPanelKey = null;
+    container.innerHTML = '<p class="layer-panel-empty">Select a surface to edit its layer.</p>';
+    return;
+  }
+
+  surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1, bpm: 96 };
+  const layer = surface.layer;
+  const key = `${surface.id}:${layer.type}`;
+
+  if (key !== layerPanelKey) {
+    layerPanelKey = key;
+    buildLayerPanel(container, surface, layer);
+  } else {
+    updateLayerPanelValues(container, layer);
+  }
+}
+
+function buildLayerPanel(container, surface, layer) {
+  container.innerHTML = "";
+
+  // Type selector.
+  const typeRow = document.createElement("div");
+  typeRow.className = "layer-field";
+  const typeLabel = document.createElement("label");
+  typeLabel.textContent = "Type";
+  typeLabel.setAttribute("for", "layer-type-select");
+  const typeSelect = document.createElement("select");
+  typeSelect.id = "layer-type-select";
+  ["pattern", "video", "image", "beat"].forEach((t) => {
+    const opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = t;
+    typeSelect.appendChild(opt);
+  });
+  typeSelect.value = layer.type;
+  typeSelect.addEventListener("change", () => setLayerType(surface.id, typeSelect.value));
+  typeRow.append(typeLabel, typeSelect);
+  container.appendChild(typeRow);
+
+  // Video / image: src path field + file-pick convenience.
+  if (layer.type === "video" || layer.type === "image") {
+    const srcRow = document.createElement("div");
+    srcRow.className = "layer-field";
+    const srcLabel = document.createElement("label");
+    srcLabel.textContent = "Source (relative to mapper/media/)";
+    srcLabel.setAttribute("for", "layer-src-input");
+    const srcInput = document.createElement("input");
+    srcInput.type = "text";
+    srcInput.id = "layer-src-input";
+    srcInput.placeholder = layer.type === "video" ? "media/cerdo.mp4" : "media/character.png";
+    srcInput.value = layer.src || "";
+    // 'change' (blur/Enter), not 'input': the reconciling output render
+    // recreates the video/image element whenever layer.src changes, so
+    // committing on every keystroke would churn through a fetch for every
+    // partial path typed (e.g. "media/cer...") instead of just the final one.
+    srcInput.addEventListener("change", () => setLayerField(surface.id, "src", srcInput.value));
+    srcRow.append(srcLabel, srcInput);
+    container.appendChild(srcRow);
+
+    const fileRow = document.createElement("div");
+    fileRow.className = "layer-field";
+    const fileBtn = document.createElement("button");
+    fileBtn.type = "button";
+    fileBtn.textContent = "Pick file…";
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.hidden = true;
+    fileInput.accept = layer.type === "video" ? "video/*" : "image/*,.webm";
+    fileBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (file) {
+        const relPath = `media/${file.name}`;
+        srcInput.value = relPath;
+        setLayerField(surface.id, "src", relPath);
+      }
+      fileInput.value = "";
+    });
+    const hint = document.createElement("p");
+    hint.className = "layer-hint";
+    hint.textContent = "Picking a file only fills in the path above - the file itself must already be copied into mapper/media/.";
+    fileRow.append(fileBtn, fileInput, hint);
+    container.appendChild(fileRow);
+  }
+
+  // Beat: BPM field.
+  if (layer.type === "beat") {
+    const bpmRow = document.createElement("div");
+    bpmRow.className = "layer-field";
+    const bpmLabel = document.createElement("label");
+    bpmLabel.textContent = "BPM";
+    bpmLabel.setAttribute("for", "layer-bpm-input");
+    const bpmInput = document.createElement("input");
+    bpmInput.type = "number";
+    bpmInput.id = "layer-bpm-input";
+    bpmInput.min = "20";
+    bpmInput.max = "300";
+    bpmInput.value = String(layer.bpm ?? 96);
+    bpmInput.addEventListener("input", () => {
+      const n = Number(bpmInput.value);
+      if (Number.isFinite(n) && n > 0) setLayerField(surface.id, "bpm", n);
+    });
+    bpmRow.append(bpmLabel, bpmInput);
+    container.appendChild(bpmRow);
+  }
+
+  // Opacity (all layer types).
+  const opacityRow = document.createElement("div");
+  opacityRow.className = "layer-field";
+  const opacityLabel = document.createElement("label");
+  opacityLabel.textContent = "Opacity";
+  opacityLabel.setAttribute("for", "layer-opacity-input");
+  const opacityInput = document.createElement("input");
+  opacityInput.type = "range";
+  opacityInput.id = "layer-opacity-input";
+  opacityInput.min = "0";
+  opacityInput.max = "1";
+  opacityInput.step = "0.01";
+  opacityInput.value = String(layer.opacity ?? 1);
+  const opacityValue = document.createElement("span");
+  opacityValue.id = "layer-opacity-value";
+  opacityValue.className = "layer-opacity-value";
+  opacityValue.textContent = Number(layer.opacity ?? 1).toFixed(2);
+  opacityInput.addEventListener("input", () => {
+    opacityValue.textContent = Number(opacityInput.value).toFixed(2);
+    setLayerField(surface.id, "opacity", Number(opacityInput.value));
+  });
+  opacityRow.append(opacityLabel, opacityInput, opacityValue);
+  container.appendChild(opacityRow);
+}
+
+// Refreshes field values without rebuilding the DOM (see renderLayerPanel).
+// Skips whichever field is currently focused so an in-progress edit isn't
+// clobbered by the re-render its own commit triggered.
+function updateLayerPanelValues(container, layer) {
+  const active = document.activeElement;
+
+  const typeSelect = container.querySelector("#layer-type-select");
+  if (typeSelect && active !== typeSelect) typeSelect.value = layer.type;
+
+  const srcInput = container.querySelector("#layer-src-input");
+  if (srcInput && active !== srcInput) srcInput.value = layer.src || "";
+
+  const bpmInput = container.querySelector("#layer-bpm-input");
+  if (bpmInput && active !== bpmInput) bpmInput.value = String(layer.bpm ?? 96);
+
+  const opacityInput = container.querySelector("#layer-opacity-input");
+  if (opacityInput && active !== opacityInput) opacityInput.value = String(layer.opacity ?? 1);
+  const opacityValue = container.querySelector("#layer-opacity-value");
+  if (opacityValue) opacityValue.textContent = Number(layer.opacity ?? 1).toFixed(2);
 }
 
 // =========================================================================
@@ -588,6 +873,19 @@ function wireControlEvents() {
     if (file) importProjectFromFile(file);
     fileInput.value = ""; // allow re-importing the same filename later
   });
+
+  document.getElementById("btn-play").addEventListener("click", () => handleTransportButton("play"));
+  document.getElementById("btn-pause").addEventListener("click", () => handleTransportButton("pause"));
+  document.getElementById("btn-restart").addEventListener("click", () => handleTransportButton("restart"));
+
+  const backdropInput = document.getElementById("file-backdrop");
+  document.getElementById("btn-backdrop").addEventListener("click", () => backdropInput.click());
+  backdropInput.addEventListener("change", () => {
+    const file = backdropInput.files && backdropInput.files[0];
+    if (file) loadBackdropPhotoFile(file);
+    backdropInput.value = "";
+  });
+  document.getElementById("btn-backdrop-clear").addEventListener("click", clearBackdropPhoto);
 }
 
 function initControl() {
@@ -608,39 +906,270 @@ function initControl() {
 // section above for the homography math. Re-renders on every received
 // state and on window resize (wired in initOutput()).
 
+// Reconciliation map: surfaceId -> { wrapper, layerType, layerSrc, contentEl,
+// rafId, beatToken, bpm, hue }. renderOutput() runs on every received state
+// AND on every window resize (arrow-key nudges commit a state broadcast per
+// keystroke). Without this map, the old "container.innerHTML = ''; rebuild
+// everything" approach would tear down and recreate every <video>/beat
+// canvas on every single nudge or resize - restarting playback and losing
+// beat phase constantly, which is exactly wrong for calibrating WHILE video
+// plays. Now: the wrapper transform + layer opacity update every render: the
+// underlying video/image/canvas element only gets recreated when its
+// surface's layer.type or layer.src actually changes.
+const outputSurfaceElements = new Map();
+
 function renderOutput() {
   const container = document.getElementById("output-surfaces");
-  container.innerHTML = "";
-
   const w = window.innerWidth;
   const h = window.innerHeight;
 
-  project.surfaces
-    .filter((s) => s.visible)
-    .forEach((surface) => renderOutputSurface(container, surface, w, h));
+  const visibleSurfaces = project.surfaces.filter((s) => s.visible);
+  const visibleIds = new Set(visibleSurfaces.map((s) => s.id));
+
+  // Drop entries for surfaces that were removed or hidden since the last
+  // render (also stops/pauses their media - see teardownLayerContent).
+  for (const [id, entry] of outputSurfaceElements) {
+    if (!visibleIds.has(id)) {
+      teardownLayerContent(entry);
+      entry.wrapper.remove();
+      outputSurfaceElements.delete(id);
+    }
+  }
+
+  visibleSurfaces.forEach((surface) => renderOutputSurface(container, surface, w, h));
 }
 
 function renderOutputSurface(container, surface, w, h) {
   const transform = surfaceMatrix3d(surface, w, h);
-  if (!transform) return; // degenerate corners (e.g. collinear) - skip rather than throw
+  const existing = outputSurfaceElements.get(surface.id);
 
-  const wrapper = document.createElement("div");
-  wrapper.className = "surface-wrapper";
-  wrapper.dataset.surfaceId = surface.id;
-  wrapper.style.width = `${UNIT_SIZE}px`;
-  wrapper.style.height = `${UNIT_SIZE}px`;
-  wrapper.style.transform = transform;
+  if (!transform) {
+    // Degenerate corners (e.g. collinear) - skip rather than throw, and tear
+    // down any element that existed from before the corners went degenerate.
+    if (existing) {
+      teardownLayerContent(existing);
+      existing.wrapper.remove();
+      outputSurfaceElements.delete(surface.id);
+    }
+    return;
+  }
 
-  wrapper.appendChild(renderLayer(surface));
-  container.appendChild(wrapper);
+  let entry = existing;
+  if (!entry) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "surface-wrapper";
+    wrapper.dataset.surfaceId = surface.id;
+    wrapper.style.width = `${UNIT_SIZE}px`;
+    wrapper.style.height = `${UNIT_SIZE}px`;
+    container.appendChild(wrapper);
+    entry = { wrapper, layerType: null, layerSrc: null, contentEl: null, rafId: null, beatToken: null, bpm: null, hue: null };
+    outputSurfaceElements.set(surface.id, entry);
+  }
+
+  entry.wrapper.style.transform = transform;
+  renderLayer(surface, entry);
 }
 
-// Renders the content that lives inside a surface's warped wrapper. This
-// slice only implements the calibration 'pattern' layer; any other
-// layer.type (video/image/beat) also falls back to the pattern for now -
-// slice 3 adds the real layer types here.
-function renderLayer(surface) {
-  return renderPatternLayer(surface);
+// Renders (or reconciles) the content that lives inside a surface's warped
+// wrapper. Only recreates the content element when layer.type or layer.src
+// changed since the last render; otherwise just refreshes cheap properties
+// (opacity, and for 'beat', the live bpm the running rAF loop reads) on the
+// existing element so playback/animation state survives.
+function renderLayer(surface, entry) {
+  const layer = surface.layer || { type: "pattern", src: null, opacity: 1, bpm: 96 };
+  const nextSrc = layer.src || null;
+  const typeChanged = entry.layerType !== layer.type;
+  const srcChanged = entry.layerSrc !== nextSrc;
+
+  if (typeChanged || srcChanged) {
+    teardownLayerContent(entry); // pause/stop+detach whatever was there before
+    entry.wrapper.innerHTML = "";
+    entry.contentEl = createLayerElement(surface, layer, entry);
+    entry.wrapper.appendChild(entry.contentEl);
+    entry.layerType = layer.type;
+    entry.layerSrc = nextSrc;
+  } else if (layer.type === "beat") {
+    entry.bpm = layer.bpm || 96; // live value; the running rAF loop reads entry.bpm each frame
+  }
+
+  if (entry.contentEl) {
+    entry.contentEl.style.opacity = String(layer.opacity ?? 1);
+  }
+}
+
+function createLayerElement(surface, layer, entry) {
+  switch (layer.type) {
+    case "video":
+      return createVideoLayerElement(layer);
+    case "image":
+      return createImageLayerElement(layer);
+    case "beat":
+      return createBeatLayerElement(surface, layer, entry);
+    case "pattern":
+    default:
+      return renderPatternLayer(surface);
+  }
+}
+
+// Stops/detaches whatever content element (if any) currently lives in an
+// entry: pauses+releases a <video>, cancels a beat layer's rAF loop. Safe to
+// call on an entry with no content yet.
+function teardownLayerContent(entry) {
+  if (entry.rafId != null) {
+    cancelAnimationFrame(entry.rafId);
+    entry.rafId = null;
+  }
+  entry.beatToken = null; // any in-flight rAF callback checks this and bails
+  if (entry.contentEl) {
+    if (entry.contentEl.tagName === "VIDEO") {
+      registeredVideoEls.delete(entry.contentEl);
+      entry.contentEl.pause();
+      entry.contentEl.removeAttribute("src");
+      entry.contentEl.load();
+    }
+    entry.contentEl = null;
+  }
+}
+
+// =========================================================================
+// TRANSPORT (output-side: play/pause/restart every video layer element)
+// =========================================================================
+// Shared clock per the kickoff decision: every video layer on the output
+// responds to the same global transport command, not an independent one per
+// surface. registeredVideoEls tracks every <video> currently mounted for a
+// 'video' layer (not the alpha-webm 'image' variant, which autoplays on its
+// own per spec - see createImageLayerElement) so a transport command can
+// apply to all of them at once.
+const registeredVideoEls = new Set();
+let transportPlaying = false;
+
+function playVideoQuietly(video) {
+  const p = video.play();
+  // Videos are muted so autoplay policy shouldn't block this, but a play()
+  // promise can still reject (e.g. interrupted by a near-simultaneous
+  // pause()) - don't let that become an unhandled rejection.
+  if (p && typeof p.catch === "function") {
+    p.catch((err) => console.warn("Wall Mapper: video play() was rejected.", err));
+  }
+}
+
+function applyTransportAction(action) {
+  if (action === "play") {
+    transportPlaying = true;
+    registeredVideoEls.forEach(playVideoQuietly);
+  } else if (action === "pause") {
+    transportPlaying = false;
+    registeredVideoEls.forEach((v) => v.pause());
+  } else if (action === "restart") {
+    transportPlaying = true;
+    registeredVideoEls.forEach((v) => {
+      v.currentTime = 0;
+      playVideoQuietly(v);
+    });
+  }
+}
+
+// =========================================================================
+// LAYER ELEMENT FACTORIES (video / image / beat)
+// =========================================================================
+
+function createVideoLayerElement(layer) {
+  const video = document.createElement("video");
+  video.className = "layer-video";
+  video.src = layer.src || "";
+  video.muted = true;
+  video.playsInline = true;
+  video.loop = true; // sensible live default for a spike (no scripted stop point)
+  video.preload = "auto";
+  registeredVideoEls.add(video);
+  // A surface switched to 'video' (or added) while transport is already
+  // playing should join the shared clock rather than sit on its first frame.
+  if (transportPlaying) playVideoQuietly(video);
+  return video;
+}
+
+function createImageLayerElement(layer) {
+  const src = layer.src || "";
+  if (/\.webm$/i.test(src)) {
+    // Alpha WebM stretch goal (VP9 transparency) - Chrome-only, autoplays
+    // independently rather than joining the global video transport.
+    const video = document.createElement("video");
+    video.className = "layer-image-webm";
+    video.src = src;
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    playVideoQuietly(video);
+    return video;
+  }
+  const img = document.createElement("img");
+  img.className = "layer-image";
+  img.src = src;
+  img.alt = "";
+  return img;
+}
+
+function createBeatLayerElement(surface, layer, entry) {
+  const canvas = document.createElement("canvas");
+  canvas.width = UNIT_SIZE;
+  canvas.height = UNIT_SIZE;
+  canvas.className = "beat-canvas";
+  const ctx = canvas.getContext("2d");
+
+  entry.bpm = layer.bpm || 96;
+  entry.hue = surfaceHue(surface);
+
+  // A fresh token per (re)start; the loop bails as soon as it no longer
+  // matches entry.beatToken, i.e. the moment this layer gets torn down or
+  // replaced - avoids a stray rAF callback drawing into a detached canvas.
+  const token = {};
+  entry.beatToken = token;
+
+  function frame() {
+    if (entry.beatToken !== token) return;
+    drawBeatFrame(ctx, entry.bpm, entry.hue);
+    entry.rafId = requestAnimationFrame(frame);
+  }
+  entry.rafId = requestAnimationFrame(frame);
+
+  return canvas;
+}
+
+// Module-level default: until a 'beatAnchor' broadcast arrives, phase from
+// the moment this output window loaded (same-machine clocks, Date.now() is
+// fine per kickoff - no NTP-grade sync needed for a spike).
+let beatAnchorT0 = Date.now();
+
+function beatPhase(bpm) {
+  const periodMs = 60000 / (bpm || 96);
+  return ((Date.now() - beatAnchorT0) % periodMs) / periodMs; // 0..1, wraps every beat
+}
+
+// Simple radial pulse: a ring expands from center and fades out over one
+// beat period, plus a soft core glow, in the surface's own hue so multiple
+// beat surfaces read as distinguishable even though they share phase.
+function drawBeatFrame(ctx, bpm, hue) {
+  const phase = beatPhase(bpm);
+  const mid = UNIT_SIZE / 2;
+  const maxR = UNIT_SIZE * 0.45;
+
+  ctx.fillStyle = `hsl(${hue}, 55%, 6%)`;
+  ctx.fillRect(0, 0, UNIT_SIZE, UNIT_SIZE);
+
+  const glow = ctx.createRadialGradient(mid, mid, 0, mid, mid, maxR * 0.4);
+  glow.addColorStop(0, `hsla(${hue}, 90%, 70%, ${0.55 * (1 - phase)})`);
+  glow.addColorStop(1, "hsla(0, 0%, 0%, 0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(mid, mid, maxR * 0.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(mid, mid, Math.max(maxR * phase, 1), 0, Math.PI * 2);
+  ctx.strokeStyle = `hsla(${hue}, 90%, 65%, ${1 - phase})`;
+  ctx.lineWidth = 16 * (1 - phase * 0.6);
+  ctx.stroke();
 }
 
 // 1000x1000 canvas: numbered grid + brighter center crosshair + the

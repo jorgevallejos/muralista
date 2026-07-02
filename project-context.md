@@ -42,5 +42,6 @@ Same loop as the translator waves: Cowork (this file) holds PM state; **Claude C
 
 ## Status / next step
 
-- 2026-07-02: project opened; spec + kickoff prompt written. **Next:** Jorge opens Claude Code at this folder and pastes `claude-code-kickoff.md`; then a projector session against the M1–M3 test gates.
+- 2026-07-02: project opened; spec + kickoff prompt written.
+- 2026-07-02 (later): **Wall Mapper v1 built** — all 4 slices done via Claude Code (Fable coordinator + Sonnet crew), committed to local git (`a1fc6b7`). App lives in `mapper/`; run instructions in `README.md`. Cerdo master copied to `mapper/media/cerdo.mp4`. Homography math verified numerically; browser sanity pass clean (headless Chrome, no console errors). Known limits noted in README: `python3 -m http.server` lacks Range support (video seek may be sluggish — `npx http-server` as alternative); alpha WebM Chrome-only. **Next:** Jorge does a desk smoke-test in Chrome, then the projector session against gates M1–M3; debrief lands back here.
 - Priority note: runs **behind** song registration + venue visits this week; the Fable-window deadline (7 July) is the reason it's active at all.

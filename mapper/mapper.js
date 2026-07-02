@@ -687,7 +687,9 @@ function buildLayerPanel(container, surface, layer) {
     const srcInput = document.createElement("input");
     srcInput.type = "text";
     srcInput.id = "layer-src-input";
-    srcInput.placeholder = layer.type === "video" ? "media/cerdo.mp4" : "media/character.png";
+    // "e.g." prefix matters: a bare filename placeholder reads as an actual
+    // prefilled value, and users assume the video is already linked.
+    srcInput.placeholder = layer.type === "video" ? "e.g. media/cerdo.mp4" : "e.g. media/character.png";
     srcInput.value = layer.src || "";
     // 'change' (blur/Enter), not 'input': the reconciling output render
     // recreates the video/image element whenever layer.src changes, so

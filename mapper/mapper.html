@@ -52,6 +52,21 @@
           </div>
           <p class="layer-hint">Authoring aid only (planning canvas) &mdash; shown at reduced opacity under the surface outlines, never sent to the output.</p>
         </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-header">
+            <h2>Mic</h2>
+          </div>
+          <div class="mic-controls">
+            <button id="btn-mic-toggle" type="button">Enable mic</button>
+            <span id="mic-status" class="mic-status"></span>
+          </div>
+          <div class="mic-meter-row">
+            <div class="mic-meter"><div id="mic-meter-fill" class="mic-meter-fill"></div></div>
+            <div id="mic-onset-dot" class="mic-onset-dot" title="Flashes on each detected onset"></div>
+          </div>
+          <p class="layer-hint">Analyzes the room's sound in this window and streams a compact level/onset signal to the output &mdash; the mic itself never leaves this machine.</p>
+        </div>
       </aside>
 
       <main class="preview-area">

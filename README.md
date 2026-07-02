@@ -26,7 +26,7 @@ Each surface has one of four layer types:
 - **pattern** — the calibration grid (numbered corners, surface name). Good default while aligning.
 - **video** — plays a file from `mapper/media/`; `cerdo.mp4` (the Tragedia de Cerdo Asado master) is already there. Reference video/image files as `media/<name>` in the layer's source field. All video layers share one global transport (Play/Pause/Restart).
 - **image** — a still image, or an alpha WebM for transparency (Chrome-only feature). Transparent PNG is the slot for AI-generated plasticine-style assets. **A `.webm` source is a transport-synced overlay, not a static picture**: it joins the same Play/Pause/Restart transport as `video` layers (registered, autoplay off, joins mid-playback if transport is already running) instead of looping on its own — so an AI-generated animation designed against the show timeline starts on the same downbeat as everything else. It's badged "▶ overlay" in the preview (rather than "🖼 image") to make that distinction visible at a glance.
-- **beat** — a canvas layer that pulses at a given BPM, phase-locked across surfaces to a shared downbeat.
+- **beat** — a canvas layer that pulses at a given BPM, phase-locked across surfaces to a shared downbeat — or, in **Mic mode**, pulses with the room's sound instead (see Sound reactivity below).
 
 Video/image files must be dropped into `mapper/media/` by hand first — the file picker in the layer panel only fills in the `media/<name>` path, it doesn't copy anything.
 
@@ -37,6 +37,18 @@ The surface list's order **is** the render order **is** the stacking order, in b
 ### Duplicate (registering an overlay onto a video surface)
 
 Each surface row also has a **⧉ duplicate** button: it creates a copy with identical corners and an identical layer, named `<original> copy`, dropped in immediately after the original (so it renders on top of it) and selected. This is the one-gesture way to put an alpha-WebM overlay in **exact registration** with an existing video surface — duplicate the video surface, then switch the copy's layer source to the overlay `.webm`. No manual corner-matching required.
+
+## Sound reactivity
+
+Layers can react to the room's sound live — no AI at runtime, just a microphone and control logic:
+
+1. **Enable the mic** in the control sidebar (Mic section, below Backdrop). Chrome asks for microphone permission once for localhost — allow it. The level meter starts moving with the room; the dot next to it flashes on each detected onset (a transient clearly louder than the running room average). If the mic can't be opened (e.g. permission denied), the reason shows inline in the section.
+2. **Beat layer, Mic mode** — a beat layer's panel now has a Mode selector: **BPM** (the existing clock-locked pulse, the default) or **Mic (sound-reactive)**. In Mic mode the pulse follows the room instead of a clock: a core glow breathes with the loudness, and each onset fires an expanding ring. Same per-surface hue as BPM mode. Switching modes (like editing BPM) never restarts the canvas.
+3. **Mic reactivity on media layers** — video and image layers have a **Mic reactivity** slider (0–1, default 0 = off). Above 0, the room's loudness fades the layer in on the output: effective opacity = `opacity × (1 − reactivity + reactivity × level)`. At 1, the layer is invisible in silence and fully visible when the room is loud — point it at an alpha-WebM/PNG character and the character "appears when the room gets going".
+
+How it works: audio analysis runs **in the control window** (mic capture + Web Audio analyser, ~30 Hz), which streams a compact level/onset envelope to the output over the same `BroadcastChannel` the rest of the app uses — the mic stays with the performer's machine, and the output never touches it. The audio signal is ephemeral: never persisted, not part of the project JSON. If the control window closes or the mic is disabled, output layers decay to their silent state within a second rather than freezing on the last value.
+
+Capture deliberately disables Chrome's voice processing (`echoCancellation`, `noiseSuppression`, `autoGainControl` all off): the point is the real room signal — music dynamics included — not a cleaned-up voice call.
 
 ## Desk smoke test (no projector)
 

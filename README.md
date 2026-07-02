@@ -25,10 +25,18 @@ Each surface has one of four layer types:
 
 - **pattern** — the calibration grid (numbered corners, surface name). Good default while aligning.
 - **video** — plays a file from `mapper/media/`; `cerdo.mp4` (the Tragedia de Cerdo Asado master) is already there. Reference video/image files as `media/<name>` in the layer's source field. All video layers share one global transport (Play/Pause/Restart).
-- **image** — a still image, or an alpha WebM for transparency (Chrome-only feature). Transparent PNG is the slot for AI-generated plasticine-style assets.
+- **image** — a still image, or an alpha WebM for transparency (Chrome-only feature). Transparent PNG is the slot for AI-generated plasticine-style assets. **A `.webm` source is a transport-synced overlay, not a static picture**: it joins the same Play/Pause/Restart transport as `video` layers (registered, autoplay off, joins mid-playback if transport is already running) instead of looping on its own — so an AI-generated animation designed against the show timeline starts on the same downbeat as everything else. It's badged "▶ overlay" in the preview (rather than "🖼 image") to make that distinction visible at a glance.
 - **beat** — a canvas layer that pulses at a given BPM, phase-locked across surfaces to a shared downbeat.
 
 Video/image files must be dropped into `mapper/media/` by hand first — the file picker in the layer panel only fills in the `media/<name>` path, it doesn't copy anything.
+
+### Stacking order (z-order)
+
+The surface list's order **is** the render order **is** the stacking order, in both the preview and the output — a surface further down the list paints on top of the ones above it. Each surface row has **▲ / ▼** buttons to move it up/down the list (and so back/forward in the stack). Moving a surface only changes the stacking order — corners, layer, and visibility are untouched.
+
+### Duplicate (registering an overlay onto a video surface)
+
+Each surface row also has a **⧉ duplicate** button: it creates a copy with identical corners and an identical layer, named `<original> copy`, dropped in immediately after the original (so it renders on top of it) and selected. This is the one-gesture way to put an alpha-WebM overlay in **exact registration** with an existing video surface — duplicate the video surface, then switch the copy's layer source to the overlay `.webm`. No manual corner-matching required.
 
 ## Desk smoke test (no projector)
 

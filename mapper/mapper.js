@@ -169,6 +169,54 @@ function toggleSurfaceVisible(id) {
   commitProjectChange();
 }
 
+// --- Z-order (v2.2). project.surfaces array order IS render order IS
+// stacking order in both preview and output (later = on top) - these just
+// move a surface one slot within that same array. No-op at either end of
+// the list (buttons are also disabled there in the UI, but the mutator
+// stays defensive since it's reachable from the smoke-test harness too). ---
+
+function moveSurfaceUp(id) {
+  const idx = project.surfaces.findIndex((s) => s.id === id);
+  if (idx <= 0) return;
+  const [surface] = project.surfaces.splice(idx, 1);
+  project.surfaces.splice(idx - 1, 0, surface);
+  commitProjectChange();
+}
+
+function moveSurfaceDown(id) {
+  const idx = project.surfaces.findIndex((s) => s.id === id);
+  if (idx === -1 || idx >= project.surfaces.length - 1) return;
+  const [surface] = project.surfaces.splice(idx, 1);
+  project.surfaces.splice(idx + 1, 0, surface);
+  commitProjectChange();
+}
+
+// --- Duplicate (v2.2): the one-gesture way to register an alpha overlay
+// exactly onto an existing (usually video) surface - same corners, same
+// layer, inserted immediately after the original so it renders on top of it
+// per the z-order rule above. Corners and layer are deep-copied so editing
+// the copy (e.g. switching its layer to an overlay .webm) never touches the
+// original. ---
+
+function duplicateSurface(id) {
+  const idx = project.surfaces.findIndex((s) => s.id === id);
+  if (idx === -1) return;
+  const original = project.surfaces[idx];
+  const copy = {
+    id: genSurfaceId(),
+    name: `${original.name} copy`,
+    corners: original.corners.map(([x, y]) => [x, y]),
+    layer: original.layer
+      ? JSON.parse(JSON.stringify(original.layer))
+      : { type: "pattern", src: null, opacity: 1, bpm: 96 },
+    visible: original.visible,
+  };
+  project.surfaces.splice(idx + 1, 0, copy);
+  selectedSurfaceId = copy.id;
+  activeCornerIndex = null;
+  commitProjectChange();
+}
+
 // --- Layer mutators (slice 3). All route through commitProjectChange() like
 // every other control-side mutation. ---
 
@@ -476,7 +524,7 @@ function renderSurfaceList() {
     return;
   }
 
-  project.surfaces.forEach((surface) => {
+  project.surfaces.forEach((surface, index) => {
     const row = document.createElement("li");
     row.className = "surface-row";
     if (surface.id === selectedSurfaceId) row.classList.add("selected");
@@ -492,6 +540,34 @@ function renderSurfaceList() {
     const actions = document.createElement("div");
     actions.className = "surface-actions";
 
+    // Z-order: moves the surface within project.surfaces, which is the
+    // render/stacking order in both preview and output (later = on top).
+    // Disabled at the ends of the list rather than hidden, so the row's
+    // button layout stays stable as surfaces reorder around it.
+    const upBtn = document.createElement("button");
+    upBtn.type = "button";
+    upBtn.className = "icon-btn";
+    upBtn.title = "Move up the list (render earlier / further back)";
+    upBtn.textContent = "▲"; // ▲
+    upBtn.disabled = index === 0;
+    upBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      moveSurfaceUp(surface.id);
+    });
+    actions.appendChild(upBtn);
+
+    const downBtn = document.createElement("button");
+    downBtn.type = "button";
+    downBtn.className = "icon-btn";
+    downBtn.title = "Move down the list (render later / on top)";
+    downBtn.textContent = "▼"; // ▼
+    downBtn.disabled = index === project.surfaces.length - 1;
+    downBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      moveSurfaceDown(surface.id);
+    });
+    actions.appendChild(downBtn);
+
     const visBtn = document.createElement("button");
     visBtn.type = "button";
     visBtn.className = "icon-btn";
@@ -502,6 +578,20 @@ function renderSurfaceList() {
       toggleSurfaceVisible(surface.id);
     });
     actions.appendChild(visBtn);
+
+    // Duplicate: the one-gesture way to register an overlay exactly onto an
+    // existing surface (same corners, same layer, dropped in right after the
+    // original so it renders on top - see duplicateSurface()).
+    const dupBtn = document.createElement("button");
+    dupBtn.type = "button";
+    dupBtn.className = "icon-btn";
+    dupBtn.title = "Duplicate surface (same corners + layer, for exact registration)";
+    dupBtn.textContent = "⧉"; // ⧉
+    dupBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      duplicateSurface(surface.id);
+    });
+    actions.appendChild(dupBtn);
 
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
@@ -554,15 +644,20 @@ function renderPreview() {
 
       // Cheap authoring aid: badge the surface with its layer type near its
       // centroid, rather than actually rendering media in the preview
-      // (explicitly out of scope for v1 - not worth it).
-      const layerType = surface.layer && surface.layer.type;
+      // (explicitly out of scope for v1 - not worth it). A .webm image layer
+      // is badged as "overlay" rather than "image" - it's transport-synced
+      // content, not a static picture, and the badge should say so at a
+      // glance.
+      const layer = surface.layer;
+      const layerType = layer && layer.type;
       if (layerType === "video" || layerType === "image") {
+        const isAlphaOverlay = layerType === "image" && /\.webm$/i.test((layer && layer.src) || "");
         const [cx, cy] = surfaceCentroidNormalized(surface);
         const badge = document.createElementNS(SVG_NS, "text");
         badge.setAttribute("x", cx * PREVIEW_W);
         badge.setAttribute("y", cy * PREVIEW_H);
         badge.setAttribute("class", "preview-layer-badge");
-        badge.textContent = layerType === "video" ? "▶ video" : "\u{1F5BC} image";
+        badge.textContent = layerType === "video" ? "▶ video" : isAlphaOverlay ? "▶ overlay" : "\u{1F5BC} image";
         svg.appendChild(badge);
       }
     });
@@ -856,6 +951,13 @@ function buildLayerPanel(container, surface, layer) {
     hint.textContent = "Picking a file only fills in the path above - the file itself must already be copied into mapper/media/.";
     fileRow.append(fileBtn, fileInput, hint);
     container.appendChild(fileRow);
+
+    if (layer.type === "image") {
+      const webmHint = document.createElement("p");
+      webmHint.className = "layer-hint";
+      webmHint.textContent = "A .webm source (alpha transparency, Chrome-only) is a transport-synced overlay: it joins Play/Pause/Restart like a video layer instead of autoplaying on its own, so it starts on the same downbeat.";
+      container.appendChild(webmHint);
+    }
   }
 
   // Beat: BPM field.
@@ -1129,6 +1231,40 @@ function renderOutput() {
   }
 
   visibleSurfaces.forEach((surface) => renderOutputSurface(container, surface, w, h));
+
+  reconcileOutputSurfaceOrder(container, visibleSurfaces);
+}
+
+// Surface list order = render order = stacking order (later = on top, see
+// project-context v2 direction), so #output-surfaces' DOM child order must
+// track project.surfaces order - otherwise a z-order move (moveSurfaceUp/
+// Down) changes the data but the wrapper divs stay in their old paint order
+// on the actual output. renderOutputSurface() above only appends a wrapper
+// the FIRST time a surface is seen; on every later render it reuses the
+// existing element in place, so without this step a reorder would be
+// invisible on the wall.
+//
+// appendChild on an element already in the document just moves it (cheap,
+// idempotent) - but re-parenting a <video> element directly DOES interrupt
+// playback in Chrome (moving a media element triggers a load reset). Here we
+// only ever move the per-surface WRAPPER div, never the <video>/<img>/canvas
+// itself - the video stays put inside its wrapper, only the wrapper's
+// position among its siblings changes, so this does not reset playback.
+// Still: only touch the DOM when the order actually drifted from what's
+// wanted (checked below) - calibration nudges and resizes call renderOutput()
+// on every commit/frame and must NOT reorder anything when nothing moved.
+function reconcileOutputSurfaceOrder(container, visibleSurfaces) {
+  const wanted = visibleSurfaces
+    .map((s) => outputSurfaceElements.get(s.id))
+    .filter(Boolean)
+    .map((entry) => entry.wrapper);
+
+  const current = Array.from(container.children);
+  const alreadyInOrder =
+    wanted.length === current.length && wanted.every((el, i) => el === current[i]);
+  if (alreadyInOrder) return;
+
+  wanted.forEach((wrapper) => container.appendChild(wrapper));
 }
 
 function renderOutputSurface(container, surface, w, h) {
@@ -1261,9 +1397,9 @@ function wrapMediaWithFailureNote(mediaEl, surface, layer, kindLabel) {
 // Shared clock per the kickoff decision: every video layer on the output
 // responds to the same global transport command, not an independent one per
 // surface. registeredVideoEls tracks every <video> currently mounted for a
-// 'video' layer (not the alpha-webm 'image' variant, which autoplays on its
-// own per spec - see createImageLayerElement) so a transport command can
-// apply to all of them at once.
+// 'video' layer AND for an alpha-webm 'image' layer (v2.2 - see
+// createImageLayerElement) so a transport command can apply to all of them
+// at once.
 const registeredVideoEls = new Set();
 let transportPlaying = false;
 
@@ -1315,16 +1451,23 @@ function createVideoLayerElement(layer, surface) {
 function createImageLayerElement(layer, surface) {
   const src = layer.src || "";
   if (/\.webm$/i.test(src)) {
-    // Alpha WebM stretch goal (VP9 transparency) - Chrome-only, autoplays
-    // independently rather than joining the global video transport.
+    // Alpha WebM (VP9 transparency, Chrome-only): the v2.2 AI-animation
+    // overlay slot. An overlay authored against the show timeline needs to
+    // start on the same downbeat as everything else, so it joins the shared
+    // transport exactly like a 'video' layer (registeredVideoEls + the
+    // transportPlaying join-mid-playback pattern) rather than autoplaying on
+    // its own. The type distinction between 'video' and alpha-webm 'image'
+    // blurs here - that's fine: an overlay IS content synced to the show
+    // clock, same as the base video.
     const video = document.createElement("video");
     video.className = "layer-image-webm";
     video.src = src;
     video.muted = true;
     video.loop = true;
     video.playsInline = true;
-    video.autoplay = true;
-    playVideoQuietly(video);
+    video.preload = "auto";
+    registeredVideoEls.add(video);
+    if (transportPlaying) playVideoQuietly(video);
     return wrapMediaWithFailureNote(video, surface, layer, "video");
   }
   const img = document.createElement("img");

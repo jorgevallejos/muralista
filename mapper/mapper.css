@@ -52,6 +52,15 @@ button:hover {
   background: var(--bg-row-hover);
 }
 
+button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+button:disabled:hover {
+  background: var(--bg-row);
+}
+
 button.icon-btn {
   padding: 4px 8px;
   font-size: 13px;

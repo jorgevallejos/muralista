@@ -225,6 +225,12 @@ function broadcastTransport(action) {
   channel.postMessage({ kind: "transport", action, nonce: Date.now() });
 }
 
+// Control-side memory of the last transport command sent, so a late-joining
+// output (opened after Play was already pressed) can be brought up to speed
+// in response to its 'hello' instead of sitting frozen on its first frame
+// until the next transport click. See handleControlMessage.
+let lastTransport = null;
+
 // Control -> output: the downbeat timestamp all beat layers phase-lock to,
 // so multiple beat surfaces pulse in sync. Re-anchored on every Play/Restart
 // (see handleTransportButton) and replied to any output's 'hello' so a
@@ -244,6 +250,7 @@ function handleTransportButton(action) {
     controlBeatAnchorT0 = Date.now();
     broadcastBeatAnchor();
   }
+  lastTransport = action;
   broadcastTransport(action);
 }
 
@@ -271,6 +278,18 @@ function handleControlMessage(event) {
     // A fresh output window just opened and wants the current state.
     broadcastState();
     broadcastBeatAnchor(); // no-op if no anchor set yet (nothing has played)
+    if (lastTransport) {
+      // Bring a late joiner up to speed on playback too - without this, an
+      // output opened after Play was already pressed sits frozen on its
+      // first frame until the next transport click. Always re-send with a
+      // FRESH nonce (project convention: never re-send a stale nonce, so
+      // the receiver's "treat every message as a fresh command" logic still
+      // holds). A late joiner should join playback, not seek everyone back
+      // to 0, so a last action of 'restart' is re-sent as 'play' - this is
+      // the only place 'restart' semantics are altered for a joiner.
+      const action = lastTransport === "restart" ? "play" : lastTransport;
+      channel.postMessage({ kind: "transport", action, nonce: Date.now() });
+    }
   } else if (msg.kind === "outputSize" && typeof msg.w === "number" && typeof msg.h === "number") {
     outputSize = { w: msg.w, h: msg.h };
   }

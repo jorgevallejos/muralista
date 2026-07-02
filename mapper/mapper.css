@@ -16,6 +16,14 @@
   box-sizing: border-box;
 }
 
+/* The hidden attribute must always win. Without this, any rule that sets
+   display (e.g. .control-root's display:flex) silently overrides the UA's
+   [hidden] { display:none } — which is exactly how the output window ended
+   up showing the control skeleton on top of (well, instead of) the output. */
+[hidden] {
+  display: none !important;
+}
+
 html, body {
   height: 100%;
   margin: 0;

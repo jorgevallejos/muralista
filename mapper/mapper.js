@@ -878,7 +878,19 @@ function wireControlEvents() {
   document.getElementById("btn-add-surface").addEventListener("click", addSurface);
 
   document.getElementById("btn-open-output").addEventListener("click", () => {
-    window.open("mapper.html?output", "mapper-output");
+    const win = window.open("mapper.html?output", "mapper-output");
+    if (win) {
+      // If the named window already exists (possibly behind other windows or
+      // on another display), window.open only re-navigates it - bring it
+      // forward so the click never looks like a no-op.
+      win.focus();
+    } else {
+      window.alert(
+        "Chrome blocked the output window popup.\n\n" +
+          "Click the blocked-popup icon at the right end of the address bar " +
+          "and allow popups for localhost, then try again."
+      );
+    }
   });
 
   document.getElementById("btn-identify").addEventListener("click", broadcastIdentify);
@@ -1350,6 +1362,16 @@ function initOutput() {
 // =========================================================================
 // ROLE DETECTION / INIT
 // =========================================================================
+
+// Opening mapper.html straight from Finder (file://) breaks BroadcastChannel
+// and media loading - catch it loudly instead of failing silently.
+if (window.location.protocol === "file:") {
+  window.alert(
+    "Wall Mapper must be served over HTTP, not opened as a file.\n\n" +
+      "In a terminal:  cd mapper && python3 -m http.server 8123\n" +
+      "Then open:  http://localhost:8123/mapper.html"
+  );
+}
 
 const isOutputRole = new URLSearchParams(window.location.search).has("output");
 

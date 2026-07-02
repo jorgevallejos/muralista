@@ -30,6 +30,19 @@ Each surface has one of four layer types:
 
 Video/image files must be dropped into `mapper/media/` by hand first — the file picker in the layer panel only fills in the `media/<name>` path, it doesn't copy anything.
 
+## Desk smoke test (no projector)
+
+One end-to-end pass that exercises sync, warp, calibration, and video — worth running before any projector session:
+
+1. Start the server, open the control window, click **Open output window**. Keep the output windowed next to the control window (no need for a second display).
+2. **Add a surface.** It should appear in both windows at once — a quad in the control preview, a colored grid pattern with numbered corners in the output. *(Proves the BroadcastChannel sync.)*
+3. **Drag the corner handles** into a trapezoid — narrow top, wide bottom. In the output, the grid must **keystone**: grid lines converge toward the narrow edge, like looking at a floor. If it merely stretches/skews linearly, the warp is broken. *(Proves the homography.)*
+4. Press **2** (top-right corner goes active), then tap the **arrow keys** — that corner alone should creep in the output. Hold **Shift** for visibly finer steps. *(Proves the calibration UX.)*
+5. Set the surface's layer to **video**, source `media/test.mp4` (or `media/cerdo.mp4`), press **Play** in the header. While it plays, nudge a corner — the video must **keep playing without restarting or flickering**. *(Proves live calibration during playback.)*
+6. **Export** the JSON, reload the control page, **Import** it back — same surfaces, same corners, video still configured. *(Proves a venue mapping survives.)*
+
+Pass = all six behave as described. Then repeat step 3–5 thinking of the output window as the wall: that's exactly the M1/M2 projector flow.
+
 ## Notes
 
 - Mappings autosave to `localStorage` as you edit, and can be exported/imported as a JSON file — export one per venue so a calibration can be reloaded on the next visit.

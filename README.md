@@ -1,72 +1,128 @@
-# Muralista v1
+# Muralista
 
-*Built under the working title **Muralista**, retired 2026-08-20 when the project was renamed. The internal `mapper/` folder and the `mapper.*` filenames deliberately keep the old shape — they are internal paths and renaming them buys nothing.*
+**You are playing a room you have never played. The projector does not point at a screen — it points at the whole wall behind you, and you are standing inside the beam. Muralista is where you work out, before anyone arrives, which part of that wall carries the lyrics, which part carries the animation, and which part stays dark so the chorus does not land on your face.**
 
-A browser-based projection-mapping tool for Chango Pepper concerts: corner-pin Jorge's animations onto multiple physical surfaces (wall + boxes) with one projector, calibrated live without a camera. Plain HTML/JS/CSS, no framework or build step, Chrome only. The single page (`mapper/mapper.html`) serves two roles — a **control** window (performer UI: surface list, calibration, layers, transport) and an **output** window (`?output`, the projector image) — kept in sync over `BroadcastChannel`.
+Muralista is not a stage tool. It is a **desk** tool.
+
+It runs at the venue, hours before the show, with the projector on and nobody watching. You map the room, you export the mapping, and then you close it. **Muralista takes no part in the evening.** That is the whole shape of it: mapping a room is setup work, done once, and the tool that does it is allowed to be slow and fiddly because nothing is at stake while it runs.
+
+The counterpart to that: **Muralista maps, but it does not perform.** Working out where a surface is on a wall is geometry — deterministic, checkable, done in advance. Deciding what to show and when is a performance, with a clock and a person on stage attached to it. Those are different jobs with different failure modes, and putting them in one program means the one that can afford to crash lives inside the one that cannot.
+
+---
+
+## Where this actually stands
+
+**A working spike, and honest about it.** Read this before the rest.
+
+- **Built and verified at a real projector** (2026-07-02): corner-pin warp sits flush on a physical box, an animation plays across several surfaces at once, alpha compositing works at the wall.
+- **Never played a room.** It has been driven at a wall in a studio, never during a show with an audience in front of it. This is why Muralista is deliberately **not** promoted on [changopepper.com/tramoya](https://changopepper.com/tramoya) — the suite's rule is that everything on that page has done real work, and this has not yet.
+- **A v2 round is built but hand-untested** — direct manipulation, transport-synced overlays, and mic reactivity all landed in July and have only been verified headlessly.
+- **The desk-tool shape described above is the direction, not the current build.** Today Muralista still renders live: it has a transport, beat layers and mic reactivity, because v1 was designed as a tool that runs during the show. That decision was reversed on 2026-08-20. The behaviours survive — they become properties declared in the venue mapping and executed by [Pregonero](https://github.com/jorgevallejos/pregonero) — but the code has not moved yet, and Pregonero cannot read a venue mapping today.
+
+No test suite. This is a spike, run with spike discipline, and it graduates to tests and a PR flow when it earns them.
+
+---
 
 ## Running it
 
-```
+No build step, no dependencies, no network. Chrome only.
+
+```bash
 cd mapper/
 python3 -m http.server 8123
 ```
 
-Open `http://localhost:8123/mapper.html` — that's the control window. Click "Open output window", drag the new window onto the projector's display, and press `F` (or double-click) to fullscreen it.
+Open `http://localhost:8123/mapper.html`. That is the **control** window — the performer UI, with the surface list, the calibration handles and the layer panel. Click **Open output window**, drag the new window onto the projector's display, and press `F` to fullscreen it. That second window is the projector image and nothing else; the two stay in sync over a `BroadcastChannel`.
 
-## Calibrating
+---
 
-1. **Add a surface** in the sidebar, or **click a surface's polygon** directly in the preview to select it (the topmost polygon wins where surfaces overlap).
-2. **Drag** to place it: from a polygon's interior, drag to move the whole surface at once (coarse placement); drag a corner handle to reshape just that corner. Both work as a single click-and-drag gesture, even on a surface that wasn't selected yet.
-3. Switch its layer to **pattern** (the calibration grid) so you have something visible to align on the wall.
-4. For precision, use the **arrow keys** to nudge in real output pixels while watching the projected result — Shift = 1px fine nudge, unshifted = 5px. This works even while focus is in the control window, so you don't have to click back into the preview between nudges. **Keys 1–4** pick which corner is active (matches the numbered markers baked into the pattern) so arrows nudge just that corner; **0 or Escape** clears the active corner back to whole-surface mode, so arrows move the entire surface instead. A freshly selected surface starts in whole-surface mode.
-5. Use **Identify** to flash each surface's name/ID on the output when you lose track of which physical surface is which.
+## A worked example
 
-## Layers
+You are setting up in somebody's living room. There is a wall behind where you will stand, and a wooden crate to one side that you want the animation to climb onto.
 
-Each surface has one of four layer types:
+The room below is invented, but every gesture in it is real and was exercised at a projector.
 
-- **pattern** — the calibration grid (numbered corners, surface name). Good default while aligning.
-- **video** — plays a file from `mapper/media/`; `cerdo.mp4` (the Tragedia de Cerdo Asado master) is already there. Reference video/image files as `media/<name>` in the layer's source field. All video layers share one global transport (Play/Pause/Restart).
-- **image** — a still image, or an alpha WebM for transparency (Chrome-only feature). Transparent PNG is the slot for AI-generated plasticine-style assets. **A `.webm` source is a transport-synced overlay, not a static picture**: it joins the same Play/Pause/Restart transport as `video` layers (registered, autoplay off, joins mid-playback if transport is already running) instead of looping on its own — so an AI-generated animation designed against the show timeline starts on the same downbeat as everything else. It's badged "▶ overlay" in the preview (rather than "🖼 image") to make that distinction visible at a glance.
-- **beat** — a canvas layer that pulses at a given BPM, phase-locked across surfaces to a shared downbeat — or, in **Mic mode**, pulses with the room's sound instead (see Sound reactivity below).
+### 1. Get something on the wall
 
-Video/image files must be dropped into `mapper/media/` by hand first — the file picker in the layer panel only fills in the `media/<name>` path, it doesn't copy anything.
+Add a surface in the sidebar. It appears at once in both windows — a quad in the control preview, a coloured grid with numbered corners on the wall. Leave its layer on **pattern**: the grid is what you align against, and the numbers on it match the keys you are about to press.
 
-### Stacking order (z-order)
+### 2. Place it
 
-The surface list's order **is** the render order **is** the stacking order, in both the preview and the output — a surface further down the list paints on top of the ones above it. Each surface row has **▲ / ▼** buttons to move it up/down the list (and so back/forward in the stack). Moving a surface only changes the stacking order — corners, layer, and visibility are untouched.
+Drag from inside the polygon to move the whole surface — that is coarse placement, and it is the gesture you want first. Drag a corner handle to reshape just that corner.
 
-### Duplicate (registering an overlay onto a video surface)
+Then get it flush with the arrow keys, watching the wall rather than the screen:
 
-Each surface row also has a **⧉ duplicate** button: it creates a copy with identical corners and an identical layer, named `<original> copy`, dropped in immediately after the original (so it renders on top of it) and selected. This is the one-gesture way to put an alpha-WebM overlay in **exact registration** with an existing video surface — duplicate the video surface, then switch the copy's layer source to the overlay `.webm`. No manual corner-matching required.
+- **`1`–`4`** pick which corner is live. They match the numbers baked into the pattern.
+- **arrows** nudge in real output pixels — unshifted 5 px, **Shift** 1 px.
+- **`0`** or **Escape** drops back to whole-surface mode, so the arrows move everything at once.
 
-## Sound reactivity
+The keys work while focus is in the control window, so you can keep nudging without clicking back and forth. When the grid lines converge toward the narrow edge of the quad instead of merely skewing, the perspective warp is doing its job.
 
-Layers can react to the room's sound live — no AI at runtime, just a microphone and control logic:
+Name it `back wall`.
 
-1. **Enable the mic** in the control sidebar (Mic section, below Backdrop). Chrome asks for microphone permission once for localhost — allow it. The level meter starts moving with the room; the dot next to it flashes on each detected onset (a transient clearly louder than the running room average). If the mic can't be opened (e.g. permission denied), the reason shows inline in the section.
-2. **Beat layer, Mic mode** — a beat layer's panel now has a Mode selector: **BPM** (the existing clock-locked pulse, the default) or **Mic (sound-reactive)**. In Mic mode the pulse follows the room instead of a clock: a core glow breathes with the loudness, and each onset fires an expanding ring. Same per-surface hue as BPM mode. Switching modes (like editing BPM) never restarts the canvas.
-3. **Mic reactivity on media layers** — video and image layers have a **Mic reactivity** slider (0–1, default 0 = off). Above 0, the room's loudness fades the layer in on the output: effective opacity = `opacity × (1 − reactivity + reactivity × level)`. At 1, the layer is invisible in silence and fully visible when the room is loud — point it at an alpha-WebM/PNG character and the character "appears when the room gets going".
+### 3. Add the crate
 
-How it works: audio analysis runs **in the control window** (mic capture + Web Audio analyser, ~30 Hz), which streams a compact level/onset envelope to the output over the same `BroadcastChannel` the rest of the app uses — the mic stays with the performer's machine, and the output never touches it. The audio signal is ephemeral: never persisted, not part of the project JSON. If the control window closes or the mic is disabled, output layers decay to their silent state within a second rather than freezing on the last value.
+Same again for the crate: add a surface, drag it roughly over the crate's front face, nudge the four corners until the grid sits flush on the physical object. Name it `crate`.
 
-Capture deliberately disables Chrome's voice processing (`echoCancellation`, `noiseSuppression`, `autoGainControl` all off): the point is the real room signal — music dynamics included — not a cleaned-up voice call.
+Lost track of which quad is which? **Identify** flashes each surface's name onto the output.
 
-## Desk smoke test (no projector)
+### 4. Put the animation on it
 
-One end-to-end pass that exercises sync, warp, calibration, and video — worth running before any projector session:
+Switch `back wall` to the **video** layer and point its source at `media/cerdo.mp4`. Press **Play** in the header — all video layers share one transport, so the wall and the crate start together on the same frame.
 
-1. Start the server, open the control window, click **Open output window**. Keep the output windowed next to the control window (no need for a second display).
-2. **Add a surface.** It should appear in both windows at once — a quad in the control preview, a colored grid pattern with numbered corners in the output. *(Proves the BroadcastChannel sync.)*
-3. **Drag the corner handles** into a trapezoid — narrow top, wide bottom. In the output, the grid must **keystone**: grid lines converge toward the narrow edge, like looking at a floor. If it merely stretches/skews linearly, the warp is broken. *(Proves the homography.)*
-4. Press **2** (top-right corner goes active), then tap the **arrow keys** — that corner alone should creep in the output. Hold **Shift** for visibly finer steps. *(Proves the calibration UX.)*
-5. Set the surface's layer to **video**, source `media/test.mp4` (or `media/cerdo.mp4`), press **Play** in the header. While it plays, nudge a corner — the video must **keep playing without restarting or flickering**. *(Proves live calibration during playback.)*
-6. **Export** the JSON, reload the control page, **Import** it back — same surfaces, same corners, video still configured. *(Proves a venue mapping survives.)*
+Nudge a corner while it is playing. The video keeps playing: calibration does not interrupt playback, which matters because the only way to get a surface truly flush is to adjust it against the content you will actually show.
 
-Pass = all six behave as described. Then repeat step 3–5 thinking of the output window as the wall: that's exactly the M1/M2 projector flow.
+### 5. Register an overlay exactly on top
 
-## Notes
+You have an alpha WebM of a character that should appear over the animation, in exact registration with it. Do not corner-match it by hand — press **⧉** on the `back wall` row.
 
-- Mappings autosave to `localStorage` as you edit, and can be exported/imported as a JSON file — export one per venue so a calibration can be reloaded on the next visit.
-- `python3 -m http.server` doesn't support HTTP Range requests, so scrubbing/seeking on the `cerdo.mp4` layer may feel sluggish. If that's a problem, `npx http-server` is a drop-in, Range-aware alternative.
-- Chrome is the target browser (alpha WebM transparency and the autoplay behavior this relies on are Chrome-specific).
+That copies the surface with identical corners, drops it immediately after the original so it paints on top, and selects it. Change the copy's source to the overlay and you are done. Stacking order is the list order; **▲ / ▼** move a surface back and forward through it.
+
+### 6. Export the room
+
+**Export** writes the mapping to a JSON file. That file is this room — the surfaces, their corners, their layers, their order.
+
+Next time you play here, **Import** it and the calibration comes back. **Keep one file per venue.** Getting a room flush from scratch is the expensive part of the evening; getting it back should cost nothing.
+
+---
+
+## The venue mapping
+
+The exported JSON is the artifact Muralista exists to produce, and everything above is in service of it. It holds the geometry of one room: each surface's four corners in output space, its layer and source, and the order they paint in.
+
+Two things worth knowing:
+
+**It autosaves continuously.** Every edit is written to `localStorage`, so a reloaded tab does not lose an hour of calibration. The export is for carrying a room between machines and between nights.
+
+**The storage key still carries the tool's old name** — `wallmapper.project.v1`, from the working title this was built under. It is left alone deliberately, with a guard comment on the definition. It is an *address*, not a name: renaming it would not rename anything, it would point the tool at an empty place and silently orphan every mapping you have saved. Same for the `BroadcastChannel` name and the export filename.
+
+**Where this is going:** the mapping grows into a full **venue file** — adding the outer field of usable wall, named regions for lyrics and animation, and keep-out polygons the projector holds dark — which Pregonero reads and executes on stage. See `muralista-v1-design.md` in this repo for the design and its open questions.
+
+---
+
+## Limits
+
+Deliberate, not defects:
+
+- **Flat facets only.** Every surface is a four-corner plane — one perspective warp per quad. Curved and organic surfaces need a mesh warp, which is out of scope.
+- **No camera calibration.** You calibrate by dragging while watching the projected result. A photo of the wall is a planning aid at best; a phone does not stand where the projector stands.
+- **One projector.** A second one is another separate zone, never a blended overlap. Edge blending is explicitly out.
+- **Chrome only.** Alpha WebM transparency and the autoplay behaviour this leans on are Chrome-specific; Safari drops the alpha channel.
+- **Media is not managed.** Drop files into `mapper/media/` by hand — the picker fills in the path, it does not copy anything. Media is gitignored and stays out of this repo.
+- **`python3 -m http.server` has no Range support**, so seeking within a long video feels sluggish. `npx http-server` is a drop-in replacement that does.
+
+## Development
+
+A spike: no test suite, no PR flow, conventional commits on `main`. `mapper/_smoke.html` is a committed two-iframe harness that regression-checks window sync and the perspective warp in a single screenshot.
+
+There is also a six-step desk pass that exercises sync, warp, calibration, playback and round-tripping the mapping, without a projector — worth running before any trip to a venue. It is written out in `project-context.md`.
+
+The internal `mapper/` folder and the `mapper.*` filenames keep the shape they were built with. They are internal paths, nobody says them out loud, and renaming them would churn the run instructions for nothing.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+---
+
+*Muralista is part of **Tramoya**, the stage machinery behind [Chango Pepper](https://changopepper.com) — the rigging above the lights and the trap doors below the boards, the part of a show that works hardest and is never seen. A muralista is a painter of walls. The repository was called `projection-mapping`, and the tool `Wall Mapper`, until August 2026.*

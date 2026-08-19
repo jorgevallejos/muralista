@@ -182,6 +182,13 @@ v1 exists to play a room.
 - **The rename does not wait.** `projects/projection-mapping/` → `projects/muralista/`, and the
   GitHub repo with it, executed now.
 
+**Visibility and licence, decided 2026-08-20.** The repo **stays private** — unlike Bombista and
+Pregonero, which are both public MIT. It carries an **MIT `LICENSE`** anyway, matching its siblings:
+a licence in a private repo costs nothing, states the intent that binds if the repo is ever shared,
+and takes a decision off a later day's plate. Nothing tracked is sensitive — `mapper/media/` and
+`*.mp4` are gitignored, so the cerdo master is not in the repo — which means visibility can be
+reopened on any day, cheaply, with no disclosure to untangle first.
+
 The runbook's argument for waiting was *"no urgency in renaming something that isn't being
 promoted."* That was correct **while the project was parked**. It stops being correct the moment the
 project is active: this design doc is the first of what will be several documents, and every one

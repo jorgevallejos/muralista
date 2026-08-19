@@ -96,7 +96,7 @@ Two things worth knowing:
 
 **The storage key still carries the tool's old name** — `wallmapper.project.v1`, from the working title this was built under. It is left alone deliberately, with a guard comment on the definition. It is an *address*, not a name: renaming it would not rename anything, it would point the tool at an empty place and silently orphan every mapping you have saved. Same for the `BroadcastChannel` name and the export filename.
 
-**Where this is going:** the mapping grows into a full **venue file** — adding the outer field of usable wall, named regions for lyrics and animation, and keep-out polygons the projector holds dark — which Pregonero reads and executes on stage. See `muralista-v1-design.md` in this repo for the design and its open questions.
+**Where this is going:** the mapping grows into a full **venue file** — adding the outer field of usable wall, named regions for lyrics and animation, and keep-out polygons the projector holds dark — which Pregonero reads and executes on stage. See `project-context.md` in this repo, under "V1 design (2026-08-20)", for the design and its open questions.
 
 ---
 

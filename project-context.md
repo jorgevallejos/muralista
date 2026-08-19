@@ -1,4 +1,4 @@
-# Project Context — Projection Mapping
+# Project Context — Muralista
 
 Project-specific Cowork context. Read **after** `~/Chango Pepper/personal-context.md`. Started 2026-07-02 as a fast prototype sprint during Jorge's Fable access window (until 7 July). Ladders directly to **Thread 1 (art × technique synthesis)** — physical stagecraft + self-built software + Jorge's plasticine animations in one artifact.
 
@@ -17,10 +17,37 @@ Long-term this converges with the **Live Lyric Translator** (shared beat clock /
 - **Multi-projector, simplest form:** two projectors covering **separate zones** (each just another display output). Edge-blending into one seamless image is deliberately out of scope.
 - **AI elements are a production pipeline, not a runtime:** assets generated offline (transparent PNG / alpha WebM), sequenced live by the software. Live generative = code-driven beat-reactive layers (particles/shader), not runtime AI.
 
+## The rename (2026-08-20) — and what deliberately did NOT get renamed
+
+`projection-mapping` → **Muralista**: the GitHub repo (`github.com/jorgevallejos/muralista`, old URL
+redirects), the vault folder (`projects/muralista/`), `.gitmodules`, the product name, and every
+document across the vault. Step 3 of `context/tramoya/rename-runbook.md`.
+
+**Rename and website promotion were unbundled.** They used to wait on the same trigger. They no
+longer do: the rename is **done**, and **promotion still waits on the room** — Muralista stays off
+`changopepper.com/tramoya` until it has played an actual show, on the suite's published "real work"
+rule, which is unchanged. Reasoning: `muralista-v1-design.md` §6.
+
+**Working title retired.** The tool was built as **Wall Mapper**. It is Muralista now — `<title>`,
+the control-window heading, this file, and the README all say so.
+
+### Do NOT rename these — decided 2026-08-20, do not re-open
+
+| stays | why |
+|---|---|
+| the `mapper/` directory, and `mapper.html` / `mapper.js` / `mapper.css` | internal paths. Nobody says them out loud, and renaming them churns the README's run instructions and 83 KB of file for zero benefit |
+| `STORAGE_KEY = "wallmapper.project.v1"` (`mapper.js`) | **this one can lose real work.** Every mapping Jorge has autosaved lives under this key. Renaming it to match the product name orphans all of them, silently — the same failure as Pregonero's bundle-ID change, wearing a different costume. There is a guard comment at the definition |
+| `BroadcastChannel("mapper")` | pairs the control and output windows. Renaming it breaks the pairing for any window still open on the old name, for no gain |
+| the export filename `wallmapper-project.json` | cosmetic, and import validates on `version`/`surfaces` rather than the name — safe either way, so not worth the churn |
+
+The general lesson, now also in the runbook: **in any rename, grep the old name inside storage keys,
+channel names and format identifiers *before* sweeping product names, and treat every hit as an
+identifier to preserve rather than a string to update.**
+
 ## Staged plan
 
 1. ✅ Ideation + framing (this doc).
-2. **v1 prototype — "Wall Mapper" (in flight):** standalone browser app, single-file-ish, control window + output window (BroadcastChannel), corner-pin quads, layers: cerdo video / AI-asset (alpha) / generative beat / test patterns, photo overlay for authoring, mapping saved as per-venue JSON. Spec + kickoff: `claude-code-kickoff.md` (this folder). Built via Claude Code on the Mac (Fable coordinator + Sonnet crew).
+2. **v1 prototype — "Wall Mapper", the retired working title (built):** standalone browser app, single-file-ish, control window + output window (BroadcastChannel), corner-pin quads, layers: cerdo video / AI-asset (alpha) / generative beat / test patterns, photo overlay for authoring, mapping saved as per-venue JSON. Spec + kickoff: `claude-code-kickoff.md` (this folder). Built via Claude Code on the Mac (Fable coordinator + Sonnet crew).
 3. Projector session: calibrate on real wall + boxes, deconstruct the cerdo animation across surfaces, drop in first AI asset. Debrief → decide v2.
 4. Second projector as a separate zone.
 5. ~~Integration with the lyric translator's clock/timeline (shared transport)~~ — **superseded
@@ -43,12 +70,12 @@ Mac mini + 1 projector (translator live rig) + iPad. Second projector: used busi
 
 ## Ways of working
 
-Same loop as the translator waves: Cowork (this file) holds PM state; **Claude Code on the Mac runs the build** — Fable as coordinator, Sonnet subagents as crew, Jorge tests at the projector between milestones. v1 is a **spike**: light process, no test suite required; graduate to TDD + PR flow only if it becomes a real app. Code lives in this folder (git init locally; GitHub repo optional until it earns one).
+Same loop as the translator waves: Cowork (this file) holds PM state; **Claude Code on the Mac runs the build** — Fable as coordinator, Sonnet subagents as crew, Jorge tests at the projector between milestones. v1 is a **spike**: light process, no test suite required; graduate to TDD + PR flow only if it becomes a real app. Code lives in this folder. *(2026-08-20: it earned the repo — `github.com/jorgevallejos/muralista`, public remote in active use.)*
 
 ## Status / next step
 
 - 2026-07-02: project opened; spec + kickoff prompt written.
-- 2026-07-02 (later): **Wall Mapper v1 built** — all 4 slices done via Claude Code (Fable coordinator + Sonnet crew), committed to local git (`a1fc6b7`). App lives in `mapper/`; run instructions in `README.md`. Cerdo master copied to `mapper/media/cerdo.mp4`. Homography math verified numerically; browser sanity pass clean (headless Chrome, no console errors). Known limits noted in README: `python3 -m http.server` lacks Range support (video seek may be sluggish — `npx http-server` as alternative); alpha WebM Chrome-only.
+- 2026-07-02 (later): **v1 built** (then called Wall Mapper) — all 4 slices done via Claude Code (Fable coordinator + Sonnet crew), committed to local git (`a1fc6b7`). App lives in `mapper/`; run instructions in `README.md`. Cerdo master copied to `mapper/media/cerdo.mp4`. Homography math verified numerically; browser sanity pass clean (headless Chrome, no console errors). Known limits noted in README: `python3 -m http.server` lacks Range support (video seek may be sluggish — `npx http-server` as alternative); alpha WebM Chrome-only.
 - 2026-07-02 (evening): **desk smoke test passed — all 6 steps** (sync, keystone warp, corner nudge, video transport during calibration, export/import). Two fixes landed on the way: silent output-window failures now alert/focus (`def3b62`), and a real bug — CSS `display` on `.control-root` overrode the `hidden` attribute, so the output window showed the control skeleton and the actual output rendered below the fold (`a3fee99`). Lesson for the crew: headless checks must verify what's *painted* (screenshots/computed style), not DOM attributes. `mapper/_smoke.html` is a committed two-iframe harness that visually regression-checks sync + keystone in one screenshot.
 - 2026-07-02 (night): **projector session done — M1, M2, M3 all pass.** Pattern sits flush on a real box via arrow-key nudge; cerdo across multiple surfaces with working transport; image-with-alpha compositing works at the wall (tested with a placeholder transparent PNG, `media/test-pig.png`). Fixes from the session: media layers that are missing/broken now show a visible failure note on the output instead of black-on-black (`4bb30fc`); source-field placeholder now reads `e.g. …` so it can't be mistaken for a linked file (`1f653db`).
 - **UX finding from live use:** arrow-key nudge is right for precision but too slow for coarse placement; Jorge expects to drag whole surfaces and corners directly in the preview and reports dragging "doesn't work" — v2.1 investigates + adds direct manipulation (click-to-select in preview, whole-surface drag).
@@ -69,7 +96,7 @@ The AI-asset idea sharpened: not a static picture *beside* the video, but **AI a
 3. **Asset banks + live selection (the real v2 design work):** AI generates variety offline (e.g. idle/agitated/dancing loops at 3 intensities), code selects/blends live from room input. Indistinguishable from "the AI hears the room", but deterministic and rehearsable. Needs a design pass with Jorge once 1+2 are demoable; converges with the lyric translator clock later (song/tempo/lyric position are context too).
 4. **Live AI frame generation: explicitly out** — parked indefinitely (Mac-mini-unrealistic, uncontrollable on stage); the layer model can absorb it later without redesign.
 
-Process for v2: still spike discipline (no test suite), but the **local git repo is in active use** — every slice lands as a conventional commit (v1 history: `daf5583..1f653db`). GitHub remote/PR flow deferred until this graduates toward the real show tool.
+Process for v2: still spike discipline (no test suite), but the **git repo is in active use** — every slice lands as a conventional commit (v1 history: `daf5583..1f653db`). **The GitHub remote is live: `github.com/jorgevallejos/muralista`** — v2 already shipped through it as PR #1. *(This line used to read "GitHub remote/PR flow deferred until this graduates"; it graduated, corrected 2026-08-20.)*
 
 - 2026-07-02/03: **v2 workstreams 1+2 built** (three Sonnet slices, committed `976dd84`, `0d633cb`, `065c03f`), pending Jorge's test:
   - **v2.1 direct manipulation** — click-to-select in the preview, whole-surface drag, bigger handle hit targets, arrow keys move the whole surface by default (1–4 = corner, 0/Esc = back). Root cause of "dragging doesn't work": polygons were never clickable — an affordance gap, not a regression.

@@ -1,7 +1,7 @@
 "use strict";
 
 /*
- * Wall Mapper — mapper.js
+ * Muralista — mapper.js
  *
  * Single script serving two roles, chosen by the URL query string:
  *   http://localhost:8123/mapper.html          -> control window
@@ -11,6 +11,11 @@
  */
 
 const SVG_NS = "http://www.w3.org/2000/svg";
+// DO NOT RENAME (decided 2026-08-20, with the Muralista rename). This key still carries the
+// old "Wall Mapper" working title on purpose: every mapping Jorge has autosaved lives under
+// it. Renaming it to match the product name orphans all of them, silently — the same failure
+// as Pregonero's bundle-ID change, in a different costume. Same for BroadcastChannel("mapper")
+// and the export filename below. See context/tramoya/rename-runbook.md.
 const STORAGE_KEY = "wallmapper.project.v1";
 const PREVIEW_W = 1600; // matches preview-svg viewBox
 const PREVIEW_H = 900;
@@ -34,7 +39,7 @@ function loadProject() {
       if (isValidProject(parsed)) return parsed;
     }
   } catch (err) {
-    console.warn("Wall Mapper: could not read saved project, starting fresh.", err);
+    console.warn("Muralista: could not read saved project, starting fresh.", err);
   }
   return emptyProject();
 }
@@ -845,7 +850,7 @@ function capturePointerSafely(el, pointerId) {
   try {
     el.setPointerCapture(pointerId);
   } catch (err) {
-    console.warn("Wall Mapper: setPointerCapture failed, continuing without capture.", err);
+    console.warn("Muralista: setPointerCapture failed, continuing without capture.", err);
   }
 }
 
@@ -1233,7 +1238,7 @@ async function enableMic() {
   } catch (err) {
     micStream = null;
     statusEl.textContent = `Mic unavailable: ${(err && err.message) || err}`;
-    console.warn("Wall Mapper: getUserMedia failed.", err);
+    console.warn("Muralista: getUserMedia failed.", err);
   }
 }
 
@@ -1414,13 +1419,13 @@ function importProjectFromFile(file) {
     try {
       const parsed = JSON.parse(reader.result);
       if (!isValidProject(parsed)) {
-        window.alert("That file doesn't look like a Wall Mapper project (missing version/surfaces).");
+        window.alert("That file doesn't look like a Muralista project (missing version/surfaces).");
         return;
       }
       replaceProject(parsed);
     } catch (err) {
       window.alert("Could not read that file as JSON.");
-      console.error("Wall Mapper import error:", err);
+      console.error("Muralista import error:", err);
     }
   };
   reader.onerror = () => {
@@ -1730,7 +1735,7 @@ function playVideoQuietly(video) {
   // promise can still reject (e.g. interrupted by a near-simultaneous
   // pause()) - don't let that become an unhandled rejection.
   if (p && typeof p.catch === "function") {
-    p.catch((err) => console.warn("Wall Mapper: video play() was rejected.", err));
+    p.catch((err) => console.warn("Muralista: video play() was rejected.", err));
   }
 }
 
@@ -2056,7 +2061,7 @@ function showIdentifyOverlay() {
 function toggleFullscreen() {
   if (!document.fullscreenElement) {
     document.documentElement.requestFullscreen().catch((err) => {
-      console.warn("Wall Mapper: fullscreen request failed.", err);
+      console.warn("Muralista: fullscreen request failed.", err);
     });
   } else {
     document.exitFullscreen().catch(() => {});
@@ -2095,7 +2100,7 @@ function initOutput() {
 // and media loading - catch it loudly instead of failing silently.
 if (window.location.protocol === "file:") {
   window.alert(
-    "Wall Mapper must be served over HTTP, not opened as a file.\n\n" +
+    "Muralista must be served over HTTP, not opened as a file.\n\n" +
       "In a terminal:  cd mapper && python3 -m http.server 8123\n" +
       "Then open:  http://localhost:8123/mapper.html"
   );

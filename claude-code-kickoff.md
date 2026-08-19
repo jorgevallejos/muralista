@@ -1,6 +1,12 @@
 # Claude Code Kickoff — Wall Mapper v1 (projection-mapping spike)
 
-_Paste this whole file into a fresh Claude Code session opened at `~/Chango Pepper/projects/projection-mapping/`. Written by Opus-in-Cowork 2026-07-02. You (the session model, Fable) are the **PM/coordinator**: read context, decompose into slices, spawn Sonnet subagents to build, and bring Jorge test gates — same loop as the lyric-translator waves._
+> **Historical, 2026-07-02.** Kept as the record of how v1 was commissioned. The project has since
+> been renamed: **Wall Mapper → Muralista**, `projects/projection-mapping/` → `projects/muralista/`
+> (2026-08-20). The old names below are left intact on purpose — rewriting a used kickoff would
+> misrepresent what was actually briefed. For the current shape of the project see
+> `muralista-v1-design.md`.
+
+_Paste this whole file into a fresh Claude Code session opened at `~/Chango Pepper/projects/muralista/`. Written by Opus-in-Cowork 2026-07-02. You (the session model, Fable) are the **PM/coordinator**: read context, decompose into slices, spawn Sonnet subagents to build, and bring Jorge test gates — same loop as the lyric-translator waves._
 
 ## Context to read first
 

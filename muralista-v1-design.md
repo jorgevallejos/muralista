@@ -20,7 +20,7 @@ Two things in that sentence change the project.
 
 ## 2. Frame change — from additive to subtractive
 
-Wall Mapper today is **additive**. You add quads; each quad is a corner-pinned surface carrying a
+Muralista today is **additive**. You add quads; each quad is a corner-pinned surface carrying a
 layer; everything outside the quads is black by default. Black is the absence of a decision.
 
 What Jorge describes is the inverse. The projector **floods the whole background**, and the mapping
@@ -90,7 +90,7 @@ That is precisely Bombista's shape, one level up: run before, produce a file, ge
 
 ### 3.2 What this costs — say it out loud
 
-**The runtime half of v2 is now on the wrong side of the tool boundary.** Wall Mapper's shared
+**The runtime half of v2 is now on the wrong side of the tool boundary.** Muralista's shared
 transport, beat layers and the whole 2026-07-03 mic-reactivity slice (`065c03f`) were built for a
 Muralista that runs *during* the show. Under this shape, Muralista does not run during the show.
 
@@ -108,7 +108,7 @@ sounds.
 ## 4. The file
 
 This is the Venue Turn's **venue file**, and it now has an owner and a consumer. It half-exists
-already: Wall Mapper saves its mapping as per-venue JSON today.
+already: Muralista saves its mapping as per-venue JSON today.
 
 Applying the Venue Turn's own test — *what invalidates this field: a different song, a different
 room, or a different night?*
@@ -157,7 +157,7 @@ face. In a café with a short throw and a performer inside the beam, that second
 refinement — it is the difference between readable and not.
 
 **What it defers:** animation in the mapped field. For the first rooms, animation either sits out, or
-runs from Wall Mapper as it does today in a separate moment of the set. Worth deciding deliberately
+runs from Muralista as it does today in a separate moment of the set. Worth deciding deliberately
 rather than by omission — see §7.
 
 ### 5.1 The legibility constraint carries over unchanged
@@ -227,6 +227,6 @@ Nothing in §7 should be answered from the desk.
 
 - `context/tramoya/venue-turn.md` — the parent thread; §2.1, §2.3, §2.5, §2.6, §2.7 all load-bearing here.
 - `context/tramoya/README.md` — the suite, the "real work" rule, the legibility constraint.
-- `project-context.md` (this folder) — Wall Mapper's build history and the v2 state.
-- `README.md` (this folder) — what Wall Mapper actually does today.
-- `context/tramoya/rename-runbook.md` — Muralista's eventual rename, triggered by the room.
+- `project-context.md` (this folder) — the build history and the v2 state.
+- `README.md` (this folder) — what Muralista actually does today.
+- `context/tramoya/rename-runbook.md` — the rename, **executed 2026-08-20** per §6 below.

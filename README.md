@@ -1,6 +1,8 @@
-# Wall Mapper v1
+# Muralista v1
 
-A browser-based projection-mapping spike for Chango Pepper concerts: corner-pin Jorge's animations onto multiple physical surfaces (wall + boxes) with one projector, calibrated live without a camera. Plain HTML/JS/CSS, no framework or build step, Chrome only. The single page (`mapper/mapper.html`) serves two roles — a **control** window (performer UI: surface list, calibration, layers, transport) and an **output** window (`?output`, the projector image) — kept in sync over `BroadcastChannel`.
+*Built under the working title **Muralista**, retired 2026-08-20 when the project was renamed. The internal `mapper/` folder and the `mapper.*` filenames deliberately keep the old shape — they are internal paths and renaming them buys nothing.*
+
+A browser-based projection-mapping tool for Chango Pepper concerts: corner-pin Jorge's animations onto multiple physical surfaces (wall + boxes) with one projector, calibrated live without a camera. Plain HTML/JS/CSS, no framework or build step, Chrome only. The single page (`mapper/mapper.html`) serves two roles — a **control** window (performer UI: surface list, calibration, layers, transport) and an **output** window (`?output`, the projector image) — kept in sync over `BroadcastChannel`.
 
 ## Running it
 

@@ -147,7 +147,7 @@ Opened 2026-08-20 in a Cowork design session. Supersedes the "parked until the Q
 is defined" framing above — that blocker no longer gates the project. This session also **answered
 Venue Turn open question 2** (who renders on stage, whose clock — `context/tramoya/venue-turn.md`
 §2.6) and took a position on that thread's questions 1 and 3. It does not reopen anything in
-`context/tramoya/KICKOFF.md`.
+`context/tramoya/README.md`.
 
 ### The goal, in Jorge's words
 
@@ -332,8 +332,9 @@ Decided by thinking, not by looking (contrast "Open questions — the room" belo
    field is bigger than the eye can judge from behind the projector. May need a two-person setup pass
    or a phone photo as a rough guide. Untested. Sharpened by "the room" item 5 below — the keep-out
    has to be judged from inside the beam, not from behind the projector.
-4. **Does this redraw Apuntador's scope** before 7 September? Venue Turn question 4, unchanged and
-   still worth looking at first.
+4. **Does this redraw the scope of the proposed Bombista-orchestrator direction**
+   (`projects/bombista/project-context.md`, "Proposed direction") before 7 September? Venue Turn
+   question 4, unchanged and still worth looking at first.
 5. **Where does the ported mic/beat behaviour land** in Pregonero, and when? The hidden cost flagged
    under "Architecture" above. Pushed further out by the parallel track — nothing moves into Pregonero
    until Muralista's value is proven.

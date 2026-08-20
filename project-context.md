@@ -22,7 +22,7 @@ Long-term this converges with the **Live Lyric Translator** (shared beat clock /
 
 `projection-mapping` → **Muralista**: the GitHub repo (`github.com/jorgevallejos/muralista`, old URL
 redirects), the vault folder (`projects/muralista/`), `.gitmodules`, the product name, and every
-document across the vault. Step 3 of `context/tramoya/rename-runbook.md`.
+document across the vault. Step 3 of `context/tramoya/history/rename-runbook.md`.
 
 **Rename and website promotion were unbundled.** They used to wait on the same trigger. They no
 longer do: the rename is **done**, and **promotion still waits on the room** — Muralista stays off
@@ -406,4 +406,4 @@ given mapping is on whichever machine last drove the calibration.
   for the V1 design above.
 - `context/tramoya/README.md` — the suite, the "real work" rule, the legibility constraint.
 - `README.md` (this folder) — what Muralista actually does today, for anyone opening the repo.
-- `context/tramoya/rename-runbook.md` — the rename, executed 2026-08-20.
+- `context/tramoya/history/rename-runbook.md` — the rename, executed 2026-08-20.

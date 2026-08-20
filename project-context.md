@@ -392,6 +392,50 @@ the wall's colour are *per-room* facts, answered every gig — their home is
 `context/concerts/_template/`, whose checklist already collects ambient light. The first café should
 answer them by being played, not by being reasoned about.
 
+## Prior art — TouchDesigner (noted 2026-08-20)
+
+**TouchDesigner** (Derivative, Toronto — `derivative.ca`) is the incumbent in this space and the tool
+behind a large share of the projection-mapping work Jorge sees posted. Recorded here as a **reference
+to read against**, not a dependency and not a candidate to adopt. Free non-commercial licence, paid
+Pro.
+
+**What it is.** A node-based visual programming environment for real-time interactive multimedia. You
+build a signal graph instead of writing a render loop. Operator families are colour-coded in the
+graph: TOPs (textures/images), CHOPs (channel and control data — audio, MIDI, sensors), DATs
+(text, tables, Python scripting), SOPs (geometry), COMPs (components). Everything runs per-frame on
+the GPU. Built-in `Kantan Mapper` does the corner-pin/mesh warping; edge-blending, multi-projector
+sync, audio and MIDI input are all first-class.
+
+**Where it overlaps Muralista.** Almost entirely, on capability: corner-pin warp of media onto
+non-planar surfaces, named projection regions, keep-outs, audio-reactive layer behaviour,
+multi-output. Anything on the v1 or v2 feature list, TouchDesigner already does, better and with a
+decade of hardening. **Feature parity is not the axis to compete on and should not be attempted.**
+
+**Where it does not overlap — and why that is the whole point.** TouchDesigner collapses authoring
+and performance into **one always-live patch**. The graph you tune at the venue is the graph running
+during the show; there is no artifact between them, and no state that survives the app being closed.
+That is precisely the fragility the desk-tool cut designs away from (see "Architecture: a desk tool,
+not a stage tool" above). Muralista's differentiator is **the venue file** — mapping a room produces
+a durable, inspectable, version-controllable document that a separate, feature-complete renderer
+executes. Muralista is allowed to be slow, fiddly and ugly because it is never on stage. TouchDesigner
+cannot make that trade; its authoring surface *is* its runtime.
+
+Secondary, and real: TouchDesigner's graph is not legible to anyone but its author, which fails the
+suite's legibility constraint (`context/tramoya/README.md`). A venue JSON is readable by a human, a
+diff and a test.
+
+**Open question to carry — Jorge, 2026-08-20.** *Is there any connection or overlap worth acting on?*
+Three angles, none decided:
+
+1. **Vocabulary.** TD's operator taxonomy and the Kantan Mapper's corner-pin UX are battle-tested
+   naming and interaction conventions. Borrowing vocabulary costs nothing and buys familiarity.
+2. **Interop.** Could Muralista's venue file be *exported to* TouchDesigner, or could TD serve as a
+   reference renderer to validate a mapping against? Would test the format's honesty. Unscoped.
+3. **Kill-criterion check.** If at any point the honest answer is "Pregonero + Muralista is a worse
+   TouchDesigner," that is a signal, and this project is disposable like any other. The answer today
+   is no — the file boundary is a genuine architectural difference, not a feature gap — but the
+   question should be re-asked, not assumed.
+
 ## Where the state actually lives
 
 The working venue mappings are not in git. They live in the browser's `localStorage`, under the key
@@ -407,3 +451,5 @@ given mapping is on whichever machine last drove the calibration.
 - `context/tramoya/README.md` — the suite, the "real work" rule, the legibility constraint.
 - `README.md` (this folder) — what Muralista actually does today, for anyone opening the repo.
 - `context/tramoya/history/rename-runbook.md` — the rename, executed 2026-08-20.
+- `derivative.ca` — TouchDesigner, the incumbent. See "Prior art" above before adding any feature
+  that sounds like something TD already does.

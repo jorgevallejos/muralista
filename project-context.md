@@ -110,7 +110,7 @@ Mac mini + 1 projector (translator live rig) + iPad. Second projector: used busi
 
 ## Ways of working
 
-Same loop as the translator waves: Cowork (this file) holds PM state; **Claude Code on the Mac runs the build** — Fable as coordinator, Sonnet subagents as crew, Jorge tests at the projector between milestones. v1 is a **spike**: light process, no test suite required; graduate to TDD + PR flow only if it becomes a real app. Code lives in this folder. *(2026-08-20: it earned the repo — `github.com/jorgevallejos/muralista`, public remote in active use.)*
+Same loop as the translator waves: Cowork (this file) holds PM state; **Claude Code on the Mac runs the build** — Fable as coordinator, Sonnet subagents as crew, Jorge tests at the projector between milestones. v1 is a **spike**: light process, no test suite required; graduate to TDD + PR flow only if it becomes a real app. Code lives in this folder. *(2026-08-20: it earned the repo — `github.com/jorgevallejos/muralista`, private remote in active use.)*
 
 ## v2 direction (decided with Jorge, 2026-07-02)
 
@@ -128,18 +128,18 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   - **v2.2 overlays** — alpha-WebM layers join the shared transport; list order = stacking order with ▲/▼ (fixed a real bug: reorders never re-sequenced the output DOM); ⧉ duplicate for exact overlay registration; `media/test-alpha.webm` fixture.
   - **v2.3 sound reactivity** — mic capture + 30Hz level/onset envelope in the control window, broadcast ephemerally; beat layer `mic` mode (breathes with level, rings on onsets); `micReactivity` slider fades video/image layers in with room loudness; graceful >1s stale decay; old mappings unaffected. Verified via CDP-driven headless Chrome (15/15 assertions) — note: `--virtual-time-budget` can't drive rAF/canvas checks, CDP real-time can.
   - **Workstream 3 (asset banks) not built** — needs a design pass with Jorge. Groundwork captured by the v2.3 crew: onset stream implicitly carries tempo (inter-onset median); bank state transitions should key off the smoothed level with hysteresis; the "shared output loop + opt-in entry field" pattern and src-swap-through-reconciler are the intended mechanism for a future `bank` layer type.
-- **Next for v2 (folded into the 2026-08-20 projector session — see "V1 design → Next step" below):** the desk/projector testing of v2.1–v2.3 that has been owed since July does not happen as a standalone step. It happens as half of the 2026-08-20 projector session, which also hand-fakes the new subtractive layout. Desk testing first (mic checks per README's Sound-reactivity section), then projector with overlay + mic beside cerdo; the asset-bank design conversation and any GitHub/PR graduation decision wait behind that.
+- **v2's desk/projector testing, folded into the 2026-08-20 projector session:** the desk/projector testing of v2.1–v2.3 that had been owed since July was not done as a standalone step. It runs as half of the 2026-08-20 projector session, alongside hand-faking the new subtractive layout — desk testing first (mic checks per README's Sound-reactivity section), then projector with overlay + mic beside cerdo; the asset-bank design conversation and any GitHub/PR graduation decision wait behind that.
 - Priority note (2026-07-02, historical): runs **behind** song registration + venue visits that week; the Fable-window deadline (7 July) was the reason it was active at all. Superseded — see current-priorities.md for the live priority read.
 
-## Status / next step
+## Build history
 
 - 2026-07-02: project opened; spec + kickoff prompt written.
 - 2026-07-02 (later): **v1 built** (then called Wall Mapper) — all 4 slices done via Claude Code (Fable coordinator + Sonnet crew), committed to local git (`a1fc6b7`). App lives in `mapper/`; run instructions in `README.md`. Cerdo master copied to `mapper/media/cerdo.mp4`. Homography math verified numerically; browser sanity pass clean (headless Chrome, no console errors). Known limits noted in README: `python3 -m http.server` lacks Range support (video seek may be sluggish — `npx http-server` as alternative); alpha WebM Chrome-only.
 - 2026-07-02 (evening): **desk smoke test passed — all 6 steps** (sync, keystone warp, corner nudge, video transport during calibration, export/import). Two fixes landed on the way: silent output-window failures now alert/focus (`def3b62`), and a real bug — CSS `display` on `.control-root` overrode the `hidden` attribute, so the output window showed the control skeleton and the actual output rendered below the fold (`a3fee99`). Lesson for the crew: headless checks must verify what's *painted* (screenshots/computed style), not DOM attributes. `mapper/_smoke.html` is a committed two-iframe harness that visually regression-checks sync + keystone in one screenshot.
 - 2026-07-02 (night): **projector session done — M1, M2, M3 all pass** (gate questions: does the pattern sit flush on the box? does the animation feel like it lives on the objects? is the AI-asset pipeline worth developing?). Pattern sits flush on a real box via arrow-key nudge; cerdo across multiple surfaces with working transport; image-with-alpha compositing works at the wall (tested with a placeholder transparent PNG, `media/test-pig.png`). Fixes from the session: media layers that are missing/broken now show a visible failure note on the output instead of black-on-black (`4bb30fc`); source-field placeholder now reads `e.g. …` so it can't be mistaken for a linked file (`1f653db`).
 - **UX finding from live use:** arrow-key nudge is right for precision but too slow for coarse placement; Jorge expects to drag whole surfaces and corners directly in the preview and reports dragging "doesn't work" — v2.1 investigates + adds direct manipulation (click-to-select in preview, whole-surface drag).
-- **2026-08-11: calibration camera decided — Elgato Facecam 4K** (acquiring). Full rationale in the Hardware section above. Not a v1 dependency (Tier 1 needs no camera); it's for the Tier 2 / structured-light auto-cal path and doubles as a content cam.
-- **2026-08-20: Muralista v1 design session (Cowork).** New goal, new architecture — no longer gated on the Q4 animation project. Full design, decisions and next step: see **"V1 design (2026-08-20)"** below.
+- **2026-08-11: calibration camera decided — Elgato Facecam 4K.** Full rationale in the Hardware section above. Not a v1 dependency (Tier 1 needs no camera); it's for the Tier 2 / structured-light auto-cal path and doubles as a content cam.
+- **2026-08-20: Muralista v1 design session (Cowork).** New goal, new architecture — no longer gated on the Q4 animation project. Full design and decisions: see **"V1 design (2026-08-20)"** below.
 
 ## V1 design (2026-08-20)
 
@@ -229,8 +229,8 @@ loudness" stops being a live behaviour Muralista performs and becomes a **declar
 venue file that Pregonero executes**. The design survives intact. The code is on the wrong side of
 the line, and porting it is real work that has not been costed — the largest hidden cost of the shape,
 and it should not be discovered in September. **Second cost: Pregonero grows.** To execute the file it
-must learn to render into arbitrary warped quads and to hold regions dark. Pregonero is `v0.11.0`,
-feature-complete, hundreds of tests green — a good place to be careful about how far this actually has
+must learn to render into arbitrary warped quads and to hold regions dark. Pregonero is
+feature-complete and well tested — a good place to be careful about how far this actually has
 to go for v1, which is less far than it sounds (see "Staged build" below).
 
 ### The venue file
@@ -391,21 +391,13 @@ the wall's colour are *per-room* facts, answered every gig — their home is
 `context/concerts/_template/`, whose checklist already collects ambient light. The first café should
 answer them by being played, not by being reasoned about.
 
-### Next step
+## Where the state actually lives
 
-**Do not build yet.** Two things first, in this order:
-
-1. **A projector session with the rig as it stands** — which also clears the seven-week-old untested
-   v2 (direct manipulation, alpha overlays, mic reactivity: `976dd84`, `0d633cb`, `065c03f`, verified
-   only headless). Point the projector at a whole wall, stand in the beam, and *fake the layout by
-   hand*: place a region where lyrics would go, place a black quad where the body is, look at it.
-2. **Bring back a hand-written notes file** of everything that had to be decided at the wall. That
-   file is the venue file's first draft, and per Venue Turn §2.7 ("Do not design the format — earn
-   it") it should be written twice, in two rooms, before anything is specified.
-
-Nothing in "Open questions" above should be answered from the desk. This also satisfies the Venue
-Turn's own next step, which was to play one house concert with the rig as it stands and bring back a
-hand-written notes file — same room, one trip.
+The working venue mappings are not in git. They live in the browser's `localStorage`, under the key
+`wallmapper.project.v1` (deliberately not renamed during the 2026-08-20 rename — see the "Do NOT
+rename these" table above). Exported venue JSONs sit in `mapper/media/`, alongside the gitignored
+video assets. This file and the repo's committed code describe the tool; the actual state of any
+given mapping is on whichever machine last drove the calibration.
 
 ## Pointers
 

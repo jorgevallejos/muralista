@@ -157,6 +157,7 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
 - **UX finding from live use:** arrow-key nudge is right for precision but too slow for coarse placement; Jorge expects to drag whole surfaces and corners directly in the preview and reports dragging "doesn't work" — v2.1 investigates + adds direct manipulation (click-to-select in preview, whole-surface drag).
 - **2026-08-11: calibration camera decided — Elgato Facecam 4K.** Full rationale in the Hardware section above. Not a v1 dependency (Tier 1 needs no camera); it's for the Tier 2 / structured-light auto-cal path and doubles as a content cam.
 - **2026-08-20: Muralista v1 design session (Cowork).** New goal, new architecture — no longer gated on the Q4 animation project. Full design and decisions: see **"V1 design (2026-08-20)"** below.
+- **2026-08-22: v2.4 — live camera backdrop, and direct manipulation actually fixed.** Two things, one pass. The camera backdrop turns a webcam beside the projector lens into a rectified authoring surface (see "Live camera backdrop" below). The direct-manipulation fix closes the July v2.1 entry above, which had never worked: see "The v2.1 drag bug" below. Project schema bumped to **2**; v1 files still open.
 
 ## V1 design (2026-08-20)
 
@@ -189,6 +190,11 @@ concept of before.**
 
 **The keep-out is the new primitive.** Named in the Venue Turn as §2.3 and confirmed as a v1
 requirement: a **keep-out region** the projector paints dark. Its first job is the performer.
+
+**However you draw one, trace the performer's *shadow*, never the performer** — see "The shadow is
+the keep-out, and it costs nothing to measure" below, and the same rule stated in `README.md` under
+"Keep-outs and the shadow rule". This holds for a photo backdrop and for the live camera backdrop
+alike, and it is the reason the camera backdrop's accuracy limit costs nothing in practice.
 
 **Decided: a static performer keep-out box for v1, not camera tracking.** A polygon in the venue file
 that the renderer keeps black, and a rehearsal discipline — Jorge commits to staying roughly inside
@@ -519,6 +525,100 @@ dark-region primitive nor a text layer:
 Worth noting for whenever the lyric region reaches Pregonero: the catalogue's lyric entries are not
 all one line. Some carry an embedded newline and render as two. Any region sized against a single
 line will clip them.
+
+## Live camera backdrop (built 2026-08-22, v2.4)
+
+The studio session above concluded that a photo taken beside the lens is worth drawing on. This is
+that finding built, with the photo taken out of the loop.
+
+**What it does.** `Backdrop → Source → Live camera` shows a webcam feed under the surface outlines,
+in place of `project.photo`, at the same reduced opacity. A one-time calibration marks the corners of
+the projector's lit rectangle *as the camera sees them*; from then on the feed is warped so that
+rectangle fills the preview. Drag a quad and the real wall updates underneath it.
+
+**Why it needed no new machinery.** It is the surface warp pointed the other way. A surface maps a
+square of content **onto** a quad in output space; the camera backdrop maps a quad in **camera**
+space onto the whole frame. Same `computeHomography`, same `matrix3d`, ~15 lines of new math. The
+one thing that differs: the surface warp is built in the SVG's fixed 1600×900 viewBox and scales for
+free, while the camera's is built in real stage pixels, so it is rebuilt by a `ResizeObserver`.
+
+**The "show white" helper** exists for step one of calibration: the lit rectangle can only be marked
+if the projector is lighting something, and a "no signal" screen is not a rectangle of known shape.
+A button on the control window raises a full white plate on the output. It **covers** the surfaces
+rather than replacing them, so dropping it leaves everything as it was, still playing. This is the
+only change made to the output render path. (The standalone `mapper/white.html` from the studio
+session still exists and still works — it is the version you use when Muralista is not open at all.)
+
+**Authoring only, same rule as `project.photo`.** The `<video>` lives inside `control-root`; the
+`MediaStream` is never serialized. `cameraDeviceId` and `cameraQuad` do ride along in the broadcast
+state exactly as `photo` does, and nothing on the output side reads them. Verified: the output role
+has zero video elements.
+
+### The accuracy limit, and why the shadow rule dissolves it
+
+After calibration the mapping is **exact for anything on the wall plane** — a plane-to-plane
+projective map is precisely what a homography is. Anything standing **out** from the wall appears
+displaced, by an amount that grows with its distance from the wall, because the camera and the lens
+do not stand in the same place and genuinely disagree about where such a thing is. **No fixed
+correction removes this**, and offering one would be a lie: the error depends on depth, which a
+single camera does not know.
+
+This sounds worse than it is, because the one object anybody wants to trace — the performer — has a
+shadow, and **the shadow is on the wall plane**. Trace the shadow and the error is not corrected, it
+never arises. This is stated in `README.md` under "Keep-outs and the shadow rule", next to the
+keep-out primitive above, and in a comment on the camera section in `mapper.js`, because it is the
+kind of thing that gets rediscovered expensively.
+
+### Schema v2
+
+`project` gained `backdropMode`, `cameraDeviceId` and `cameraQuad`, and `version` went to 2.
+`migrateProject()` runs on load **and** on import, filling the new fields with the values that
+describe what a v1 project already was, so every autosave and every exported venue JSON still opens.
+**`STORAGE_KEY` is untouched** — its `.v1` suffix is part of an address, not a schema version, and
+the "Do NOT rename these" table above still governs it.
+
+## The v2.1 drag bug — found 2026-08-22, four weeks after it was declared fixed
+
+Jorge reported after the July projector session that dragging in the preview "doesn't work". v2.1
+added `startSurfaceDrag` and `startCornerDrag` to fix exactly that, verified headlessly, and shipped.
+He reported the same thing again. **He was right both times.**
+
+**The bug.** Both handlers attached their `pointermove`/`pointerup` listeners to the element that
+received `pointerdown` — the polygon, or the corner-handle group. The first `pointermove` calls
+`renderPreview()`, which does `svg.innerHTML = ""` and rebuilds every polygon and handle from
+scratch. So the element holding the listeners was destroyed by the first move it handled. What
+followed, all confirmed in Chrome with a real mouse:
+
+- the quad moved by exactly **one mouse-move's** worth of travel and then froze;
+- removing the element implicitly released its pointer capture, so capture could not save it;
+- `pointerup` never reached the handler: no final commit, and the listeners leaked on a detached node;
+- pressing an **unselected** surface was worse — `startSurfaceDrag` called `renderControl()` to move
+  the selection *before* attaching its listeners, so they went onto an already-detached node and the
+  surface **did not move at all**. That is the gesture Jorge was making, and it is why the report was
+  "doesn't work" rather than "works badly".
+
+**The fix.** One shared `beginPreviewDrag()` that puts both the pointer capture and the listeners on
+`#preview-svg`, which is emptied but never replaced. All three gestures now use it — whole surface,
+single corner, and the camera's calibration corners.
+
+**Why the headless check passed while nothing moved on screen.** It dispatched a *single* synthetic
+`pointermove` and asserted on the corner numbers — and one move is precisely the amount that did
+work. The repo already carried the lesson that headless checks must verify what is **painted**, from
+the 2026-07-02 `hidden`-attribute bug (see Build history). It was not enough, because this check did
+not look wrong: it asserted on the right values, drove a real gesture, and passed. The sharper
+version, now paid for twice:
+
+> **A synthetic gesture is not a gesture.** Dispatching one event and asserting the state changed
+> proves one event works, which is the one thing that was never in doubt. A drag is a *sequence*, and
+> its failure modes live between the events — in what the first one does to the DOM the second one
+> needs. Continuous input gets verified by hand, or it is not verified.
+
+Pointer capture behaves differently for untrusted events too, which is how the harness kept a green
+light on a red feature. The v2.4 verification was done with a real mouse in Chrome, measuring the
+**painted** geometry (`getBoundingClientRect` on the rendered polygon, plus screenshots) against the
+pixel coordinates the mouse was actually dragged between.
+
+**Still hand-untested from the July v2 round:** transport-synced overlays and mic reactivity.
 
 ## Context-awareness: parked 2026-08-22, and what survives the parking
 

@@ -269,6 +269,48 @@ button.danger:hover {
   display: flex;
   gap: 8px;
   padding: 0 16px 8px;
+  align-items: center;
+}
+
+.backdrop-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.backdrop-controls select {
+  flex: 1;
+  min-width: 0; /* let a long camera label shrink instead of widening the sidebar */
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-row);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.backdrop-controls select:disabled {
+  color: var(--text-dim);
+}
+
+.camera-status {
+  margin: 0 16px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--danger);
+}
+
+/* The white-field plate is live on the projector right now - the button has
+   to say so from across the room, not just read "Hide white". */
+#btn-white-field.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0a0a0a;
 }
 
 /* ===== Sidebar: mic (v2.3) ===== */
@@ -357,11 +399,38 @@ button.danger:hover {
   pointer-events: none;
 }
 
+/* Live camera backdrop. object-fit:fill makes the camera frame cover the
+   element box exactly, which is what lets normalized camera space scale
+   straight into element pixels for the rectifying matrix3d (set inline by
+   applyCameraTransform); transform-origin 0 0 puts that matrix's source
+   domain at the box's own top-left, exactly as the output's surface
+   wrappers do. */
+.preview-camera {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  opacity: 0.4;
+  pointer-events: none;
+  transform-origin: 0 0;
+  background: #000;
+}
+
+/* While the calibration corners are being placed the feed is shown at full
+   strength: the thing being looked for is the edge of the projector's lit
+   rectangle, and 40% opacity is precisely what hides it. */
+.preview-camera.calibrating {
+  opacity: 1;
+}
+
 #preview-svg {
   position: relative;
   width: 100%;
   height: 100%;
   display: block;
+  touch-action: none; /* the drag listeners live here now, so the gesture guard does too */
 }
 
 .preview-surface-outline {
@@ -389,6 +458,17 @@ button.danger:hover {
   stroke: rgba(0, 0, 0, 0.65);
   stroke-width: 4px;
   stroke-linejoin: round;
+}
+
+/* The camera's calibration quad: the projector's lit rectangle as the camera
+   sees it. Deliberately not the surface accent - dragging these four handles
+   moves the whole coordinate frame, not one quad. */
+.camera-quad-outline {
+  fill: rgba(240, 165, 58, 0.1);
+  stroke: #f0a53a;
+  stroke-width: 3;
+  stroke-dasharray: 10 6;
+  pointer-events: none;
 }
 
 /* ===== Corner handles (calibration drag) ===== */
@@ -423,6 +503,10 @@ button.danger:hover {
 
 .corner-handle.active circle:not(.corner-handle-hit) {
   fill: var(--accent);
+}
+
+.corner-handle.camera circle:not(.corner-handle-hit) {
+  stroke: #f0a53a;
 }
 
 .corner-handle text {
@@ -523,6 +607,17 @@ body.role-output {
   font-weight: 700;
   line-height: 1.5;
   word-break: break-all;
+}
+
+/* White-field helper: above the surfaces, below nothing. Covers rather than
+   replaces, so dropping it leaves the output exactly as it was. */
+.output-white {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: #fff;
 }
 
 .output-identify {

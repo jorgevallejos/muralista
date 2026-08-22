@@ -27,8 +27,31 @@ const PREVIEW_H = 900;
 // side treats whatever it last received over BroadcastChannel as truth and
 // never writes to localStorage itself.
 
+// Schema version of the project object, bumped to 2 (2026-08-22) when the
+// camera backdrop added backdropMode / cameraDeviceId / cameraQuad. This is
+// NOT the "v1" in STORAGE_KEY - that suffix is part of an address and never
+// changes (see the guard comment on STORAGE_KEY above). Older projects stay
+// readable: migrateProject() fills the new fields with the values that
+// describe what a v1 project already was.
+const PROJECT_VERSION = 2;
+
 function emptyProject() {
-  return { version: 1, photo: null, surfaces: [] };
+  return {
+    version: PROJECT_VERSION,
+    photo: null,
+    // "photo" (a still loaded by hand) or "camera" (a live webcam feed
+    // rectified into output space). Both are authoring aids only; neither
+    // ever reaches the output window.
+    backdropMode: "photo",
+    // Which video input the camera backdrop uses, remembered so a room's
+    // mapping comes back pointing at the same webcam.
+    cameraDeviceId: null,
+    // The projector's lit rectangle as the camera sees it: 4 points in
+    // normalized camera space, [TL, TR, BR, BL] like surface.corners.
+    // null until calibrated.
+    cameraQuad: null,
+    surfaces: [],
+  };
 }
 
 function loadProject() {
@@ -36,7 +59,7 @@ function loadProject() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (isValidProject(parsed)) return parsed;
+      if (isValidProject(parsed)) return migrateProject(parsed);
     }
   } catch (err) {
     console.warn("Muralista: could not read saved project, starting fresh.", err);
@@ -50,6 +73,29 @@ function saveProject(proj) {
 
 function isValidProject(obj) {
   return !!obj && typeof obj === "object" && typeof obj.version === "number" && Array.isArray(obj.surfaces);
+}
+
+// 4 points, each a pair of finite numbers - the shape surface.corners uses,
+// and the shape project.cameraQuad uses.
+function isValidQuad(q) {
+  return (
+    Array.isArray(q) &&
+    q.length === 4 &&
+    q.every((p) => Array.isArray(p) && p.length === 2 && p.every((n) => typeof n === "number" && isFinite(n)))
+  );
+}
+
+// Brings a project of any earlier schema version up to PROJECT_VERSION by
+// filling in what it predates. Runs on load AND on import, so a venue JSON
+// exported before the camera existed opens without complaint - it simply
+// carries no camera calibration, which is exactly true of it.
+function migrateProject(obj) {
+  const proj = Object.assign({}, obj);
+  if (proj.backdropMode !== "camera") proj.backdropMode = "photo";
+  if (typeof proj.cameraDeviceId !== "string") proj.cameraDeviceId = null;
+  if (!isValidQuad(proj.cameraQuad)) proj.cameraQuad = null;
+  proj.version = PROJECT_VERSION;
+  return proj;
 }
 
 function genSurfaceId() {
@@ -356,6 +402,23 @@ function broadcastIdentify() {
   channel.postMessage({ kind: "identify", nonce: Date.now() });
 }
 
+// Control -> output: raise or drop a full-frame white plate on the output
+// window. This exists for the camera backdrop's calibration step - the edge
+// of the projector's lit rectangle can only be marked if the projector is
+// actually lighting something, and "no signal" screens and desktop wallpaper
+// are not a rectangle of known shape. Nonce per project convention.
+let whiteFieldOn = false;
+
+function broadcastWhiteField() {
+  channel.postMessage({ kind: "whiteField", on: whiteFieldOn, nonce: Date.now() });
+}
+
+function toggleWhiteField() {
+  whiteFieldOn = !whiteFieldOn;
+  broadcastWhiteField();
+  renderControl();
+}
+
 // Output -> control: report the output window's actual pixel size so arrow-
 // key nudges (control-side) can be expressed in real output pixels. Sent on
 // load and on every resize; always carries a nonce per project convention,
@@ -371,6 +434,7 @@ function handleControlMessage(event) {
     // A fresh output window just opened and wants the current state.
     broadcastState();
     broadcastBeatAnchor(); // no-op if no anchor set yet (nothing has played)
+    broadcastWhiteField(); // a reopened output must not come back with a stale plate
     if (lastTransport) {
       // Bring a late joiner up to speed on playback too - without this, an
       // output opened after Play was already pressed sits frozen on its
@@ -396,6 +460,8 @@ function handleOutputMessage(event) {
     renderOutput();
   } else if (msg.kind === "identify") {
     showIdentifyOverlay();
+  } else if (msg.kind === "whiteField" && typeof msg.on === "boolean") {
+    setOutputWhiteField(msg.on);
   } else if (msg.kind === "transport" && typeof msg.action === "string") {
     applyTransportAction(msg.action);
   } else if (msg.kind === "beatAnchor" && typeof msg.t0 === "number") {
@@ -576,6 +642,8 @@ function renderControl() {
   renderSurfaceList();
   renderPreview();
   renderBackdrop();
+  renderCamera();
+  renderBackdropControls();
   renderLayerPanel();
 }
 
@@ -692,6 +760,14 @@ function renderPreview() {
   const svg = document.getElementById("preview-svg");
   svg.innerHTML = "";
 
+  // While the camera's calibration corners are being placed, the preview has
+  // exactly one job: the surface outlines would sit on top of the very edge
+  // being looked for.
+  if (calibratingCamera) {
+    renderCameraCalibrationHandles(svg);
+    return;
+  }
+
   project.surfaces
     .filter((s) => s.visible)
     .forEach((surface) => {
@@ -743,7 +819,7 @@ function surfaceCentroidNormalized(surface) {
 
 function renderBackdrop() {
   const img = document.getElementById("preview-backdrop");
-  if (project.photo) {
+  if (project.photo && !isCameraMode()) {
     img.src = project.photo;
     img.hidden = false;
   } else {
@@ -793,29 +869,49 @@ function renderCornerHandles(svg, surface) {
   });
 }
 
-// Drag a single corner handle. Renders locally every pointermove for
-// immediate visual feedback (both in the preview and, throttled, on the
-// live output), but only saves+broadcasts at most every ~80ms plus once on
-// release - the same "render fast, commit throttled" split slice 1's
-// commitProjectChange() choke point was designed for.
-function startCornerDrag(e, svg, surface, cornerIndex) {
+// Pointer-drag plumbing shared by every preview gesture: whole-surface
+// drag, single-corner drag, and camera-calibration corner drag. The caller
+// supplies only applyMove(evt), which writes the new geometry into `project`.
+//
+// THE DETAIL THAT MATTERS, and the v2.1 bug (found by hand 2026-08-22): the
+// move/up listeners must live on an element that OUTLIVES the gesture.
+// Every move calls renderPreview(), which does svg.innerHTML = "" and
+// rebuilds every polygon and handle from scratch - so the element that
+// received pointerdown is destroyed by the first move it handles. v2.1
+// listened on that element. The consequences, all confirmed in Chrome with a
+// real mouse:
+//
+//   - exactly one move-event's worth of travel happened, then the quad froze
+//     (later moves land on a freshly built element that has no listeners);
+//   - removing the element implicitly released its pointer capture too, so
+//     capture could not save it either;
+//   - pointerup never reached onUp: no final commit, and the listeners
+//     leaked on a detached node;
+//   - pressing an UNSELECTED surface was worse still - startSurfaceDrag
+//     called renderControl() to move the selection BEFORE attaching its
+//     listeners, so they went onto an already-detached node and the surface
+//     did not move at all. That is the "dragging does not work" report.
+//
+// #preview-svg is emptied but never replaced, so it is the one safe host for
+// both the capture and the listeners. It is also why this now works under
+// synthetic events: even when setPointerCapture refuses an untrusted
+// pointerId, moves over the rebuilt children still bubble up to the svg.
+//
+// This is also why v2.1's headless check passed while nothing moved on
+// screen: it dispatched a single synthetic pointermove and asserted on the
+// corner numbers, and one move is precisely the amount that did work.
+function beginPreviewDrag(e, svg, applyMove) {
   e.preventDefault();
   e.stopPropagation();
-  activeCornerIndex = cornerIndex;
 
-  const handle = e.currentTarget;
-  capturePointerSafely(handle, e.pointerId);
+  capturePointerSafely(svg, e.pointerId);
 
   const THROTTLE_MS = 80;
   let lastCommitAt = 0;
 
-  function pointerToNormalized(evt) {
-    const [nx, ny] = svgPointerToNormalized(evt, svg);
-    return [clampCoord(nx), clampCoord(ny)];
-  }
-
   function onMove(evt) {
-    surface.corners[cornerIndex] = pointerToNormalized(evt);
+    if (evt.pointerId !== e.pointerId) return;
+    applyMove(evt);
     renderPreview(); // local-only, fast
     const now = Date.now();
     if (now - lastCommitAt >= THROTTLE_MS) {
@@ -825,17 +921,18 @@ function startCornerDrag(e, svg, surface, cornerIndex) {
     }
   }
 
-  function onUp() {
-    releasePointerSafely(handle, e.pointerId);
-    handle.removeEventListener("pointermove", onMove);
-    handle.removeEventListener("pointerup", onUp);
-    handle.removeEventListener("pointercancel", onUp);
+  function onUp(evt) {
+    if (evt.pointerId !== e.pointerId) return;
+    releasePointerSafely(svg, e.pointerId);
+    svg.removeEventListener("pointermove", onMove);
+    svg.removeEventListener("pointerup", onUp);
+    svg.removeEventListener("pointercancel", onUp);
     commitProjectChange(); // final save+broadcast+render, guarantees no drift
   }
 
-  handle.addEventListener("pointermove", onMove);
-  handle.addEventListener("pointerup", onUp);
-  handle.addEventListener("pointercancel", onUp);
+  svg.addEventListener("pointermove", onMove);
+  svg.addEventListener("pointerup", onUp);
+  svg.addEventListener("pointercancel", onUp);
 }
 
 // setPointerCapture/releasePointerCapture require a genuinely "active"
@@ -862,21 +959,29 @@ function releasePointerSafely(el, pointerId) {
   }
 }
 
+// Drag a single corner handle. Renders locally every pointermove for
+// immediate visual feedback (both in the preview and, throttled, on the
+// live output), but only saves+broadcasts at most every ~80ms plus once on
+// release - the same "render fast, commit throttled" split slice 1's
+// commitProjectChange() choke point was designed for.
+function startCornerDrag(e, svg, surface, cornerIndex) {
+  activeCornerIndex = cornerIndex;
+
+  beginPreviewDrag(e, svg, (evt) => {
+    const [nx, ny] = svgPointerToNormalized(evt, svg);
+    surface.corners[cornerIndex] = [clampCoord(nx), clampCoord(ny)];
+  });
+}
+
 // Drag a whole surface (pointerdown inside its polygon, not on a corner
 // handle): translate all 4 corners by the same delta, so the quad keeps its
 // shape. Also handles click-to-select - if the surface wasn't already
 // selected, selecting it and starting the drag happen in this one gesture
 // (matches sidebar-click selection: updates selectedSurfaceId, resets to
-// whole-surface nudge mode, re-renders sidebar/preview/layer panel). Same
-// "render fast, commit throttled, final commit on release" pattern as
-// startCornerDrag.
+// whole-surface nudge mode, re-renders sidebar/preview/layer panel). The
+// re-render that selection triggers is precisely what used to detach the
+// listeners; beginPreviewDrag puts them somewhere a re-render cannot reach.
 function startSurfaceDrag(e, svg, surface) {
-  e.preventDefault();
-  e.stopPropagation();
-
-  const target = e.currentTarget;
-  capturePointerSafely(target, e.pointerId);
-
   if (selectedSurfaceId !== surface.id) {
     selectedSurfaceId = surface.id;
     activeCornerIndex = null;
@@ -886,34 +991,300 @@ function startSurfaceDrag(e, svg, surface) {
   const originalCorners = surface.corners.map(([x, y]) => [x, y]);
   const start = svgPointerToNormalized(e, svg);
 
-  const THROTTLE_MS = 80;
-  let lastCommitAt = 0;
-
-  function onMove(evt) {
+  beginPreviewDrag(e, svg, (evt) => {
     const p = svgPointerToNormalized(evt, svg);
     const rawDelta = [p[0] - start[0], p[1] - start[1]];
     const [dx, dy] = clampTranslateDelta(originalCorners, rawDelta);
     surface.corners = originalCorners.map(([x, y]) => [x + dx, y + dy]);
-    renderPreview(); // local-only, fast
-    const now = Date.now();
-    if (now - lastCommitAt >= THROTTLE_MS) {
-      lastCommitAt = now;
-      saveProject(project);
-      broadcastState();
-    }
+  });
+}
+
+// =========================================================================
+// CAMERA BACKDROP (control-only)
+// =========================================================================
+// An optional live webcam feed, from a camera mounted beside the projector
+// lens, shown under the surface outlines in place of the static photo.
+// Dragging a quad then shows the real wall updating underneath it, instead
+// of a photo that went stale the moment anything in the room moved.
+//
+// Same rule as project.photo, and for the same reason: this is an authoring
+// aid and never reaches the output window. The <video> lives inside
+// control-root only and the MediaStream is never serialized.
+// project.cameraDeviceId and project.cameraQuad do ride along in the
+// broadcast state (project.photo already does), but nothing on the output
+// side reads them - see handleOutputMessage / renderOutput.
+//
+// Rectification is the surface warp run backwards, which is why it needs no
+// new rendering machinery. A surface maps a square of content ONTO a quad in
+// output space; here we map a quad in CAMERA space - the projector's lit
+// rectangle, marked by hand during calibration - onto the whole stage. Same
+// computeHomography, same matrix3d. Once cameraQuad is placed, a mark on the
+// wall sits at the same spot in the preview as it does in the projected
+// frame.
+//
+// ACCURACY, and its one honest limit. After calibration the mapping is exact
+// for anything on the wall plane - a plane-to-plane map is what a homography
+// IS. Anything standing OUT from the wall (a performer, a speaker stack, a
+// pillar) appears displaced, by an amount that grows with its distance from
+// the wall, and no fixed correction removes this: the camera and the
+// projector do not stand in the same place, so they genuinely disagree about
+// where such a thing is. For a performer keep-out the reliable method is to
+// trace the performer's projected SHADOW rather than the performer. The
+// shadow is by definition the exact set of blocked projector pixels - the
+// projector drew it - and it lands on the wall plane, so it maps exactly and
+// no camera-to-lens offset needs measuring. Also documented in README
+// ("Limits") and project-context.md.
+
+let cameraStream = null;
+
+// Calibration mode: the feed is shown RAW (untransformed, full strength)
+// with four draggable handles over it, to be placed on the corners of the
+// projector's lit rectangle. Control-local UI state, never persisted.
+let calibratingCamera = false;
+
+// A generous starting rectangle when calibration begins with nothing stored -
+// visibly not the frame edge, so it reads as "drag me" rather than "already
+// correct".
+const DEFAULT_CAMERA_QUAD = [
+  [0.2, 0.2],
+  [0.8, 0.2],
+  [0.8, 0.8],
+  [0.2, 0.8],
+];
+
+function isCameraMode() {
+  return project.backdropMode === "camera";
+}
+
+function isCameraEnabled() {
+  return cameraStream != null;
+}
+
+function setBackdropMode(mode) {
+  project.backdropMode = mode === "camera" ? "camera" : "photo";
+  if (!isCameraMode()) {
+    // Leaving camera mode gives the webcam back: the recording light going
+    // out is the only honest signal that nothing is watching the room.
+    calibratingCamera = false;
+    disableCamera();
+  }
+  commitProjectChange();
+}
+
+function setCameraDeviceId(deviceId) {
+  project.cameraDeviceId = deviceId || null;
+  commitProjectChange();
+  if (isCameraEnabled()) enableCamera(); // re-open on the newly chosen input
+}
+
+function setCameraQuad(quad) {
+  project.cameraQuad = quad;
+  commitProjectChange();
+}
+
+function toggleCamera() {
+  if (isCameraEnabled()) {
+    calibratingCamera = false; // nothing left to calibrate against
+    disableCamera();
+    renderControl();
+  } else {
+    enableCamera();
+  }
+}
+
+async function enableCamera() {
+  const statusEl = document.getElementById("camera-status");
+  statusEl.textContent = "";
+  try {
+    // Stop any existing stream first - switching device while the old one is
+    // still open can leave two tracks live on the same camera.
+    stopCameraTracks();
+    const wanted = project.cameraDeviceId;
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: wanted ? { deviceId: { exact: wanted } } : true,
+      audio: false, // the mic is a separate, explicitly opted-in feature
+    });
+    document.getElementById("preview-camera").srcObject = cameraStream;
+
+    // Device LABELS are blank until a camera permission has been granted, so
+    // the list is only worth populating after getUserMedia has resolved -
+    // before that it would be a menu of anonymous ids.
+    await populateCameraDeviceList();
+    renderControl();
+  } catch (err) {
+    cameraStream = null;
+    statusEl.textContent = `Camera unavailable: ${(err && err.message) || err}`;
+    console.warn("Muralista: camera getUserMedia failed.", err);
+    renderControl();
+  }
+}
+
+function stopCameraTracks() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((t) => t.stop());
+    cameraStream = null;
+  }
+}
+
+function disableCamera() {
+  stopCameraTracks();
+  const video = document.getElementById("preview-camera");
+  if (video) video.srcObject = null;
+  const statusEl = document.getElementById("camera-status");
+  if (statusEl) statusEl.textContent = "";
+}
+
+async function populateCameraDeviceList() {
+  const select = document.getElementById("select-camera-device");
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cams = devices.filter((d) => d.kind === "videoinput");
+
+  select.innerHTML = "";
+  if (cams.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No cameras found";
+    select.appendChild(opt);
+    return;
   }
 
-  function onUp() {
-    releasePointerSafely(target, e.pointerId);
-    target.removeEventListener("pointermove", onMove);
-    target.removeEventListener("pointerup", onUp);
-    target.removeEventListener("pointercancel", onUp);
-    commitProjectChange(); // final save+broadcast+render, guarantees no drift
+  cams.forEach((d, i) => {
+    const opt = document.createElement("option");
+    opt.value = d.deviceId;
+    opt.textContent = d.label || `Camera ${i + 1}`;
+    select.appendChild(opt);
+  });
+
+  // Reflect what is actually open. If the stored deviceId is gone (the
+  // webcam was unplugged, or this is another machine), fall back to whatever
+  // getUserMedia handed us rather than showing a stale selection.
+  const live = cameraStream && cameraStream.getVideoTracks()[0];
+  const liveId = live && live.getSettings().deviceId;
+  const wanted = cams.some((d) => d.deviceId === project.cameraDeviceId) ? project.cameraDeviceId : liveId;
+  if (wanted) select.value = wanted;
+  if (wanted && wanted !== project.cameraDeviceId) {
+    project.cameraDeviceId = wanted;
+    commitProjectChange();
+  }
+}
+
+// Applies project.cameraQuad to the <video> as a matrix3d, so the marked
+// rectangle fills the stage. Recomputed whenever the stage's pixel size
+// changes (see the ResizeObserver in initControl): the homography is built
+// in real pixels, so it does not survive a resize on its own.
+function applyCameraTransform(video) {
+  const box = video.parentElement;
+  const w = box.clientWidth;
+  const h = box.clientHeight;
+
+  if (calibratingCamera || !isValidQuad(project.cameraQuad) || w === 0 || h === 0) {
+    video.style.transform = ""; // raw feed: what the camera sees, unmodified
+    return;
   }
 
-  target.addEventListener("pointermove", onMove);
-  target.addEventListener("pointerup", onUp);
-  target.addEventListener("pointercancel", onUp);
+  // object-fit:fill makes the camera frame cover the element box exactly, so
+  // normalized camera space scales straight into element pixels.
+  const srcCorners = project.cameraQuad.map(([nx, ny]) => [nx * w, ny * h]);
+  const dstCorners = [
+    [0, 0],
+    [w, 0],
+    [w, h],
+    [0, h],
+  ];
+  const H = computeHomography(srcCorners, dstCorners);
+  video.style.transform = H ? homographyToMatrix3dString(H) : ""; // null = degenerate quad
+}
+
+function renderCamera() {
+  const video = document.getElementById("preview-camera");
+  const show = isCameraMode() && isCameraEnabled();
+  video.hidden = !show;
+  video.classList.toggle("calibrating", calibratingCamera);
+  if (show) applyCameraTransform(video);
+}
+
+// Sidebar backdrop controls, rebuilt from state on every render so the
+// buttons can never disagree with what the preview is actually doing.
+function renderBackdropControls() {
+  const camera = isCameraMode();
+  document.getElementById("select-backdrop-mode").value = project.backdropMode;
+  document.getElementById("backdrop-photo-controls").hidden = camera;
+  document.getElementById("backdrop-camera-controls").hidden = !camera;
+
+  document.getElementById("btn-camera-toggle").textContent = isCameraEnabled() ? "Disable camera" : "Enable camera";
+  document.getElementById("select-camera-device").disabled = !isCameraEnabled();
+
+  const calBtn = document.getElementById("btn-camera-calibrate");
+  calBtn.textContent = calibratingCamera ? "Done" : isValidQuad(project.cameraQuad) ? "Recalibrate\u2026" : "Calibrate\u2026";
+  calBtn.disabled = !isCameraEnabled();
+  document.getElementById("btn-camera-calibrate-clear").disabled = !isValidQuad(project.cameraQuad) || calibratingCamera;
+
+  const whiteBtn = document.getElementById("btn-white-field");
+  whiteBtn.textContent = whiteFieldOn ? "Hide white" : "Show white";
+  whiteBtn.classList.toggle("active", whiteFieldOn);
+}
+
+function toggleCameraCalibration() {
+  if (!calibratingCamera && !isValidQuad(project.cameraQuad)) {
+    project.cameraQuad = DEFAULT_CAMERA_QUAD.map(([x, y]) => [x, y]);
+    saveProject(project);
+  }
+  calibratingCamera = !calibratingCamera;
+  renderControl();
+}
+
+function clearCameraQuad() {
+  calibratingCamera = false;
+  setCameraQuad(null);
+}
+
+// Calibration handles, drawn instead of the surface outlines while
+// calibrating. They live in normalized camera space, and the feed is
+// untransformed while placing them, so preview space and camera space are
+// the same space here - no conversion needed beyond the viewBox scale.
+function renderCameraCalibrationHandles(svg) {
+  const quad = project.cameraQuad;
+  if (!isValidQuad(quad)) return;
+
+  const outline = document.createElementNS(SVG_NS, "polygon");
+  outline.setAttribute("points", quad.map(([x, y]) => `${x * PREVIEW_W},${y * PREVIEW_H}`).join(" "));
+  outline.setAttribute("class", "camera-quad-outline");
+  svg.appendChild(outline);
+
+  quad.forEach(([nx, ny], i) => {
+    const cx = nx * PREVIEW_W;
+    const cy = ny * PREVIEW_H;
+
+    const group = document.createElementNS(SVG_NS, "g");
+    group.setAttribute("class", "corner-handle camera");
+
+    const hitTarget = document.createElementNS(SVG_NS, "circle");
+    hitTarget.setAttribute("cx", cx);
+    hitTarget.setAttribute("cy", cy);
+    hitTarget.setAttribute("r", 18);
+    hitTarget.setAttribute("class", "corner-handle-hit");
+    group.appendChild(hitTarget);
+
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("cx", cx);
+    circle.setAttribute("cy", cy);
+    circle.setAttribute("r", 10);
+    group.appendChild(circle);
+
+    const label = document.createElementNS(SVG_NS, "text");
+    label.setAttribute("x", cx);
+    label.setAttribute("y", cy);
+    label.textContent = String(i + 1);
+    group.appendChild(label);
+
+    group.addEventListener("pointerdown", (e) =>
+      beginPreviewDrag(e, svg, (evt) => {
+        const [x, y] = svgPointerToNormalized(evt, svg);
+        project.cameraQuad[i] = [clampCoord(x), clampCoord(y)];
+      })
+    );
+    svg.appendChild(group);
+  });
 }
 
 // =========================================================================
@@ -1339,7 +1710,7 @@ function isTextInputFocused() {
   const el = document.activeElement;
   if (!el) return false;
   const tag = el.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
 }
 
 const NUDGE_ARROW_DELTAS = {
@@ -1375,6 +1746,15 @@ function nudgeWholeSurface(dxPx, dyPx) {
 
 function handleControlKeydown(e) {
   if (isTextInputFocused()) return;
+
+  // Escape means "get me out of here" first, and only then "back to
+  // whole-surface nudging" (below) - during calibration there is no surface
+  // selected to nudge anyway.
+  if (calibratingCamera) {
+    if (e.key === "Escape") toggleCameraCalibration();
+    return; // the preview belongs to the camera quad; nudges have nothing to show
+  }
+
   if (!selectedSurfaceId) return;
 
   if (e.key >= "1" && e.key <= "4") {
@@ -1422,7 +1802,7 @@ function importProjectFromFile(file) {
         window.alert("That file doesn't look like a Muralista project (missing version/surfaces).");
         return;
       }
-      replaceProject(parsed);
+      replaceProject(migrateProject(parsed));
     } catch (err) {
       window.alert("Could not read that file as JSON.");
       console.error("Muralista import error:", err);
@@ -1478,6 +1858,13 @@ function wireControlEvents() {
   });
   document.getElementById("btn-backdrop-clear").addEventListener("click", clearBackdropPhoto);
 
+  document.getElementById("select-backdrop-mode").addEventListener("change", (e) => setBackdropMode(e.target.value));
+  document.getElementById("btn-camera-toggle").addEventListener("click", toggleCamera);
+  document.getElementById("select-camera-device").addEventListener("change", (e) => setCameraDeviceId(e.target.value));
+  document.getElementById("btn-camera-calibrate").addEventListener("click", toggleCameraCalibration);
+  document.getElementById("btn-camera-calibrate-clear").addEventListener("click", clearCameraQuad);
+  document.getElementById("btn-white-field").addEventListener("click", toggleWhiteField);
+
   document.getElementById("btn-mic-toggle").addEventListener("click", toggleMic);
 }
 
@@ -1488,6 +1875,13 @@ function initControl() {
   // Keydown on the whole document (not a specific element) so nudging works
   // no matter what's focused in the control window, short of a text input.
   document.addEventListener("keydown", handleControlKeydown);
+
+  // The camera backdrop's matrix3d is built in real stage pixels, so it has
+  // to be rebuilt whenever the stage changes size. Surfaces need no such
+  // thing: they are drawn in the SVG's fixed 1600x900 viewBox and scale for
+  // free.
+  new ResizeObserver(() => renderCamera()).observe(document.querySelector(".preview-box"));
+
   renderControl();
 }
 
@@ -2056,6 +2450,15 @@ function showIdentifyOverlay() {
   identifyTimer = window.setTimeout(() => {
     container.innerHTML = "";
   }, 2000);
+}
+
+// The one change to the output render path (v2.4): a plain white plate above
+// the surfaces, raised on request from the control window so the projector's
+// lit rectangle can be seen and marked while the camera backdrop is being
+// calibrated. It covers the surfaces rather than replacing them - dropping
+// the plate leaves everything exactly as it was, still playing.
+function setOutputWhiteField(on) {
+  document.getElementById("output-white").hidden = !on;
 }
 
 function toggleFullscreen() {

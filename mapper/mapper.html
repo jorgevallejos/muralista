@@ -46,11 +46,40 @@
             <h2>Backdrop</h2>
           </div>
           <div class="backdrop-controls">
-            <button id="btn-backdrop" type="button">Choose photo&hellip;</button>
-            <button id="btn-backdrop-clear" type="button">Clear</button>
-            <input type="file" id="file-backdrop" accept="image/*" hidden>
+            <label class="backdrop-mode">Source
+              <select id="select-backdrop-mode">
+                <option value="photo">Photo</option>
+                <option value="camera">Live camera</option>
+              </select>
+            </label>
           </div>
-          <p class="layer-hint">Authoring aid only (planning canvas) &mdash; shown at reduced opacity under the surface outlines, never sent to the output.</p>
+
+          <div id="backdrop-photo-controls">
+            <div class="backdrop-controls">
+              <button id="btn-backdrop" type="button">Choose photo&hellip;</button>
+              <button id="btn-backdrop-clear" type="button">Clear</button>
+              <input type="file" id="file-backdrop" accept="image/*" hidden>
+            </div>
+            <p class="layer-hint">Authoring aid only (planning canvas) &mdash; shown at reduced opacity under the surface outlines, never sent to the output.</p>
+          </div>
+
+          <div id="backdrop-camera-controls" hidden>
+            <div class="backdrop-controls">
+              <button id="btn-camera-toggle" type="button">Enable camera</button>
+              <button id="btn-white-field" type="button" title="Make the output window paint a full white frame, so the projector&#39;s lit rectangle is visible">Show white</button>
+            </div>
+            <div class="backdrop-controls">
+              <select id="select-camera-device" disabled>
+                <option value="">Enable the camera to list inputs</option>
+              </select>
+            </div>
+            <div class="backdrop-controls">
+              <button id="btn-camera-calibrate" type="button" title="Place four handles on the corners of the projector&#39;s lit rectangle">Calibrate&hellip;</button>
+              <button id="btn-camera-calibrate-clear" type="button">Clear</button>
+            </div>
+            <p id="camera-status" class="camera-status"></p>
+            <p class="layer-hint">A webcam mounted beside the projector lens, rectified into output space and shown under the surface outlines &mdash; authoring aid only, never sent to the output. Exact on the wall plane; anything standing out from the wall reads displaced, so trace a performer&#39;s <em>shadow</em>, never the performer.</p>
+          </div>
         </div>
 
         <div class="sidebar-section">
@@ -72,6 +101,11 @@
       <main class="preview-area">
         <div class="preview-box">
           <img id="preview-backdrop" class="preview-backdrop" alt="" hidden>
+          <!-- Live camera backdrop. Rectified into output space by a matrix3d
+               built from project.cameraQuad (see CAMERA BACKDROP in mapper.js);
+               shown raw while those corners are being placed. Authoring only:
+               this element exists in the control role and nowhere else. -->
+          <video id="preview-camera" class="preview-camera" autoplay muted playsinline hidden></video>
           <svg id="preview-svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid meet"></svg>
         </div>
       </main>
@@ -83,6 +117,10 @@
     <!-- Per-surface matrix3d-warped wrapper divs land here (see WARP / OUTPUT
          RENDERING in mapper.js). Replaces the slice-1 SVG placeholder. -->
     <div id="output-surfaces" class="output-surfaces"></div>
+    <!-- White-field helper: a full-frame white plate the control window can
+         raise, so the projector's lit rectangle is visible while the camera
+         backdrop's calibration corners are placed. -->
+    <div id="output-white" class="output-white" hidden></div>
     <!-- Identify overlay: unwarped screen-space labels at each surface's
          centroid, shown briefly in response to a broadcast 'identify'. -->
     <div id="output-identify" class="output-identify"></div>

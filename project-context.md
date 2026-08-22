@@ -105,7 +105,22 @@ captured elsewhere:
 
 ## Hardware
 
-Mac mini + 1 projector (translator live rig) + iPad. Second projector: used business projector (Epson/Optoma, 3000+ lumens, €100–250) when step 4 arrives; check Mac mini chip for external-display count.
+Mac mini + 1 projector (translator live rig) + iPad. Second projector: used business projector (Epson/Optoma, 3000+ lumens, €100–250) when step 4 arrives.
+
+**Two displays, settled 2026-08-22.** The Mac mini has **one HDMI port**, and Muralista needs two
+outputs: the control window on the Samsung, the output window alone on the projector. The fix is a
+second *output*, not a split of one. A **USB-C to HDMI adapter** (~€20, HDMI 2.0 / 4K60) carries the
+Samsung; the projector takes the native HDMI port, because that is the cable that gets plugged and
+unplugged at venues and it negotiates projector timings more predictably. Displays must be set to
+**extended, not mirrored**, Samsung as main. **Never an HDMI splitter** — it mirrors, so the audience
+sees the control panel — and never a switcher, which gives one display at a time. This closes the old
+"check Mac mini chip for external-display count" note: every Mac mini supports at least two external
+displays, so the chip does not matter for this.
+
+**Projector mount: a mid-term purchase (Jorge, 2026-08-22).** Getting the beam above head height is
+the primary fix for glare in the performer's eyes (see the studio session below). The studio has no
+high fixing point, so until a mount exists, studio work runs with the projector low and Jorge out of
+the beam, and venues are chosen for high shelves where possible.
 
 **Calibration camera — chosen 2026-08-11: Elgato Facecam 4K** (~€200). Rationale: a camera only earns its place for Tier 2 (curved/3D) or the structured-light auto-calibration stretch; the M1–M3 field test passed and surfaced *software UX* (coarse placement/dragging, fixed in v2.1) as the bottleneck, not calibration accuracy. A premium webcam beats a compact camera here — clean UVC feed, lockable manual exposure/focus (stable frame for OpenCV), native monitor-clip + tripod thread — at a quarter of the price, and doubles as a content/Instagram cam. Rejected: Facecam Pro (pay for streamer DSP we'd bypass), Insta360 Link 2 (gimbal tracking counterproductive for a fixed calibration frame), compact cameras (ZV-1 II / PowerShot V1 — better image but €850+ and need a monitor clamp). **Gate still stands:** for real curved/3D work, prototype with iPhone/iPad **LiDAR** first before relying on the camera; on flat (Tier 1) surfaces no camera is needed at all (live corner-dragging).
 
@@ -118,7 +133,8 @@ Same loop as the translator waves: Cowork (this file) holds PM state; **Claude C
 The AI-asset idea sharpened: not a static picture *beside* the video, but **AI animation that enriches the video** — overlaying the video surface (same corners = registered), spilling beyond it, or both. Jorge wants it *context-aware* (room sound/noise). Agreed decomposition (Fable's take, Jorge approved):
 
 1. **Alpha-animation overlays (small):** alpha-WebM layers join the shared transport (today they autoplay independently); z-order via surface list order; copy-corners/duplicate-surface convenience for exact registration over a video surface.
-2. **Context awareness = control logic, not generation (a weekend):** mic → Web Audio (level/onset/tempo) → parameters modulating layers live. The beat layer graduates from fixed BPM to sound-reactive. No AI at runtime. *(2026-08-20: the design survives, its home moved — this becomes a property declared in the venue file and executed by Pregonero, not live control logic running inside Muralista, which never runs during a show. Port uncosted. See "V1 design → Architecture" below.)*
+2. **Parked 2026-08-22 — see "Context-awareness: parked" below before acting on this item.**
+   **Context awareness = control logic, not generation (a weekend):** mic → Web Audio (level/onset/tempo) → parameters modulating layers live. The beat layer graduates from fixed BPM to sound-reactive. No AI at runtime. *(2026-08-20: the design survives, its home moved — this becomes a property declared in the venue file and executed by Pregonero, not live control logic running inside Muralista, which never runs during a show. Port uncosted. See "V1 design → Architecture" below.)*
 3. **Asset banks + live selection (the real v2 design work):** AI generates variety offline (e.g. idle/agitated/dancing loops at 3 intensities), code selects/blends live from room input. Indistinguishable from "the AI hears the room", but deterministic and rehearsable. Needs a design pass with Jorge once 1+2 are demoable; converges with the lyric translator clock later (song/tempo/lyric position are context too).
 4. **Live AI frame generation: explicitly out** — parked indefinitely (Mac-mini-unrealistic, uncontrollable on stage); the layer model can absorb it later without redesign.
 
@@ -329,10 +345,12 @@ Decided by thinking, not by looking (contrast "Open questions — the room" belo
    survives: does the **first concert** use Muralista at all, or is v1 studio-only?
 2. **Does the venue file own audio** (volume, speaker position, room baseline)? Venue Turn question 3,
    still open. The prior: leave it on paper for v1.
-3. **How is the field measured** without a camera? Live corner-dragging works for a region; the outer
-   field is bigger than the eye can judge from behind the projector. May need a two-person setup pass
-   or a phone photo as a rough guide. Untested. Sharpened by "the room" item 5 below — the keep-out
-   has to be judged from inside the beam, not from behind the projector.
+3. **How is the field measured** without a camera? **Largely answered 2026-08-22:** with a camera
+   mounted beside the projector lens, photographing a plain white field. The lit rectangle's edge is
+   the field. See "Studio session (2026-08-22)" below. What remains open is whether this survives a
+   venue where the camera cannot be rigged next to the lens. Original framing, kept because it names
+   the constraint: live corner-dragging works for a region; the outer field is bigger than the eye
+   can judge from behind the projector; the keep-out has to be judged from inside the beam.
 4. **Does this redraw the scope of the proposed Bombista-orchestrator direction**
    (`projects/bombista/project-context.md`, "Proposed direction") before 7 September? Venue Turn
    question 4, unchanged and still worth looking at first.
@@ -360,7 +378,9 @@ by how much they could change the plan.
    flooded wall gives them roughly a third of that — while also proposing to do this in cafés with the
    lights on. **This one is arithmetic and can be done before any code is written.** It is the finding
    most likely to send the plan back to the canvas or to a second projector.
-2. **Canvas in or out?** *"Rather than my canvas, or in addition to it"* left this open, and the two
+2. **Canvas in or out? ANSWERED 2026-08-22 — in, and not close.** See "Studio session (2026-08-22)"
+   below. The reasoning that follows was written before the wall was looked at, and the wall agreed
+   with it. *"Rather than my canvas, or in addition to it"* left this open, and the two
    are different projects. The canvas is white, flat, known geometry and bright; a café wall is none
    of those. If the canvas stays, the field has two quality zones and the layout falls out of the
    physics — lyrics on the canvas where the pixels and contrast are, animation spilling onto the wall
@@ -392,6 +412,183 @@ reach or the laptop dies mid-set.
 the wall's colour are *per-room* facts, answered every gig — their home is
 `context/concerts/_template/`, whose checklist already collects ambient light. The first café should
 answer them by being played, not by being reasoned about.
+
+## Studio session (2026-08-22) — first look at a real wall since the design change
+
+Half a session, run in the garden studio with the Elgato mounted beside the projector lens and
+Muralista itself never opened. Nothing was mapped: the Mac mini could not drive the projector (see
+Hardware). What it produced is answers to questions the design doc said could only be answered by
+pointing a projector at a wall, plus one method that was not anticipated at all.
+
+### The shadow is the keep-out, and it costs nothing to measure
+
+**The finding: draw a keep-out around the performer's *shadow*, never around the performer.**
+
+Jorge's plan was to photograph the wall from beside the projector lens and map on the photo. The
+camera and the projector do not sit in the same place, so they disagree about where a person is. In
+the studio, with the camera as close to the lens as it would physically go, the gap between Jorge in
+the frame and Jorge's shadow on the whiteboard was around two thirds of a head width, call it 12 to
+15cm on the wall. A keep-out traced around his body would have painted black onto empty whiteboard
+and left the beam on half his face.
+
+The shadow has no such error, and cannot. It is by construction the exact set of projector pixels the
+body blocks: the projector drew it. And because the shadow lands on the wall, which is flat, the
+camera's view of it maps to the projector's view by the same homography every quad already uses. So
+the correction is free and exact, and **no measurement of the camera-to-lens offset is needed** —
+which was the thing Jorge offered to go and measure.
+
+Caveat that belongs with it: draw the shape **generously larger than the shadow**. A mask that is
+exactly the outline lets light onto the face on every lean, and a performer sways. This is the
+rehearsal discipline the static-box decision already assumed, now with a reason attached.
+
+### Eye comfort is the driver, and software cannot finish the job
+
+The design doc frames the performer keep-out as composition, keeping the chorus off Jorge's face.
+Jorge corrected that on 2026-08-22: **the primary job is his eyes.** Standing in the beam is
+physically unpleasant and he will not do it for a whole set.
+
+That reframing has a consequence the doc did not carry. **A projector showing black is not switched
+off; it is showing dim grey light.** A keep-out therefore reduces glare substantially and never
+eliminates it, and it does nothing at all about looking toward the lens, which is the brightest
+object in any room Muralista will ever run in. So:
+
+- **Geometry is the primary fix, software is secondary.** Getting the beam to pass above or beside
+  the performer solves it completely and permanently. A keep-out is what you use when the room will
+  not let you do that, which in small venues will be often.
+- **This is a better argument for the tool than the artistic one.** Placing a projector high or off
+  to one side lands the image crooked, and correcting a crooked image is exactly what Muralista does.
+  The warp is what buys the freedom to put the projector where it is comfortable rather than where it
+  is convenient. Worth carrying into how the project is described.
+
+Jorge's position, 2026-08-22: a **projector mount is a mid-term purchase**; the studio has no high
+fixing point, so studio work continues with the projector low and himself out of the beam.
+
+### Room question 2 answered: the canvas stays in, and it is not close
+
+Projected onto the studio's back wall, the same throw is brilliant on the whiteboard and **almost
+invisible on the wooden planks beside it**. Not a marginal difference, an obvious one, visible in a
+single photograph. The wall is warm orange-brown with horizontal plank seams that read straight
+through the image.
+
+So the layout falls out of the physics exactly as the doc predicted it might: **anything that has to
+be read goes on the white surface; the wood carries atmosphere only.** The field has two quality
+zones, and pretending otherwise will cost legibility rather than buy coverage.
+
+Not yet answered: room question 1, the pixel-and-brightness budget, still has no arithmetic behind
+it. The studio was flooded with daylight through the roof gable throughout, so nothing measured there
+today would have been honest anyway. **Blackout is a precondition for that measurement.**
+
+### Architecture question 3, partly answered: a photo taken beside the lens is worth drawing on
+
+The README's dismissal of photos is right about phones and wrong about this. Bolted next to the
+projector lens, a camera gives a planning image close enough to the projector's own view that quads
+drawn on it land roughly right. It does not remove live corner-dragging, it removes the coarse half
+of it.
+
+**The capture that makes it work: project a plain white field and photograph the room with the
+performer in place.** One image then carries both unknowns at once. The edge of the lit rectangle is
+the field made visible, which is precisely what cannot be judged from behind the projector, and the
+silhouette inside it is the keep-out. Neither requires a measurement.
+
+Reference photo from this session: `room-reference-2026-08-22`, saved to Jorge's `~/Documents`. Its
+one flaw is that the projector was showing its "no signal" screen rather than plain white, so the
+acer logo sits in the middle of the field.
+
+### A trap for anyone using Photo Booth as the capture tool
+
+**Photo Booth mirrors its live preview on purpose**, the way a mirror does. Text projected on the
+wall reads backwards in the window and this means nothing. Half an hour went into chasing it as a
+projector fault before the obvious test settled it: *read the wall with your own eyes.* The projector
+was fine. `Edit → Auto Flip New Items` also exists and its behaviour was never pinned down, so if a
+saved photo ever does come back reversed, that is the switch.
+
+Also set during the session, worth keeping: `Camera → Automatic Camera Selection` **off**, or a
+nearby iPhone will take over the feed mid-capture.
+
+### Faked assets, already in place
+
+`mapper/media/` gained three files for the hand-faked subtractive test, since the tool has neither a
+dark-region primitive nor a text layer:
+
+- `keepout-black.png` — solid black, the stand-in keep-out, used as an image layer moved to the top
+  of the list
+- `lyric-01.png`, `lyric-02.png` — real Libertad lines, Spanish over English
+- `lyric-worstcase.png` — the longest entry in the whole catalogue, from Tragedia, 81 characters and
+  four text lines at once. **Legibility should be judged against this one, not the short ones.**
+
+Worth noting for whenever the lyric region reaches Pregonero: the catalogue's lyric entries are not
+all one line. Some carry an embedded newline and render as two. Any region sized against a single
+line will clip them.
+
+## Context-awareness: parked 2026-08-22, and what survives the parking
+
+**Decided by Jorge, 2026-08-22.** The sound-reactive half of v2 comes out of the working
+version. Ordering, in his words: **mapping shapes and richer shape behaviour first, then the
+Pregonero integration, and only then revisiting context-awareness.**
+
+**This is not a new decision, it is the 2026-08-20 one arriving.** The desk-tool cut already put
+this code on the wrong side of the tool boundary: Muralista does not run during a show, so a
+feature whose entire purpose is to listen to a live room cannot live in it. What 22/08 adds is a
+date and an order. The relocation cost flagged under "Architecture" above stops being a hidden
+future cost and becomes a scheduled one.
+
+### What goes, what stays
+
+| out | in |
+|---|---|
+| mic capture, the level/onset envelope, the ephemeral broadcast | the beat layer's **fixed-BPM** mode |
+| the `micReactivity` slider on media layers | everything about surfaces, warping, layers, ordering |
+| the beat layer's **mic** mode | |
+
+**The `micReactivity` field comes out of the saved project too, not just the UI.** Venue Turn §2.7
+says *do not design the format, earn it*: a field no tool executes is speculative format design,
+and leaving it in invites exactly the "declared but ignored" ambiguity the format-ownership rule
+exists to prevent. It gets re-added the day Pregonero can act on it.
+
+### How it is preserved: a tag, not a branch
+
+**Tag the commit, delete the code from `main`.** This is the house pattern, proven on the website's
+3D prototype the same week (removed by PR, recoverable via the `prototype-3d-archive` tag). A
+branch would rot: `main` will move under it and it will stop merging, so what looks like a
+preserved option is a decaying one. A tag is exact, permanent and costs nothing to maintain.
+
+Suggested name: **`mic-reactivity-archive`**, on the last commit before removal. The v2.3 slice
+itself is `065c03f`.
+
+### The part actually worth keeping is the tuning, not the code
+
+Under the desk-tool architecture this behaviour gets re-implemented **inside Pregonero**, a
+different codebase. The JavaScript will not be copy-pasted, so it is not the asset. What is
+expensive to rediscover is what the numbers should be, and why. Recorded here so the tag never has
+to be opened:
+
+- **Sample at 30 Hz, not per frame.** A level-and-onset envelope carries no detail above that, and
+  `setInterval` at ~33 ms is far cheaper than rAF. Consumers smooth it back up to frame rate at the
+  other end (`AUDIO_SMOOTHING = 0.25` per frame, exponential), which is what stops it stepping
+  visibly.
+- **Envelope follower: instant attack, ~0.3 s exponential release.** Loudness must arrive on the
+  beat and leave gently. A symmetric filter feels late; a fast release flickers.
+- **Onset detection is relative, not absolute.** Instantaneous RMS must beat a slow-following room
+  average (`smoothing 0.05`) by a factor of **1.8**, with a **150 ms refractory** window and a
+  **0.02 RMS floor** so near-silence does not self-trigger on its own noise. The slow average is
+  what makes it work in any room without per-venue calibration, which is the whole point for a tool
+  that plays rooms it has never seen.
+- **Disable Chrome's voice processing on the capture.** Echo cancellation, noise suppression and
+  AGC are built to flatten exactly the dynamics being measured. The request asks for the raw room.
+- **Absent data must decay to zero, never freeze.** If no envelope has arrived for **1 s** the level
+  reads 0 rather than holding its last value. Without this, closing the control window leaves every
+  reactive layer frozen at whatever loudness the room happened to have. One function owns that rule.
+- **One shared loop, not one per layer.** Every reactive consumer reads the same smoothed value from
+  a single rAF loop. This is also the intended mechanism for a future `bank` layer type.
+- **Groundwork noted by the v2.3 crew and not yet used:** the onset stream implicitly carries tempo
+  (median inter-onset interval), and asset-bank state transitions should key off the *smoothed* level
+  with hysteresis rather than raw onsets.
+
+### What has to be true before unparking
+
+Not a date. Both of: **Pregonero reads a venue file**, and **a room has been played with mapped
+lyrics in it**. Until then there is no runtime to host the behaviour and no evidence about whether
+a room's loudness is a signal worth reacting to on stage at all.
 
 ## Prior art — TouchDesigner (noted 2026-08-20)
 

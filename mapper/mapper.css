@@ -313,59 +313,6 @@ button.danger:hover {
   color: #0a0a0a;
 }
 
-/* ===== Sidebar: mic (v2.3) ===== */
-
-.mic-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 16px 8px;
-}
-
-.mic-status {
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--danger);
-}
-
-.mic-meter-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 16px 10px;
-}
-
-.mic-meter {
-  flex: 1;
-  height: 10px;
-  border-radius: 5px;
-  background: var(--bg-row);
-  border: 1px solid var(--border);
-  overflow: hidden;
-}
-
-.mic-meter-fill {
-  height: 100%;
-  width: 0%;
-  background: var(--accent);
-  /* No transition: the meter is driven every analysis tick (~30Hz) and
-     should track the room in real time, not ease toward stale targets. */
-}
-
-.mic-onset-dot {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--bg-row);
-  border: 1px solid var(--border);
-}
-
-.mic-onset-dot.flash {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
 /* ===== Preview area ===== */
 
 .preview-area {

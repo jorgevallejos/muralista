@@ -27,13 +27,16 @@ const PREVIEW_H = 900;
 // side treats whatever it last received over BroadcastChannel as truth and
 // never writes to localStorage itself.
 
-// Schema version of the project object, bumped to 2 (2026-08-22) when the
-// camera backdrop added backdropMode / cameraDeviceId / cameraQuad. This is
-// NOT the "v1" in STORAGE_KEY - that suffix is part of an address and never
-// changes (see the guard comment on STORAGE_KEY above). Older projects stay
-// readable: migrateProject() fills the new fields with the values that
-// describe what a v1 project already was.
-const PROJECT_VERSION = 2;
+// Schema version of the project object. v2 (2026-08-22) added the camera
+// backdrop's backdropMode / cameraDeviceId / cameraQuad. v3 (2026-08-22)
+// REMOVED the layer field micReactivity and the beat layer's "mic" mode,
+// when the sound-reactive layer came out - Muralista is a desk tool and
+// never runs during a show, so a field describing how a layer answers a
+// live room has no executor here. This is NOT the "v1" in STORAGE_KEY -
+// that suffix is part of an address and never changes (see the guard
+// comment on STORAGE_KEY above). Older projects stay readable:
+// migrateProject() fills in what they predate and drops what they outlived.
+const PROJECT_VERSION = 3;
 
 function emptyProject() {
   return {
@@ -86,14 +89,30 @@ function isValidQuad(q) {
 }
 
 // Brings a project of any earlier schema version up to PROJECT_VERSION by
-// filling in what it predates. Runs on load AND on import, so a venue JSON
-// exported before the camera existed opens without complaint - it simply
-// carries no camera calibration, which is exactly true of it.
+// filling in what it predates and dropping what it outlived. Runs on load
+// AND on import, so a venue JSON exported before the camera existed opens
+// without complaint - it simply carries no camera calibration, which is
+// exactly true of it - and one exported while layers were sound-reactive
+// opens too, simply without that behavior.
 function migrateProject(obj) {
   const proj = Object.assign({}, obj);
   if (proj.backdropMode !== "camera") proj.backdropMode = "photo";
   if (typeof proj.cameraDeviceId !== "string") proj.cameraDeviceId = null;
   if (!isValidQuad(proj.cameraQuad)) proj.cameraQuad = null;
+
+  // v3: the sound-reactive layer is gone. Copy each surface (and its layer)
+  // rather than mutating in place - the object handed to us may be a parsed
+  // import the caller still holds. A v2 layer that opted into mic reactivity
+  // simply loses it; a beat layer left in "mic" mode falls back to the fixed
+  // BPM it was already carrying, so it keeps pulsing instead of going dark.
+  proj.surfaces = (Array.isArray(proj.surfaces) ? proj.surfaces : []).map((surface) => {
+    if (!surface || typeof surface !== "object" || !surface.layer) return surface;
+    const layer = Object.assign({}, surface.layer);
+    delete layer.micReactivity;
+    if (layer.beatMode === "mic") layer.beatMode = "bpm";
+    return Object.assign({}, surface, { layer });
+  });
+
   proj.version = PROJECT_VERSION;
   return proj;
 }
@@ -466,69 +485,7 @@ function handleOutputMessage(event) {
     applyTransportAction(msg.action);
   } else if (msg.kind === "beatAnchor" && typeof msg.t0 === "number") {
     beatAnchorT0 = msg.t0;
-  } else if (msg.kind === "audio" && typeof msg.level === "number") {
-    handleAudioMessage(msg);
   }
-}
-
-// =========================================================================
-// AUDIO REACTIVITY (output-side)
-// =========================================================================
-// Consumes the compact `{kind:'audio', level, onset, t}` envelope broadcast
-// by the control window's mic capture loop (see MIC section, control-side
-// only). Ephemeral by design, mirroring the broadcast: nothing here is
-// persisted, and this state is never part of `project`.
-//
-// `latestAudio` is the raw last-received sample. If no audio message has
-// arrived for AUDIO_STALE_MS (mic off, or the control window/tab closed),
-// readers must treat the level as 0 rather than freezing on the last value -
-// currentRawAudioLevel() below is the single place that decay rule lives.
-
-let latestAudio = { level: 0, lastOnsetAt: 0 };
-let lastAudioMessageAt = 0;
-const AUDIO_STALE_MS = 1000;
-
-function handleAudioMessage(msg) {
-  latestAudio.level = Math.max(0, Math.min(1, msg.level));
-  if (msg.onset) latestAudio.lastOnsetAt = performance.now();
-  lastAudioMessageAt = performance.now();
-}
-
-function currentRawAudioLevel() {
-  if (performance.now() - lastAudioMessageAt > AUDIO_STALE_MS) return 0;
-  return latestAudio.level;
-}
-
-// A single eased copy of the raw level, updated once per output animation
-// frame (see startAudioReactiveLoop) so every mic-reactive consumer (beat
-// mic-mode canvases, the opacity modulation loop) reads the same smoothed
-// value instead of each re-deriving its own - the raw level only updates at
-// the control window's ~30Hz broadcast rate, so a per-frame reader smooths
-// that into something that doesn't visibly step.
-let smoothedAudioLevel = 0;
-const AUDIO_SMOOTHING = 0.25; // 0..1, higher = snappier / less smoothing
-
-function tickAudioSmoothing() {
-  const target = currentRawAudioLevel();
-  smoothedAudioLevel += (target - smoothedAudioLevel) * AUDIO_SMOOTHING;
-}
-
-// Shared rAF loop (started once from initOutput): keeps smoothedAudioLevel
-// current every frame, then applies opacity modulation to media layers with
-// micReactivity > 0. Deliberately does NOT add a per-entry loop - per the
-// v2.3 spec, one shared loop iterates outputSurfaceElements each frame and
-// only touches entries that opted in, leaving every other entry's opacity
-// exactly as the normal state-render path (renderLayer) set it.
-function audioReactiveFrame() {
-  tickAudioSmoothing();
-  outputSurfaceElements.forEach((entry) => {
-    if (entry.micReactivity > 0 && entry.contentEl) {
-      const base = entry.baseOpacity ?? 1;
-      const effective = base * (1 - entry.micReactivity + entry.micReactivity * smoothedAudioLevel);
-      entry.contentEl.style.opacity = String(effective);
-    }
-  });
-  requestAnimationFrame(audioReactiveFrame);
 }
 
 // =========================================================================
@@ -1102,7 +1059,7 @@ async function enableCamera() {
     const wanted = project.cameraDeviceId;
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: wanted ? { deviceId: { exact: wanted } } : true,
-      audio: false, // the mic is a separate, explicitly opted-in feature
+      audio: false, // a backdrop is picture only; nothing here listens to the room
     });
     document.getElementById("preview-camera").srcObject = cameraStream;
 
@@ -1397,42 +1354,11 @@ function buildLayerPanel(container, surface, layer) {
       container.appendChild(webmHint);
     }
 
-    // Mic reactivity (v2.3): 0 = off, exactly the current behavior (and the
-    // field is simply absent from projects saved before it existed). Above
-    // 0, the OUTPUT modulates this layer's effective opacity with the room's
-    // smoothed mic level - see audioReactiveFrame(). Only offered on media
-    // layers: pattern/beat generate their own content (beat has its own mic
-    // mode instead).
-    const micRow = document.createElement("div");
-    micRow.className = "layer-field";
-    const micLabel = document.createElement("label");
-    micLabel.textContent = "Mic reactivity";
-    micLabel.setAttribute("for", "layer-micreactivity-input");
-    const micInput = document.createElement("input");
-    micInput.type = "range";
-    micInput.id = "layer-micreactivity-input";
-    micInput.min = "0";
-    micInput.max = "1";
-    micInput.step = "0.01";
-    micInput.value = String(layer.micReactivity ?? 0);
-    const micValue = document.createElement("span");
-    micValue.id = "layer-micreactivity-value";
-    micValue.className = "layer-opacity-value";
-    micValue.textContent = Number(layer.micReactivity ?? 0).toFixed(2);
-    micInput.addEventListener("input", () => {
-      micValue.textContent = Number(micInput.value).toFixed(2);
-      setLayerField(surface.id, "micReactivity", Number(micInput.value));
-    });
-    const micHint = document.createElement("p");
-    micHint.className = "layer-hint";
-    micHint.textContent = "0 = always visible. Above 0, the room's loudness fades the layer in on the output (needs the mic enabled below).";
-    micRow.append(micLabel, micInput, micValue, micHint);
-    container.appendChild(micRow);
   }
 
-  // Beat: mode selector (BPM / Mic) + BPM field (bpm mode only). beatMode
+  // Beat: mode selector + BPM field. Only 'bpm' remains as of v3; beatMode
   // defaults to 'bpm' everywhere it's read, so projects saved before the
-  // field existed behave exactly as before.
+  // field existed - and v2 projects migrated off 'mic' - behave the same.
   if (layer.type === "beat") {
     const modeRow = document.createElement("div");
     modeRow.className = "layer-field";
@@ -1443,7 +1369,6 @@ function buildLayerPanel(container, surface, layer) {
     modeSelect.id = "layer-beatmode-select";
     [
       ["bpm", "BPM"],
-      ["mic", "Mic (sound-reactive)"],
     ].forEach(([value, label]) => {
       const opt = document.createElement("option");
       opt.value = value;
@@ -1475,10 +1400,9 @@ function buildLayerPanel(container, surface, layer) {
     container.appendChild(bpmRow);
 
     // Wired after bpmRow exists: switching modes commits the change AND
-    // shows/hides the BPM field locally. A mode change flows through the
-    // normal renderLayer reconcile on the output, which live-updates
-    // entry.beatMode without recreating the canvas (same rule as live bpm
-    // edits - the rAF loop reads the entry each frame).
+    // shows/hides the BPM field locally. With 'bpm' the only mode left in v3
+    // this select has one option and the row never hides, but the wiring is
+    // the seam a future mode arrives through, so it stays intact.
     modeSelect.addEventListener("change", () => {
       setLayerField(surface.id, "beatMode", modeSelect.value);
       bpmRow.hidden = modeSelect.value !== "bpm";
@@ -1530,169 +1454,10 @@ function updateLayerPanelValues(container, layer) {
   const opacityValue = container.querySelector("#layer-opacity-value");
   if (opacityValue) opacityValue.textContent = Number(layer.opacity ?? 1).toFixed(2);
 
-  const micInput = container.querySelector("#layer-micreactivity-input");
-  if (micInput && active !== micInput) micInput.value = String(layer.micReactivity ?? 0);
-  const micValue = container.querySelector("#layer-micreactivity-value");
-  if (micValue) micValue.textContent = Number(layer.micReactivity ?? 0).toFixed(2);
-
   const modeSelect = container.querySelector("#layer-beatmode-select");
   if (modeSelect && active !== modeSelect) modeSelect.value = layer.beatMode || "bpm";
   const bpmRow = container.querySelector("#layer-bpm-row");
   if (bpmRow) bpmRow.hidden = (layer.beatMode || "bpm") !== "bpm";
-}
-
-// =========================================================================
-// MIC (control window only)
-// =========================================================================
-// Captures the room's sound and turns it into a compact, EPHEMERAL envelope
-// broadcast for output layers to react to - see v2 direction workstream 2 in
-// project-context.md: "context awareness = control logic, not generation".
-// Nothing here is persisted or routed through commitProjectChange(); a
-// localStorage write at audio rate would be pathological, and this data has
-// no meaning after the moment it's sampled. Control-local state only.
-
-const MIC_LOOP_HZ = 30; // plenty for a level/onset envelope, cheaper than rAF
-const MIC_LOOP_MS = 1000 / MIC_LOOP_HZ;
-const MIC_RELEASE_SECONDS = 0.3; // envelope follower: instant attack, ~0.3s decay
-const MIC_ONSET_FACTOR = 1.8; // instantaneous RMS must beat the running average by this much
-const MIC_ONSET_MIN_RMS = 0.02; // ignore the running average's own noise floor near silence
-const MIC_ONSET_REFRACTORY_MS = 150;
-const MIC_RUNNING_AVG_SMOOTHING = 0.05; // the "room average" follows slowly, so transients stand out
-
-let micStream = null;
-let micAudioCtx = null;
-let micAnalyser = null;
-let micDataArray = null;
-let micLoopId = null;
-let micEnvelope = 0; // smoothed 0..1 level, attack-fast/release-slow
-let micRunningAvg = 0; // slow-following RMS average, the onset baseline
-let micLastOnsetAt = 0; // Date.now() of the last onset, for the refractory window
-let micOnsetFlashTimer = null;
-
-function isMicEnabled() {
-  return micStream != null;
-}
-
-function toggleMic() {
-  if (isMicEnabled()) {
-    disableMic();
-  } else {
-    enableMic();
-  }
-}
-
-async function enableMic() {
-  const statusEl = document.getElementById("mic-status");
-  const toggleBtn = document.getElementById("btn-mic-toggle");
-  statusEl.textContent = "";
-  try {
-    // echoCancellation/noiseSuppression/autoGainControl all off: we want the
-    // real room signal (for level + onset detection), not a cleaned-up voice
-    // signal - Chrome's voice processing would flatten exactly the dynamics
-    // this feature reacts to.
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
-    micAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const source = micAudioCtx.createMediaStreamSource(micStream);
-    micAnalyser = micAudioCtx.createAnalyser();
-    micAnalyser.fftSize = 2048;
-    micDataArray = new Float32Array(micAnalyser.fftSize);
-    source.connect(micAnalyser);
-
-    micEnvelope = 0;
-    micRunningAvg = 0;
-    micLastOnsetAt = 0;
-
-    micLoopId = window.setInterval(micAnalysisTick, MIC_LOOP_MS);
-    toggleBtn.textContent = "Disable mic";
-  } catch (err) {
-    micStream = null;
-    statusEl.textContent = `Mic unavailable: ${(err && err.message) || err}`;
-    console.warn("Muralista: getUserMedia failed.", err);
-  }
-}
-
-function disableMic() {
-  if (micLoopId != null) {
-    window.clearInterval(micLoopId);
-    micLoopId = null;
-  }
-  if (micStream) {
-    micStream.getTracks().forEach((t) => t.stop());
-    micStream = null;
-  }
-  if (micAudioCtx) {
-    micAudioCtx.close().catch(() => {});
-    micAudioCtx = null;
-  }
-  micAnalyser = null;
-  micDataArray = null;
-
-  document.getElementById("btn-mic-toggle").textContent = "Enable mic";
-  document.getElementById("mic-status").textContent = "";
-  const fill = document.getElementById("mic-meter-fill");
-  if (fill) fill.style.width = "0%";
-}
-
-// Runs at MIC_LOOP_HZ (~33ms). Computes RMS from the time-domain buffer,
-// applies an attack-fast/release-slow envelope follower so the broadcast
-// level rises the instant the room gets loud but decays smoothly rather than
-// chopping to silence between transients, detects onsets as the
-// instantaneous RMS spiking over a slow-following running average (with a
-// refractory window so one transient doesn't retrigger on its own decay),
-// then broadcasts the result and updates the local meter.
-function micAnalysisTick() {
-  if (!micAnalyser) return;
-  micAnalyser.getFloatTimeDomainData(micDataArray);
-
-  let sumSquares = 0;
-  for (let i = 0; i < micDataArray.length; i++) {
-    sumSquares += micDataArray[i] * micDataArray[i];
-  }
-  const rms = Math.sqrt(sumSquares / micDataArray.length); // roughly 0..1
-
-  const releasePerTick = 1 - Math.exp(-(MIC_LOOP_MS / 1000) / MIC_RELEASE_SECONDS);
-  if (rms > micEnvelope) {
-    micEnvelope = rms; // attack: instant
-  } else {
-    micEnvelope += (rms - micEnvelope) * releasePerTick; // release: exponential decay
-  }
-  const level = Math.max(0, Math.min(1, micEnvelope));
-
-  // Onset check compares against the PRE-update running average, then the
-  // average is updated after - otherwise a loud sample would drag its own
-  // baseline up before the comparison, making onsets harder to trigger.
-  const prevRunningAvg = micRunningAvg;
-  micRunningAvg += (rms - micRunningAvg) * MIC_RUNNING_AVG_SMOOTHING;
-
-  const now = Date.now();
-  let onset = false;
-  if (
-    rms > prevRunningAvg * MIC_ONSET_FACTOR &&
-    rms > MIC_ONSET_MIN_RMS &&
-    now - micLastOnsetAt > MIC_ONSET_REFRACTORY_MS
-  ) {
-    onset = true;
-    micLastOnsetAt = now;
-  }
-
-  channel.postMessage({ kind: "audio", level, onset, t: now });
-  updateMicMeterUI(level, onset);
-}
-
-function updateMicMeterUI(level, onset) {
-  const fill = document.getElementById("mic-meter-fill");
-  if (fill) fill.style.width = `${Math.round(level * 100)}%`;
-
-  if (onset) {
-    const dot = document.getElementById("mic-onset-dot");
-    if (dot) {
-      dot.classList.add("flash");
-      window.clearTimeout(micOnsetFlashTimer);
-      micOnsetFlashTimer = window.setTimeout(() => dot.classList.remove("flash"), 150);
-    }
-  }
 }
 
 // =========================================================================
@@ -1864,8 +1629,6 @@ function wireControlEvents() {
   document.getElementById("btn-camera-calibrate").addEventListener("click", toggleCameraCalibration);
   document.getElementById("btn-camera-calibrate-clear").addEventListener("click", clearCameraQuad);
   document.getElementById("btn-white-field").addEventListener("click", toggleWhiteField);
-
-  document.getElementById("btn-mic-toggle").addEventListener("click", toggleMic);
 }
 
 function initControl() {
@@ -1991,10 +1754,8 @@ function renderOutputSurface(container, surface, w, h) {
       rafId: null,
       beatToken: null,
       bpm: null,
-      beatMode: "bpm", // live-read each beat frame, like bpm (v2.3)
+      beatMode: "bpm", // live-read on reconcile, like bpm
       hue: null,
-      micReactivity: 0, // 0 = the shared audio loop leaves this entry alone (v2.3)
-      baseOpacity: 1, // the layer's own static opacity, the modulation baseline
     };
     outputSurfaceElements.set(surface.id, entry);
   }
@@ -2024,21 +1785,14 @@ function renderLayer(surface, entry) {
   }
 
   if (layer.type === "beat") {
-    // Live values; the running rAF loop reads these off the entry each frame,
-    // so bpm AND mode changes take effect without recreating the canvas.
+    // Live value: the running rAF loop reads entry.bpm off the entry each
+    // frame, so a bpm edit takes effect without recreating the canvas.
+    // beatMode is carried alongside it - 'bpm' is the only mode as of v3, so
+    // nothing in the draw path branches on it, but the field stays the seam
+    // the mode select writes through.
     entry.bpm = layer.bpm || 96;
     entry.beatMode = layer.beatMode || "bpm";
   }
-
-  // micReactivity/baseOpacity feed the shared audio-reactive rAF loop
-  // (audioReactiveFrame). Missing field (old projects) -> 0 -> the loop
-  // never touches this entry, so the static opacity below is final - exactly
-  // the pre-v2.3 behavior. When reactivity IS on, the static write below
-  // still happens on every state render; that's fine, the audio loop
-  // overwrites it again next frame.
-  entry.micReactivity =
-    layer.type === "video" || layer.type === "image" ? layer.micReactivity ?? 0 : 0;
-  entry.baseOpacity = layer.opacity ?? 1;
 
   if (entry.contentEl) {
     entry.contentEl.style.opacity = String(layer.opacity ?? 1);
@@ -2205,7 +1959,7 @@ function createBeatLayerElement(surface, layer, entry) {
   const ctx = canvas.getContext("2d");
 
   entry.bpm = layer.bpm || 96;
-  entry.beatMode = layer.beatMode || "bpm"; // missing field (old projects) -> bpm, unchanged behavior
+  entry.beatMode = layer.beatMode || "bpm"; // missing field (old projects) -> bpm
   entry.hue = surfaceHue(surface);
 
   // A fresh token per (re)start; the loop bails as soon as it no longer
@@ -2214,21 +1968,9 @@ function createBeatLayerElement(surface, layer, entry) {
   const token = {};
   entry.beatToken = token;
 
-  // Per-canvas mic-mode animation state (not on the entry: it's internal to
-  // this loop, reset if the canvas is ever recreated). seenOnsetAt tracks
-  // which latestAudio.lastOnsetAt this canvas has already spawned a flash
-  // for, so one onset = one flash even across many frames.
-  const micState = { seenOnsetAt: 0, flashStartedAt: 0 };
-
   function frame() {
     if (entry.beatToken !== token) return;
-    // Mode is read live off the entry each frame (like bpm), so a panel
-    // change flips the drawing without recreating the canvas.
-    if (entry.beatMode === "mic") {
-      drawMicBeatFrame(ctx, entry.hue, micState);
-    } else {
-      drawBeatFrame(ctx, entry.bpm, entry.hue);
-    }
+    drawBeatFrame(ctx, entry.bpm, entry.hue);
     entry.rafId = requestAnimationFrame(frame);
   }
   entry.rafId = requestAnimationFrame(frame);
@@ -2270,57 +2012,6 @@ function drawBeatFrame(ctx, bpm, hue) {
   ctx.strokeStyle = `hsla(${hue}, 90%, 65%, ${1 - phase})`;
   ctx.lineWidth = 16 * (1 - phase * 0.6);
   ctx.stroke();
-}
-
-// Mic mode (v2.3): the pulse follows the room instead of a clock. Two parts,
-// same hue system as bpm mode:
-//   - breathing: a core glow whose radius + brightness track the shared
-//     smoothedAudioLevel (already eased per-frame; silence/stale audio decays
-//     it to 0, so the surface fades to its dark base when the mic is off).
-//   - onset flash: an expanding ring spawned whenever latestAudio.lastOnsetAt
-//     changes (one flash per onset), fading out over ~400ms.
-// Kept deliberately smooth and simple - this is a stage visual, not a VU
-// meter.
-const MIC_FLASH_DURATION_MS = 400;
-
-function drawMicBeatFrame(ctx, hue, micState) {
-  const level = smoothedAudioLevel; // updated once per frame by the shared audio loop
-  const mid = UNIT_SIZE / 2;
-  const maxR = UNIT_SIZE * 0.45;
-  const now = performance.now();
-
-  // Spawn a flash when a new onset has arrived since the last one we drew.
-  if (latestAudio.lastOnsetAt > micState.seenOnsetAt) {
-    micState.seenOnsetAt = latestAudio.lastOnsetAt;
-    micState.flashStartedAt = now;
-  }
-
-  ctx.fillStyle = `hsl(${hue}, 55%, 6%)`;
-  ctx.fillRect(0, 0, UNIT_SIZE, UNIT_SIZE);
-
-  // Breathing core: radius and alpha grow with the room's level. A small
-  // floor radius keeps a faint ember visible in quiet moments so the surface
-  // doesn't read as dead between songs.
-  const coreR = maxR * (0.12 + 0.55 * level);
-  const glow = ctx.createRadialGradient(mid, mid, 0, mid, mid, coreR);
-  glow.addColorStop(0, `hsla(${hue}, 90%, ${55 + 25 * level}%, ${0.15 + 0.75 * level})`);
-  glow.addColorStop(1, "hsla(0, 0%, 0%, 0)");
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(mid, mid, coreR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Onset flash: an expanding, fading ring - same visual language as the
-  // bpm pulse ring, but triggered by the room instead of the clock.
-  const flashAge = now - micState.flashStartedAt;
-  if (micState.flashStartedAt > 0 && flashAge < MIC_FLASH_DURATION_MS) {
-    const t = flashAge / MIC_FLASH_DURATION_MS; // 0..1 over the flash life
-    ctx.beginPath();
-    ctx.arc(mid, mid, Math.max(maxR * t, 1), 0, Math.PI * 2);
-    ctx.strokeStyle = `hsla(${hue}, 90%, 70%, ${1 - t})`;
-    ctx.lineWidth = 18 * (1 - t * 0.6);
-    ctx.stroke();
-  }
 }
 
 // 1000x1000 canvas: numbered grid + brighter center crosshair + the
@@ -2486,13 +2177,6 @@ function initOutput() {
   renderOutput();
   channel.postMessage({ kind: "hello" });
   broadcastOutputSize();
-
-  // The one shared audio-reactive loop (v2.3): keeps smoothedAudioLevel
-  // eased every frame and applies mic-driven opacity modulation to media
-  // layers that opted in. Started once for the window's lifetime - with no
-  // audio broadcasts arriving it settles at level 0 and, for entries with
-  // micReactivity 0, never touches anything.
-  requestAnimationFrame(audioReactiveFrame);
 }
 
 // =========================================================================

@@ -27,13 +27,16 @@ const PREVIEW_H = 900;
 // side treats whatever it last received over BroadcastChannel as truth and
 // never writes to localStorage itself.
 
-// Schema version of the project object, bumped to 2 (2026-08-22) when the
-// camera backdrop added backdropMode / cameraDeviceId / cameraQuad. This is
-// NOT the "v1" in STORAGE_KEY - that suffix is part of an address and never
-// changes (see the guard comment on STORAGE_KEY above). Older projects stay
-// readable: migrateProject() fills the new fields with the values that
-// describe what a v1 project already was.
-const PROJECT_VERSION = 2;
+// Schema version of the project object. v2 (2026-08-22) added the camera
+// backdrop's backdropMode / cameraDeviceId / cameraQuad. v3 (2026-08-22)
+// REMOVED the layer field micReactivity and the beat layer's "mic" mode,
+// when the sound-reactive layer came out - Muralista is a desk tool and
+// never runs during a show, so a field describing how a layer answers a
+// live room has no executor here. This is NOT the "v1" in STORAGE_KEY -
+// that suffix is part of an address and never changes (see the guard
+// comment on STORAGE_KEY above). Older projects stay readable:
+// migrateProject() fills in what they predate and drops what they outlived.
+const PROJECT_VERSION = 3;
 
 function emptyProject() {
   return {
@@ -86,14 +89,30 @@ function isValidQuad(q) {
 }
 
 // Brings a project of any earlier schema version up to PROJECT_VERSION by
-// filling in what it predates. Runs on load AND on import, so a venue JSON
-// exported before the camera existed opens without complaint - it simply
-// carries no camera calibration, which is exactly true of it.
+// filling in what it predates and dropping what it outlived. Runs on load
+// AND on import, so a venue JSON exported before the camera existed opens
+// without complaint - it simply carries no camera calibration, which is
+// exactly true of it - and one exported while layers were sound-reactive
+// opens too, simply without that behavior.
 function migrateProject(obj) {
   const proj = Object.assign({}, obj);
   if (proj.backdropMode !== "camera") proj.backdropMode = "photo";
   if (typeof proj.cameraDeviceId !== "string") proj.cameraDeviceId = null;
   if (!isValidQuad(proj.cameraQuad)) proj.cameraQuad = null;
+
+  // v3: the sound-reactive layer is gone. Copy each surface (and its layer)
+  // rather than mutating in place - the object handed to us may be a parsed
+  // import the caller still holds. A v2 layer that opted into mic reactivity
+  // simply loses it; a beat layer left in "mic" mode falls back to the fixed
+  // BPM it was already carrying, so it keeps pulsing instead of going dark.
+  proj.surfaces = (Array.isArray(proj.surfaces) ? proj.surfaces : []).map((surface) => {
+    if (!surface || typeof surface !== "object" || !surface.layer) return surface;
+    const layer = Object.assign({}, surface.layer);
+    delete layer.micReactivity;
+    if (layer.beatMode === "mic") layer.beatMode = "bpm";
+    return Object.assign({}, surface, { layer });
+  });
+
   proj.version = PROJECT_VERSION;
   return proj;
 }

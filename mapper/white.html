@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Field</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; }
+  body.dark { background: #000; }
+  body.full { cursor: none; }
+  #hint {
+    position: fixed; inset: 0; display: grid; place-content: center;
+    font: 16px/1.6 system-ui, sans-serif; color: #333; text-align: center;
+  }
+  body.full #hint { display: none; }
+</style>
+<body>
+<div id="hint">
+  <strong>Click anywhere to fill the screen.</strong><br>
+  Then <kbd>space</kbd> toggles white / black.<br>
+  <kbd>Esc</kbd> to come back.
+</div>
+<script>
+  // A full-frame field for measuring where the projector's light actually lands.
+  // Browser fullscreen (Ctrl+Cmd+F) still shows Chrome's own bar, which would sit
+  // inside the measurement. The Fullscreen API removes every piece of browser UI,
+  // so what is on the wall is exactly the projector's frame and nothing else.
+  // It needs a click to start: browsers only grant fullscreen on a user gesture.
+  const b = document.body;
+  const toggle = () => b.classList.toggle('dark');
+
+  addEventListener('click', () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else toggle();
+  });
+  addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); toggle(); }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    b.classList.toggle('full', !!document.fullscreenElement);
+  });
+</script>

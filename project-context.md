@@ -577,6 +577,73 @@ describe what a v1 project already was, so every autosave and every exported ven
 **`STORAGE_KEY` is untouched** — its `.v1` suffix is part of an address, not a schema version, and
 the "Do NOT rename these" table above still governs it.
 
+### First real use, the same evening — and the number that justifies the feature
+
+Mapped in the studio within minutes of the build landing: calibrate once against a white field, then
+drag a quad onto the whiteboard while watching the live feed. **The whole afternoon had been a
+workaround for not having this.**
+
+**The measurement worth keeping.** The morning's method was a photograph of the wall, its projected
+field found by differencing a white frame against a black one, then perspective-corrected into a
+1280×800 backdrop. Careful, automatic, and **three percent out** — enough that the video overhung
+the whiteboard's right edge. Jorge's hand calibration, done by eye against the wall, was right.
+
+The lesson is not that the photo method was bad; it was accurate to its own inputs. It is that
+**a measurement taken once and applied blind cannot beat a loop that closes against the thing
+itself.** Any future accuracy work belongs in making the loop tighter, not in measuring harder.
+
+### The studio rig, as measured 2026-08-22
+
+Durable because the room is the rehearsal room and none of it moves. Re-measure only if the
+projector or the camera is repositioned.
+
+| | |
+|---|---|
+| projector | Acer, **1280 × 800**, projection mode **Front** (verified by reading the wall, not the camera) |
+| camera | Elgato Facecam 4K, mounted directly above the projector lens |
+| Mac mini → two displays | projector on the native HDMI port, Samsung on a USB-C adapter, **extended** |
+| whiteboard, in projector-frame coordinates | **x 41%–81%, y 15%–71%** — about a fifth of the frame |
+| everything outside it | wood, which shows the same light so faintly it reads as unlit |
+
+**About four fifths of the projector's output lands where it does not show.** That is the pixel and
+brightness budget from "Open questions — the room" item 1, answered by measurement rather than
+arithmetic. It is also the strongest argument for either zooming the throw down onto the board or
+accepting that the wood carries atmosphere only.
+
+Not found: an ECO or lamp-power setting. The projector's menu is the simplified one (Installation
+holds Projection, Keystone, Digital zoom out, Image shift, Language, Reset) with no Management tab.
+**Unresolved** — the remaining tabs were never checked. `Image shift` and `Digital zoom out` are the
+untried levers for lifting the beam off the performer without a mount.
+
+### Content shape versus surface shape: the `fit` gap
+
+First real mapping surfaced a gap the tool had no answer for. The studio whiteboard is roughly
+**4:3**; `cerdo.mp4` is **16:9**. Muralista stretches content to fill whatever quad is drawn
+(`object-fit: fill` throughout), so the animation was squeezed to **74% of its proper width**.
+
+**This is the normal case, not an edge case.** Surfaces are physical objects and content is not, so
+their shapes will almost never agree.
+
+**Not decided. Carried to the next design session (Jorge, 2026-08-22), and deliberately not queued
+for build.** The reflex answer is a per-layer `fit` choice (`fill` as today, plus `contain` and
+`cover`), which is one CSS property on the media element and sits outside the warp, so it is close
+to free. But *stretch, letterbox or crop* is a decision about how the work looks in a room, not a
+technical gap to close by reflex — and the third option, **reshaping the surface to the content**,
+is not in that list at all and may be the right one for a whiteboard. Worth an hour of thinking
+before it becomes a dropdown nobody revisits.
+
+### The stale output window, which cost a debugging round
+
+`python3 -m http.server` sends no cache headers, so Chrome will happily keep running an old
+`mapper.js`. The control window and the output window are **separate documents with separate
+caches**, so refreshing one does nothing for the other.
+
+The failure mode is nasty because it is silent: an outdated output window still understands the
+old message kinds, renders surfaces correctly, and simply **ignores any new one**. It presents as
+"the new feature does nothing" rather than as an error, which sends you looking in the wrong place.
+Fix queued: open the output window with a cache-busting query string, so it cannot happen rather
+than merely being unlikely.
+
 ## The v2.1 drag bug — found 2026-08-22, four weeks after it was declared fixed
 
 Jorge reported after the July projector session that dragging in the preview "doesn't work". v2.1

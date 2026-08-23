@@ -45,8 +45,14 @@ const PREVIEW_H = 900;
 // drops what they outlived. v5 (2026-08-23) ADDED the top-level keepOuts
 // array: regions the projector holds dark. It is a sibling of surfaces, not
 // a member of it - a keep-out carries no content, so it needs no homography
-// and is not bound to four corners. See KEEP-OUTS below.
-const PROJECT_VERSION = 5;
+// and is not bound to four corners. See KEEP-OUTS below. v6 (2026-08-23)
+// ADDED the "text" layer type and the fields that only it uses (text, role,
+// maxSize, align, color, outline, outlineWidth) - see TEXT LAYER below. No
+// older project needs anything added for it: a project with no text layer
+// carries no text fields, which is exactly true of it. The bump exists
+// because a v6 file will NOT open correctly in an older build - it would
+// read a layer of an unknown type and paint the test pattern instead.
+const PROJECT_VERSION = 6;
 
 function emptyProject() {
   return {
@@ -127,6 +133,12 @@ function migrateProject(obj) {
     delete layer.beatMode;
     delete layer.bpm;
     if (layer.type === "beat") layer.type = "pattern";
+    // v6: a text layer's own fields, defaulted and clamped here and nowhere
+    // else. An import is arbitrary JSON - a role of 42 or a negative size
+    // would otherwise reach the renderer and paint something inexplicable at
+    // a projector. A layer of any other type is left exactly as it is: no
+    // older project gains a field it never had.
+    if (layer.type === "text") Object.assign(layer, sanitizeTextLayer(layer));
     return Object.assign({}, surface, { layer });
   });
 
@@ -169,6 +181,86 @@ function defaultSurface(index) {
     ],
     layer: { type: "pattern", src: null, opacity: 1 },
     visible: true,
+  };
+}
+
+// =========================================================================
+// TEXT LAYER (schema half; the fit and the painting are further down)
+// =========================================================================
+// A layer that IS a string. It needs no media folder, no Blob and no name to
+// resolve: the content rides the existing state broadcast like any other
+// layer field, which is why nothing in the media half of this file mentions
+// it (referencedMediaNames() filters to video/image and stays as it is).
+//
+// ROLE VERSUS PREVIEW CONTENT. A text layer carries two different facts and
+// conflating them is the mistake this field exists to prevent: WHAT THIS
+// REGION IS FOR, and WHAT IS BEING PREVIEWED IN IT. Under the desk-tool
+// direction a region becomes a SLOT that Pregonero fills from SP JSON at
+// runtime, and the string typed here is a preview of that slot - a real line
+// pasted in so the layout is tuned against a real length. If the mapping
+// recorded only "this region shows this string", nothing would distinguish
+// the lyric slot from a caption somebody typed, and every venue file would
+// have to be re-authored by hand the day Pregonero learns to read one.
+//
+// Exactly two roles, and no more until something actually needs a third:
+//   "lyrics" - a slot to be filled later (default)
+//   "static" - text that is just text (a title card)
+const TEXT_ROLES = ["lyrics", "static"];
+const TEXT_ALIGNMENTS = ["left", "center", "right"];
+
+// SIZE IS A FRACTION OF THE SHAPE, NEVER PIXELS. An absolute font size
+// silently breaks every tuned layout the moment a quad is redrawn in a new
+// room; a fraction travels with the shape, so a remapped room still reads.
+// The fraction is OF THE UNIT CONTENT BOX, which is the shape - see the WARP
+// section: every surface's content is drawn into a fixed UNIT_SIZE square
+// that matrix3d maps onto the four corners, so a fraction of that box is a
+// fraction of the quad on the wall, by construction and with no bookkeeping.
+//
+// This value is the MAXIMUM. Auto-fit (fitTextLayer) only ever goes below
+// it, so the longest line in the catalogue cannot overflow at any setting
+// while short lines still get to be big.
+const TEXT_MAX_SIZE_MIN = 0.02;
+const TEXT_MAX_SIZE_MAX = 0.6;
+// Outline width as a fraction of the FITTED font size (written out in `em`),
+// so the stroke-to-glyph ratio survives auto-fit shrinking the text.
+const TEXT_OUTLINE_WIDTH_MAX = 0.25;
+
+const TEXT_LAYER_DEFAULTS = {
+  text: "",
+  role: "lyrics",
+  maxSize: 0.2,
+  align: "center",
+  color: "#ffffff",
+  outline: true,
+  outlineWidth: 0.08,
+};
+
+function isHexColor(value) {
+  return typeof value === "string" && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value);
+}
+
+function clampNumber(value, min, max, fallback) {
+  const n = Number(value);
+  if (!isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+// The single shape authority for a text layer's own fields. Returns a fully
+// defaulted, clamped set - never mutates its argument. Called from
+// migrateProject (the enforcement point on load AND on import, where the
+// JSON is arbitrary and may claim a role of 42 or a size of -8) and from
+// setLayerType, so that choosing the type writes the fields into the project
+// immediately rather than leaving the renderer to invent them every frame.
+function sanitizeTextLayer(layer) {
+  const src = layer && typeof layer === "object" ? layer : {};
+  return {
+    text: typeof src.text === "string" ? src.text : TEXT_LAYER_DEFAULTS.text,
+    role: TEXT_ROLES.includes(src.role) ? src.role : TEXT_LAYER_DEFAULTS.role,
+    maxSize: clampNumber(src.maxSize, TEXT_MAX_SIZE_MIN, TEXT_MAX_SIZE_MAX, TEXT_LAYER_DEFAULTS.maxSize),
+    align: TEXT_ALIGNMENTS.includes(src.align) ? src.align : TEXT_LAYER_DEFAULTS.align,
+    color: isHexColor(src.color) ? src.color : TEXT_LAYER_DEFAULTS.color,
+    outline: src.outline !== false,
+    outlineWidth: clampNumber(src.outlineWidth, 0, TEXT_OUTLINE_WIDTH_MAX, TEXT_LAYER_DEFAULTS.outlineWidth),
   };
 }
 
@@ -528,6 +620,12 @@ function setLayerType(id, type) {
   if (!surface) return;
   surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
   surface.layer.type = type;
+  // Choosing "text" writes the text fields into the project there and then,
+  // rather than leaving them implicit for the renderer to default on every
+  // frame - implicit fields are fields that never reach the exported venue
+  // file. Existing values are preserved by sanitizeTextLayer, so switching
+  // away to video and back does not lose what was typed.
+  if (type === "text") Object.assign(surface.layer, sanitizeTextLayer(surface.layer));
   commitProjectChange();
 }
 
@@ -1474,14 +1572,24 @@ function renderPreview() {
       // glance.
       const layer = surface.layer;
       const layerType = layer && layer.type;
-      if (layerType === "video" || layerType === "image") {
+      if (layerType === "video" || layerType === "image" || layerType === "text") {
         const isAlphaOverlay = layerType === "image" && /\.webm$/i.test((layer && layer.src) || "");
         const [cx, cy] = surfaceCentroidNormalized(surface);
         const badge = document.createElementNS(SVG_NS, "text");
         badge.setAttribute("x", cx * PREVIEW_W);
         badge.setAttribute("y", cy * PREVIEW_H);
         badge.setAttribute("class", "preview-layer-badge");
-        badge.textContent = layerType === "video" ? "▶ video" : isAlphaOverlay ? "▶ overlay" : "\u{1F5BC} image";
+        // A text layer is badged with its ROLE, not with the word "text".
+        // At a glance the useful fact about a quad is that it is the lyric
+        // slot - "text" is something the layer panel already says.
+        badge.textContent =
+          layerType === "video"
+            ? "▶ video"
+            : layerType === "text"
+              ? `T ${sanitizeTextLayer(layer).role}`
+              : isAlphaOverlay
+                ? "▶ overlay"
+                : "\u{1F5BC} image";
         svg.appendChild(badge);
       }
     });
@@ -2588,7 +2696,7 @@ function buildLayerPanel(container, surface, layer) {
   typeLabel.setAttribute("for", "layer-type-select");
   const typeSelect = document.createElement("select");
   typeSelect.id = "layer-type-select";
-  ["pattern", "video", "image"].forEach((t) => {
+  ["pattern", "video", "image", "text"].forEach((t) => {
     const opt = document.createElement("option");
     opt.value = t;
     opt.textContent = t;
@@ -2672,6 +2780,8 @@ function buildLayerPanel(container, surface, layer) {
 
   }
 
+  if (layer.type === "text") buildTextLayerControls(container, surface, layer);
+
   // Opacity (all layer types).
   const opacityRow = document.createElement("div");
   opacityRow.className = "layer-field";
@@ -2697,6 +2807,182 @@ function buildLayerPanel(container, surface, layer) {
   container.appendChild(opacityRow);
 }
 
+// The text layer's own controls. Kept plain on purpose - the brutalist
+// restyle is a separate build and will style whatever is here.
+//
+// Every field commits on 'input' rather than on 'change': tuning by eye at
+// the wall, with the projector on, is the actual workflow for this layer, and
+// a size that only lands when you let go of the slider cannot be tuned by
+// eye. The same-key re-render path (updateTextLayerPanelValues) skips
+// whichever control has focus, so committing per keystroke does not clobber
+// an edit in progress.
+function buildTextLayerControls(container, surface, layer) {
+  const fields = sanitizeTextLayer(layer);
+
+  // Role: what this region IS, as opposed to what is currently in it. See
+  // the TEXT LAYER section in STATE for why these are two facts and not one.
+  const roleRow = document.createElement("div");
+  roleRow.className = "layer-field";
+  const roleLabel = document.createElement("label");
+  roleLabel.textContent = "Role";
+  roleLabel.setAttribute("for", "layer-role-select");
+  const roleSelect = document.createElement("select");
+  roleSelect.id = "layer-role-select";
+  TEXT_ROLES.forEach((r) => {
+    const opt = document.createElement("option");
+    opt.value = r;
+    opt.textContent = r;
+    roleSelect.appendChild(opt);
+  });
+  roleSelect.value = fields.role;
+  roleSelect.addEventListener("change", () => setLayerField(surface.id, "role", roleSelect.value));
+  roleRow.append(roleLabel, roleSelect);
+  container.appendChild(roleRow);
+
+  const roleHint = document.createElement("p");
+  roleHint.className = "layer-hint";
+  roleHint.textContent =
+    "lyrics = a slot: the region is where lyrics go, and the text below is a preview of it, to be filled from the song file later. static = the text below is the content, and stays.";
+  container.appendChild(roleHint);
+
+  // Content.
+  const textRow = document.createElement("div");
+  textRow.className = "layer-field";
+  const textLabel = document.createElement("label");
+  textLabel.textContent = fields.role === "lyrics" ? "Preview text" : "Text";
+  textLabel.setAttribute("for", "layer-text-input");
+  const textInput = document.createElement("textarea");
+  textInput.id = "layer-text-input";
+  textInput.rows = 3;
+  textInput.placeholder = "e.g. Y en el fondo de la copa\nse ahogó la tragedia";
+  textInput.value = fields.text;
+  textInput.addEventListener("input", () => setLayerField(surface.id, "text", textInput.value));
+  textRow.append(textLabel, textInput);
+  container.appendChild(textRow);
+
+  const textHint = document.createElement("p");
+  textHint.className = "layer-hint";
+  textHint.textContent =
+    "Wraps on word boundaries, and a line break here is a line break on the wall. Paste the longest line you will actually use - that is the one the layout has to survive.";
+  container.appendChild(textHint);
+
+  // Maximum size. Shown as a percentage because that is what it is: a
+  // fraction of the shape's height, not a point size. Naming it in pixels
+  // would invite exactly the reading the whole design is built to avoid.
+  const sizeRow = document.createElement("div");
+  sizeRow.className = "layer-field";
+  const sizeLabel = document.createElement("label");
+  sizeLabel.textContent = "Maximum size (% of shape height)";
+  sizeLabel.setAttribute("for", "layer-maxsize-input");
+  const sizeInput = document.createElement("input");
+  sizeInput.type = "range";
+  sizeInput.id = "layer-maxsize-input";
+  sizeInput.min = String(TEXT_MAX_SIZE_MIN);
+  sizeInput.max = String(TEXT_MAX_SIZE_MAX);
+  sizeInput.step = "0.005";
+  sizeInput.value = String(fields.maxSize);
+  const sizeValue = document.createElement("span");
+  sizeValue.id = "layer-maxsize-value";
+  sizeValue.className = "layer-opacity-value";
+  sizeValue.textContent = formatTextSize(fields.maxSize);
+  sizeInput.addEventListener("input", () => {
+    sizeValue.textContent = formatTextSize(Number(sizeInput.value));
+    setLayerField(surface.id, "maxSize", Number(sizeInput.value));
+  });
+  sizeRow.append(sizeLabel, sizeInput, sizeValue);
+  container.appendChild(sizeRow);
+
+  const sizeHint = document.createElement("p");
+  sizeHint.className = "layer-hint";
+  sizeHint.textContent =
+    "A ceiling, not a size: text that would not fit is shrunk below this until it does, so it cannot overflow the shape at any setting. Short lines get the full value.";
+  container.appendChild(sizeHint);
+
+  // Horizontal alignment. There is no vertical control: text is centred
+  // vertically, always.
+  const alignRow = document.createElement("div");
+  alignRow.className = "layer-field";
+  const alignLabel = document.createElement("label");
+  alignLabel.textContent = "Align";
+  alignLabel.setAttribute("for", "layer-align-select");
+  const alignSelect = document.createElement("select");
+  alignSelect.id = "layer-align-select";
+  TEXT_ALIGNMENTS.forEach((a) => {
+    const opt = document.createElement("option");
+    opt.value = a;
+    opt.textContent = a;
+    alignSelect.appendChild(opt);
+  });
+  alignSelect.value = fields.align;
+  alignSelect.addEventListener("change", () => setLayerField(surface.id, "align", alignSelect.value));
+  alignRow.append(alignLabel, alignSelect);
+  container.appendChild(alignRow);
+
+  // Colour.
+  const colorRow = document.createElement("div");
+  colorRow.className = "layer-field";
+  const colorLabel = document.createElement("label");
+  colorLabel.textContent = "Colour";
+  colorLabel.setAttribute("for", "layer-color-input");
+  const colorInput = document.createElement("input");
+  colorInput.type = "color";
+  colorInput.id = "layer-color-input";
+  colorInput.value = fields.color;
+  colorInput.addEventListener("input", () => setLayerField(surface.id, "color", colorInput.value));
+  colorRow.append(colorLabel, colorInput);
+  container.appendChild(colorRow);
+
+  // Outline.
+  const outlineRow = document.createElement("div");
+  outlineRow.className = "layer-field layer-field-check";
+  const outlineInput = document.createElement("input");
+  outlineInput.type = "checkbox";
+  outlineInput.id = "layer-outline-input";
+  outlineInput.checked = fields.outline;
+  const outlineLabel = document.createElement("label");
+  outlineLabel.textContent = "Outline";
+  outlineLabel.setAttribute("for", "layer-outline-input");
+  outlineInput.addEventListener("change", () => setLayerField(surface.id, "outline", outlineInput.checked));
+  outlineRow.append(outlineInput, outlineLabel);
+  container.appendChild(outlineRow);
+
+  const outlineWidthRow = document.createElement("div");
+  outlineWidthRow.className = "layer-field";
+  const outlineWidthLabel = document.createElement("label");
+  outlineWidthLabel.textContent = "Outline width";
+  outlineWidthLabel.setAttribute("for", "layer-outline-width-input");
+  const outlineWidthInput = document.createElement("input");
+  outlineWidthInput.type = "range";
+  outlineWidthInput.id = "layer-outline-width-input";
+  outlineWidthInput.min = "0";
+  outlineWidthInput.max = String(TEXT_OUTLINE_WIDTH_MAX);
+  outlineWidthInput.step = "0.005";
+  outlineWidthInput.value = String(fields.outlineWidth);
+  outlineWidthInput.disabled = !fields.outline;
+  const outlineWidthValue = document.createElement("span");
+  outlineWidthValue.id = "layer-outline-width-value";
+  outlineWidthValue.className = "layer-opacity-value";
+  outlineWidthValue.textContent = fields.outlineWidth.toFixed(3);
+  outlineWidthInput.addEventListener("input", () => {
+    outlineWidthValue.textContent = Number(outlineWidthInput.value).toFixed(3);
+    setLayerField(surface.id, "outlineWidth", Number(outlineWidthInput.value));
+  });
+  outlineWidthRow.append(outlineWidthLabel, outlineWidthInput, outlineWidthValue);
+  container.appendChild(outlineWidthRow);
+
+  // Says the quiet part out loud: a lyric surface is the one place in the
+  // suite where legibility outranks restraint.
+  const outlineHint = document.createElement("p");
+  outlineHint.className = "layer-hint";
+  outlineHint.textContent =
+    "A dark outline plus a slight shadow, the way cinema subtitles do it, so the text reads over video and from the back of a dark room. The background stays transparent either way.";
+  container.appendChild(outlineHint);
+}
+
+function formatTextSize(fraction) {
+  return `${(fraction * 100).toFixed(1)}%`;
+}
+
 // Refreshes field values without rebuilding the DOM (see renderLayerPanel).
 // Skips whichever field is currently focused so an in-progress edit isn't
 // clobbered by the re-render its own commit triggered.
@@ -2713,6 +2999,51 @@ function updateLayerPanelValues(container, layer) {
   if (opacityInput && active !== opacityInput) opacityInput.value = String(layer.opacity ?? 1);
   const opacityValue = container.querySelector("#layer-opacity-value");
   if (opacityValue) opacityValue.textContent = Number(layer.opacity ?? 1).toFixed(2);
+
+  if (layer.type === "text") updateTextLayerPanelValues(container, layer, active);
+}
+
+// Same contract as above: refresh, never rebuild, and never touch the control
+// that currently has focus. Every one of these commits on 'input', so the
+// focused control is by definition the one mid-edit.
+function updateTextLayerPanelValues(container, layer, active) {
+  const fields = sanitizeTextLayer(layer);
+
+  const roleSelect = container.querySelector("#layer-role-select");
+  if (roleSelect && active !== roleSelect) roleSelect.value = fields.role;
+
+  const textInput = container.querySelector("#layer-text-input");
+  if (textInput && active !== textInput) textInput.value = fields.text;
+  // The content field's label follows the role - "preview text" and "text"
+  // are different promises, and the role selector is right above it. The
+  // panel is not rebuilt on a role change (the key is surface + type), so
+  // this is where the label keeps up.
+  const textLabel = container.querySelector('label[for="layer-text-input"]');
+  if (textLabel) textLabel.textContent = fields.role === "lyrics" ? "Preview text" : "Text";
+
+  const sizeInput = container.querySelector("#layer-maxsize-input");
+  if (sizeInput && active !== sizeInput) sizeInput.value = String(fields.maxSize);
+  const sizeValue = container.querySelector("#layer-maxsize-value");
+  if (sizeValue) sizeValue.textContent = formatTextSize(fields.maxSize);
+
+  const alignSelect = container.querySelector("#layer-align-select");
+  if (alignSelect && active !== alignSelect) alignSelect.value = fields.align;
+
+  const colorInput = container.querySelector("#layer-color-input");
+  if (colorInput && active !== colorInput) colorInput.value = fields.color;
+
+  const outlineInput = container.querySelector("#layer-outline-input");
+  if (outlineInput && active !== outlineInput) outlineInput.checked = fields.outline;
+
+  const outlineWidthInput = container.querySelector("#layer-outline-width-input");
+  if (outlineWidthInput) {
+    if (active !== outlineWidthInput) outlineWidthInput.value = String(fields.outlineWidth);
+    // Not a cosmetic disable: with the outline off the width is inert, and a
+    // live slider that changes nothing on the wall is a control that lies.
+    outlineWidthInput.disabled = !fields.outline;
+  }
+  const outlineWidthValue = container.querySelector("#layer-outline-width-value");
+  if (outlineWidthValue) outlineWidthValue.textContent = fields.outlineWidth.toFixed(3);
 }
 
 // =========================================================================
@@ -3278,6 +3609,7 @@ function renderOutputSurface(container, surface, w, h) {
       wrapper,
       layerType: null,
       layerSrc: null,
+      textKey: null,
       contentEl: null,
     };
     outputSurfaceElements.set(surface.id, entry);
@@ -3309,6 +3641,23 @@ function renderLayer(surface, entry) {
     entry.wrapper.appendChild(entry.contentEl);
     entry.layerType = layer.type;
     entry.layerSrc = nextUrl;
+    // Left null on purpose: a freshly mounted text box is undressed, and the
+    // block below is what dresses and fits it - now that it is in the
+    // document and has a width to measure.
+    entry.textKey = null;
+  }
+
+  // A text layer has no src to reconcile against, so it gets its own key.
+  // Editing the content or dragging the size slider must re-dress and re-fit
+  // the mounted element - but must NOT rebuild it, for the same reason a
+  // video is not rebuilt on a nudge: churn at a projector is the thing this
+  // reconciler exists to avoid.
+  if (layer.type === "text" && entry.contentEl) {
+    const nextTextKey = textLayerKey(layer);
+    if (entry.textKey !== nextTextKey) {
+      applyTextLayer(entry.contentEl, layer);
+      entry.textKey = nextTextKey;
+    }
   }
 
   if (entry.contentEl) {
@@ -3327,6 +3676,8 @@ function createLayerElement(surface, layer, url) {
       return createVideoLayerElement(layer, surface, url);
     case "image":
       return createImageLayerElement(layer, surface, url);
+    case "text":
+      return createTextLayerElement(layer, surface);
     case "pattern":
     default:
       return renderPatternLayer(surface);
@@ -3525,6 +3876,173 @@ function createImageLayerElement(layer, surface, url) {
   img.src = src;
   img.alt = "";
   return wrapMediaWithFailureNote(img, surface, layer, "image");
+}
+
+// =========================================================================
+// TEXT LAYER (painting half; the schema is up in STATE)
+// =========================================================================
+// REAL DOM TEXT INSIDE THE WARPED ELEMENT, NEVER A PRE-RENDERED IMAGE. The
+// browser rasterizes AFTER the transform, so the glyphs stay crisp in a
+// keystoned quad however hard the corners are pulled. Text baked into a
+// bitmap and then warped is precisely how surtitles fail: you get a sharp
+// image of blurry letters.
+//
+// The structure is .layer-box > .layer-text > .layer-text-inner. The middle
+// element carries the inset (so text never touches the quad's edge) and
+// centres its child vertically; the inner element is the thing measured and
+// the thing sized.
+//
+// Deliberate, and NOT an oversight: the suite's "contrast is a budget" rule
+// does not apply here. A lyric surface is read from the back of a dark room,
+// through a projector, over moving video. Legibility wins outright - hence a
+// transparent background (so a video layer underneath shows through, which
+// is the overlay case v1 actually needs), a dark stroke painted BEHIND the
+// fill, and a slight drop shadow. That is how cinema subtitles do it, for
+// exactly the same reason.
+
+// The margin between the text and the quad's edge, as a fraction of the unit
+// box. It is what makes "no exceeding limits" a guarantee rather than a
+// near-miss: the fit targets the inset box, so the outline stroke and the
+// shadow (which extend past the glyph box and are not measured by layout)
+// still have room, at any font size the slider can ask for.
+const TEXT_INSET = 0.06;
+// Floor for auto-fit, and the one place the guarantee stops. Below this a
+// line on a wall is not "small", it is unreadable. Content that still does
+// not fit at the floor is left to overflow VISIBLY rather than be clipped or
+// shrunk further: silent clipping is the surtitle failure this whole layer
+// exists to avoid, and a quad drawn far too small for its content is
+// something the person at the wall needs to SEE, not something to hide.
+//
+// There is a lot of room before that matters. Measured in the unit box: the
+// catalogue's longest entry (81 characters, and 152 with its translation
+// stacked under it) fits at 93px; an entire song of ~4,800 characters still
+// fits, at 16px. The floor is only reached somewhere past 40,000 characters,
+// which is not a lyric.
+const TEXT_MIN_PX = 8;
+const TEXT_FIT_ITERATIONS = 14; // binary search over the size range; ~0.05px resolution
+
+function createTextLayerElement(layer, surface) {
+  const box = document.createElement("div");
+  box.className = "layer-box";
+
+  const text = document.createElement("div");
+  text.className = "layer-text";
+  text.style.padding = `${TEXT_INSET * UNIT_SIZE}px`;
+
+  const inner = document.createElement("div");
+  inner.className = "layer-text-inner";
+  text.appendChild(inner);
+
+  // Same contract as the media layers: a layer with nothing in it says so ON
+  // THE OUTPUT. An empty text layer is otherwise perfectly invisible, and an
+  // invisible surface at a projector sends you debugging the warp.
+  const note = document.createElement("div");
+  note.className = "layer-note";
+  note.hidden = true;
+  note.textContent = `${surface.name}\nno text set`;
+
+  box.append(text, note);
+  // Deliberately NOT dressed or fitted here. The fit measures clientWidth,
+  // which is 0 on an element that is not in the document yet, and a fit
+  // against a zero-width box collapses straight to the floor. renderLayer
+  // runs applyTextLayer once the box is mounted - in the same synchronous
+  // task, so nothing is ever painted undressed.
+  return box;
+}
+
+// Writes every text field onto an already-mounted element and re-runs the
+// fit. Called on creation and whenever a text field changes (see renderLayer)
+// - the element is never rebuilt for a colour change, only re-dressed.
+function applyTextLayer(box, layer) {
+  const fields = sanitizeTextLayer(layer);
+  const text = box.querySelector(".layer-text");
+  const inner = box.querySelector(".layer-text-inner");
+  const note = box.querySelector(".layer-note");
+  if (!text || !inner) return;
+
+  note.hidden = fields.text.trim() !== "";
+
+  // textContent, not innerHTML: the content is a string typed by a person and
+  // is never markup. `white-space: pre-wrap` in the stylesheet is what makes
+  // the embedded newlines that some catalogue entries carry render as the two
+  // lines they are, instead of collapsing into one.
+  inner.textContent = fields.text;
+  inner.style.textAlign = fields.align;
+  inner.style.color = fields.color;
+
+  if (fields.outline && fields.outlineWidth > 0) {
+    // em, so the stroke scales with whatever size the fit lands on.
+    // `paint-order: stroke fill` (stylesheet) puts the stroke BEHIND the
+    // fill - without it the stroke is centred on the glyph outline and eats
+    // half its own width out of every thin stem, which thins a font exactly
+    // where it is already weakest.
+    inner.style.webkitTextStrokeWidth = `${fields.outlineWidth}em`;
+    inner.style.webkitTextStrokeColor = "#000";
+    inner.style.textShadow = "0 0.03em 0.06em rgba(0, 0, 0, 0.75)";
+  } else {
+    inner.style.webkitTextStrokeWidth = "0";
+    inner.style.textShadow = "none";
+  }
+
+  fitTextLayer(text, inner, fields.maxSize);
+}
+
+// AUTO-FIT: shrink until it fits, never grow past the maximum.
+//
+// Measured in the UNWARPED content box - the 1:1 UNIT_SIZE space before
+// matrix3d - which is the natural place for it and the reason the guarantee
+// holds without any geometry bookkeeping. The box is the same UNIT_SIZE
+// square whatever shape the quad is, so a fit computed once stays correct
+// when the quad is redrawn, moved, keystoned or the output window resized:
+// the transform rescales the already-fitted text along with everything else
+// in the box. Nothing here reads window dimensions, and nothing needs to.
+//
+// Fitting is monotonic in font size (a bigger size never needs fewer lines),
+// so a binary search over [TEXT_MIN_PX, max] converges on the largest size
+// that fits. Both axes are checked: wrapping handles the ordinary case, but
+// a single word longer than the box cannot wrap at all - it is scrollWidth
+// that catches that one, and the reason word-level wrapping can stay the
+// rule instead of breaking words mid-glyph-cluster.
+function fitTextLayer(text, inner, maxSize) {
+  const maxPx = maxSize * UNIT_SIZE;
+  if (!inner.textContent) {
+    inner.style.fontSize = `${maxPx}px`;
+    return maxPx;
+  }
+
+  // The inset box, in real numbers. clientWidth/clientHeight INCLUDE padding,
+  // so the inset comes off explicitly - measuring against them raw would fit
+  // the text to the full quad and hand back exactly the edge-touching the
+  // inset exists to prevent.
+  const insetPx = TEXT_INSET * UNIT_SIZE;
+  const availW = text.clientWidth - 2 * insetPx;
+  const availH = text.clientHeight - 2 * insetPx;
+
+  const fits = (px) => {
+    inner.style.fontSize = `${px}px`;
+    return inner.scrollWidth <= availW && inner.scrollHeight <= availH;
+  };
+
+  if (fits(maxPx)) return maxPx;
+
+  let lo = TEXT_MIN_PX; // may not fit either - see the floor comment above
+  let hi = maxPx;
+  for (let i = 0; i < TEXT_FIT_ITERATIONS; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) lo = mid;
+    else hi = mid;
+  }
+  inner.style.fontSize = `${lo}px`;
+  return lo;
+}
+
+// The text fields that, when any of them changes, mean the mounted element
+// has to be re-dressed and re-fitted. Deliberately excludes opacity, which
+// renderLayer already refreshes on every render and which cannot change the
+// fit.
+function textLayerKey(layer) {
+  const f = sanitizeTextLayer(layer);
+  return JSON.stringify([f.text, f.maxSize, f.align, f.color, f.outline, f.outlineWidth]);
 }
 
 // 1000x1000 canvas: numbered grid + brighter center crosshair + the

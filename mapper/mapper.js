@@ -2684,8 +2684,72 @@ function isCameraEnabled() {
   return cameraStream != null;
 }
 
+// =========================================================================
+// WHEN THE REMEMBERED CAMERA IS NOT THERE ANY MORE
+// =========================================================================
+// A DEVICE ID IS NOT A NAME. Chrome mints per-origin device ids and rotates
+// them on a replug, a profile change or, in practice, a restart - so
+// project.cameraDeviceId, which exists so a room comes back pointing at the
+// same webcam, is a promise the browser does not keep.
+//
+// Asking for a rotated id with `deviceId: { exact: ... }` throws
+// OverconstrainedError, and until v1.2.1 that was a DEAD END rather than a
+// setback: the device list was only populated AFTER a successful
+// getUserMedia, so the dropdown still read "Enable the camera to list inputs"
+// and offered nothing. One stale string locked a person out of the camera
+// entirely, and the only way back was editing localStorage by hand. Jorge did
+// exactly that, at a wall, twice.
+//
+// Two changes, and the second is the one that makes the first unnecessary:
+//
+//   1. A request for a specific camera that comes back "no such camera" is
+//      retried as "any camera", and the substitution is SAID OUT LOUD.
+//   2. The device list is populated whether or not a stream is running, so
+//      there is always a way forward from the menu itself.
+//
+// A WHITELIST, NOT A BLACKLIST. Falling back is only correct when the failure
+// means "that particular camera is not there" - a different device is then a
+// real remedy. It is wrong for "you may not have the camera" and for "the
+// camera is busy", where quietly opening a DIFFERENT one hides a problem that
+// has its own fix, and it is wrong for anything unrecognised, because an error
+// nobody has thought about is not one to paper over. So the recovery is opted
+// into by name, and everything else is reported.
+const CAMERA_MISSING_ERRORS = ["OverconstrainedError", "NotFoundError"];
+
+// What each failure actually means to somebody standing at a wall in the dark,
+// and what they can do about it. The error NAME is printed alongside, so "not
+// found", "denied" and "in use" are three visibly different things rather than
+// three sentences that all begin "Camera unavailable".
+const CAMERA_ERROR_HELP = {
+  NotAllowedError: "Chrome is blocking the camera for this page. Click the camera icon at the right of the address bar, allow it, and try again.",
+  NotReadableError: "Another application has the camera open. Chrome cannot share a webcam with a video call - close the other app and try again.",
+  NotFoundError: "No camera is attached.",
+  OverconstrainedError: "No attached camera matched what was asked for.",
+  AbortError: "The camera was taken away while it was opening.",
+  SecurityError: "This page is not allowed to use a camera here.",
+};
+
+function describeCameraError(err) {
+  const name = (err && err.name) || "Error";
+  const help = CAMERA_ERROR_HELP[name] || (err && err.message) || String(err);
+  return `Camera unavailable — ${name}\n${help}`;
+}
+
+function setCameraStatus(text, kind) {
+  const el = document.getElementById("camera-status");
+  if (!el) return;
+  el.textContent = text || "";
+  // A substitution is news, not a fault: it says the tool recovered. Only a
+  // real failure gets the danger colour, or the colour stops meaning anything.
+  el.classList.toggle("note", kind === "note");
+}
+
 function setBackdropMode(mode) {
   project.backdropMode = mode === "camera" ? "camera" : "photo";
+  // Coming into camera mode, refresh the menu before anybody looks at it.
+  // Un-awaited: it re-renders itself when it lands, and a dropdown is not
+  // worth holding up a mode switch for.
+  if (isCameraMode()) refreshCameraDevices();
   if (!isCameraMode()) {
     // Leaving camera mode gives the webcam back: the recording light going
     // out is the only honest signal that nothing is watching the room.
@@ -2716,31 +2780,71 @@ function toggleCamera() {
   }
 }
 
-async function enableCamera() {
-  const statusEl = document.getElementById("camera-status");
-  statusEl.textContent = "";
-  try {
-    // Stop any existing stream first - switching device while the old one is
-    // still open can leave two tracks live on the same camera.
-    stopCameraTracks();
-    const wanted = project.cameraDeviceId;
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: wanted ? { deviceId: { exact: wanted } } : true,
-      audio: false, // a backdrop is picture only; nothing here listens to the room
-    });
-    document.getElementById("preview-camera").srcObject = cameraStream;
+// `audio: false` throughout - a backdrop is picture only, and nothing here
+// listens to the room.
+function openCameraStream(video) {
+  return navigator.mediaDevices.getUserMedia({ video, audio: false });
+}
 
-    // Device LABELS are blank until a camera permission has been granted, so
-    // the list is only worth populating after getUserMedia has resolved -
-    // before that it would be a menu of anonymous ids.
-    await populateCameraDeviceList();
-    renderControl();
+async function enableCamera() {
+  setCameraStatus("");
+  // Stop any existing stream first - switching device while the old one is
+  // still open can leave two tracks live on the same camera.
+  stopCameraTracks();
+
+  const wanted = project.cameraDeviceId;
+  let substituted = false;
+
+  try {
+    if (wanted) {
+      try {
+        cameraStream = await openCameraStream({ deviceId: { exact: wanted } });
+      } catch (err) {
+        // The whole point of this release. Anything not on the list is a
+        // failure with its own remedy and is reported as itself.
+        if (!CAMERA_MISSING_ERRORS.includes(err && err.name)) throw err;
+        console.warn("Muralista: the remembered camera is gone; taking any camera.", err);
+        cameraStream = await openCameraStream(true);
+        substituted = true;
+      }
+    } else {
+      cameraStream = await openCameraStream(true);
+    }
   } catch (err) {
     cameraStream = null;
-    statusEl.textContent = `Camera unavailable: ${(err && err.message) || err}`;
+    setCameraStatus(describeCameraError(err), "error");
     console.warn("Muralista: camera getUserMedia failed.", err);
+    // Even a refused camera should leave the menu usable: enumerateDevices
+    // works without a stream, and a person who cannot open THIS camera may
+    // still be able to open another one.
+    await populateCameraDeviceList();
     renderControl();
+    return;
   }
+
+  document.getElementById("preview-camera").srcObject = cameraStream;
+
+  // Labels are blank until a camera permission has been granted, so this is
+  // the moment the list is worth its place - and it is also where
+  // project.cameraDeviceId is brought back into line with the camera actually
+  // open, which is what stops the stale id being stale a second time.
+  await populateCameraDeviceList();
+
+  if (substituted) {
+    const live = cameraStream.getVideoTracks()[0];
+    const label = (live && live.label) || "the default camera";
+    setCameraStatus(`Remembered camera not found, using ${label}. The mapping now remembers this one.`, "note");
+  }
+  renderControl();
+}
+
+// Re-list, then re-render so the menu's enabled state follows. Used from the
+// places that change what is plugged in or what is permitted, rather than from
+// renderControl - enumerateDevices is async and renderControl runs on every
+// arrow-key nudge.
+async function refreshCameraDevices() {
+  await populateCameraDeviceList();
+  renderControl();
 }
 
 function stopCameraTracks() {
@@ -2754,14 +2858,29 @@ function disableCamera() {
   stopCameraTracks();
   const video = document.getElementById("preview-camera");
   if (video) video.srcObject = null;
-  const statusEl = document.getElementById("camera-status");
-  if (statusEl) statusEl.textContent = "";
+  setCameraStatus(""); // clears the note class with it
 }
 
+// The cameras this machine last reported, so renderBackdropControls can decide
+// whether the menu is worth offering without re-enumerating on every nudge.
+let cameraDevices = [];
+
+// RUNS WITHOUT A STREAM, and that is the belt to the fallback's braces.
+// enumerateDevices() needs no permission and opens nothing - without one it
+// returns entries with blank labels and blank ids, which is a menu that says
+// "there is a camera here" and nothing more. That is worth having: it is the
+// difference between a dropdown offering a way forward and a dropdown reading
+// "Enable the camera to list inputs" beside a camera that will not enable.
 async function populateCameraDeviceList() {
   const select = document.getElementById("select-camera-device");
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  const cams = devices.filter((d) => d.kind === "videoinput");
+  let cams = [];
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    cams = devices.filter((d) => d.kind === "videoinput");
+  } catch (err) {
+    console.warn("Muralista: could not list cameras.", err);
+  }
+  cameraDevices = cams;
 
   select.innerHTML = "";
   if (cams.length === 0) {
@@ -2775,13 +2894,17 @@ async function populateCameraDeviceList() {
   cams.forEach((d, i) => {
     const opt = document.createElement("option");
     opt.value = d.deviceId;
+    // A blank label means "permission has not been granted yet", not "no
+    // camera". Numbering them is the honest thing to show: enough to pick one
+    // and find out what it is.
     opt.textContent = d.label || `Camera ${i + 1}`;
     select.appendChild(opt);
   });
 
   // Reflect what is actually open. If the stored deviceId is gone (the
   // webcam was unplugged, or this is another machine), fall back to whatever
-  // getUserMedia handed us rather than showing a stale selection.
+  // getUserMedia handed us rather than showing a stale selection - and write
+  // that back, so the next Enable asks for a camera that exists.
   const live = cameraStream && cameraStream.getVideoTracks()[0];
   const liveId = live && live.getSettings().deviceId;
   const wanted = cams.some((d) => d.deviceId === project.cameraDeviceId) ? project.cameraDeviceId : liveId;
@@ -2836,7 +2959,10 @@ function renderBackdropControls() {
   document.getElementById("backdrop-camera-controls").hidden = !camera;
 
   document.getElementById("btn-camera-toggle").textContent = isCameraEnabled() ? "Disable camera" : "Enable camera";
-  document.getElementById("select-camera-device").disabled = !isCameraEnabled();
+  // Live whenever there is anything to pick, running stream or not. Picking a
+  // camera while the feed is off simply remembers it for the next Enable,
+  // which is the way out of a remembered id that no longer resolves.
+  document.getElementById("select-camera-device").disabled = cameraDevices.length === 0;
 
   const calBtn = document.getElementById("btn-camera-calibrate");
   calBtn.textContent = calibratingCamera ? "Done" : isValidQuad(project.cameraQuad) ? "Recalibrate\u2026" : "Calibrate\u2026";
@@ -3856,7 +3982,19 @@ function initControl() {
   // free.
   new ResizeObserver(() => renderCamera()).observe(document.querySelector(".preview-box"));
 
+  // A replug or a profile change rotates Chrome's device ids, which is the
+  // whole cause of the dead end this release fixes. Listening for it keeps the
+  // menu true instead of true-as-of-load.
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener("devicechange", refreshCameraDevices);
+  }
+
   renderControl();
+
+  // Async and un-awaited, like initMediaFolder below: enumerateDevices needs
+  // no permission and opens nothing, so it costs a person nothing to have the
+  // menu already populated the first time they look at it.
+  refreshCameraDevices();
 
   // Async and deliberately un-awaited: reading the handle back out of
   // IndexedDB must not hold up the first paint of a mapping that is already in

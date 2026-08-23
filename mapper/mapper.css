@@ -92,7 +92,6 @@
      well as a dark one. */
   --draw-surface: #5eead4;        /* selected quad + its corner handles */
   --draw-surface-idle: #9aa3b8;   /* unselected quad outline */
-  --draw-outline: #f87171;        /* a shape's outline points, and a fill's edge */
   --draw-camera: #f0a53a;         /* the camera calibration quad */
   --draw-handle-fill: rgba(10, 10, 9, 0.85);
   --draw-label: #ffffff;
@@ -704,18 +703,6 @@ button.danger:hover {
   pointer-events: none;
 }
 
-/* The CONTENT FRAME of the selected shape, drawn only once the outline has
-   left it: four corners, dashed, saying what the content is warped onto.
-   Read-only - the numbered handles are how it moves - so never a hit target. */
-.preview-frame-outline {
-  fill: none;
-  stroke: var(--draw-surface);
-  stroke-width: 2;
-  stroke-dasharray: 4 8;
-  pointer-events: none;
-  opacity: 0.75;
-}
-
 /* Invisible thick line over each edge of the SELECTED shape's outline:
    clicking one inserts a point there. pointer-events:all for the same reason
    .corner-handle-hit needs it - a transparent stroke is not "painted", and
@@ -728,7 +715,12 @@ button.danger:hover {
   touch-action: none;
 }
 
-/* ===== Corner handles (calibration drag) ===== */
+/* ===== Outline point handles (calibration drag) =====
+
+   One idiom, one colour, one size, on every point of every shape. There were
+   two of these - a second, differently coloured set for the content frame -
+   and having to pick between two overlapping circles for every gesture is what
+   this file no longer asks anyone to do. */
 
 .corner-handle {
   cursor: grab;
@@ -764,19 +756,6 @@ button.danger:hover {
 
 .corner-handle.camera circle:not(.corner-handle-hit) {
   stroke: var(--draw-camera);
-}
-
-/* Outline point handles: the same handle idiom as the frame's corners, in the
-   outline's own colour, and smaller - an adopted outline carries 20-40 of them
-   and full-size dots would be a solid ring of chrome. The two colours are how
-   you tell at a glance which of the two things you are about to move. */
-.corner-handle.outline-point circle:not(.corner-handle-hit) {
-  stroke: var(--draw-outline);
-  stroke-width: 2;
-}
-
-.corner-handle.outline-point.active circle:not(.corner-handle-hit) {
-  fill: var(--draw-outline);
 }
 
 .corner-handle text {

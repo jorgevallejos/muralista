@@ -226,10 +226,17 @@ function migrateShape(surface) {
       : null;
   if (!outline) return null;
 
+  // A four-point outline IS the frame (see shapeFrame), so `corners` is
+  // brought into line with it here rather than left holding some older quad.
+  // No version bump goes with this: nothing gained a field, nothing lost one,
+  // and a file written this way opens correctly in a v1.1.0 build, which is
+  // the test this repo uses for whether a bump is owed.
+  const pinned = outline.length === 4 ? outline.map(([x, y]) => [x, y]) : corners;
+
   return {
     id: typeof surface.id === "string" && surface.id ? surface.id : genShapeId(),
     name: typeof surface.name === "string" && surface.name.trim() ? surface.name.trim() : "Shape",
-    corners,
+    corners: pinned,
     outline,
     layer,
     visible: surface.visible !== false,
@@ -440,9 +447,35 @@ function shapeOutline(shape) {
   return null;
 }
 
-// The content frame, or null. A fill shape legitimately has none.
+// THE FOUR CORNERS THE WARP USES, or null when there are none to be had.
+//
+// WHILE THE OUTLINE HAS EXACTLY FOUR POINTS, THE OUTLINE IS THE FRAME. Not a
+// copy of it, not synchronised with it - the same four points, returned from
+// here. That is what makes one set of handles enough: drag a point and the
+// content warps live under your hand, exactly as it did before a shape had an
+// outline at all.
+//
+// Past four points there is no longer a quad to be read off the outline, so
+// `corners` is consulted instead: it holds the last four-corner value the
+// shape had, pinned at the moment the fifth point arrived (see pinFrame), and
+// the extra points only clip. It moves again when somebody asks it to - see
+// refitFrameToOutline - and never on its own, because content jumping while a
+// person is editing an outline is worse than content sitting still.
 function shapeFrame(shape) {
-  return shape && isValidQuad(shape.corners) ? shape.corners : null;
+  if (!shape) return null;
+  const outline = shape.outline;
+  if (Array.isArray(outline) && outline.length === 4 && isValidQuad(outline)) return outline;
+  return isValidQuad(shape.corners) ? shape.corners : null;
+}
+
+// Writes the frame down from a four-point outline. Called at the two moments
+// the outline is about to stop being four points - an insert, and an adopted
+// ring - so that what gets pinned is the quad that was on screen a moment ago.
+// A no-op at any other count, which is what makes it safe to call defensively.
+function pinFrame(shape) {
+  if (shape && Array.isArray(shape.outline) && shape.outline.length === 4) {
+    shape.corners = shape.outline.map(([x, y]) => [x, y]);
+  }
 }
 
 function shapeLayer(shape) {
@@ -458,28 +491,27 @@ function shapeCarriesContent(shape) {
   return shapeType(shape) !== "fill";
 }
 
-// TRUE WHILE THE OUTLINE IS THE FRAME, and this is a geometric test rather
-// than a remembered flag on purpose. While it holds, the two are one thing:
-// dragging a corner writes both, the preview shows one set of handles, and
-// nothing is clipped. Adding a point breaks it; deleting that point back off
-// restores it, because the test asks the geometry rather than the history.
+// TRUE WHILE THE OUTLINE IS THE FRAME - which is now simply a question of how
+// many points it has. Four, and there is exactly one quad it could mean, so it
+// means it; more, and there is no quad there at all.
 //
-// Exact equality, not a tolerance, and it is exact by construction: while
-// linked, every edit writes the SAME computed value into both fields, and JSON
-// round-trips a double unchanged. A tolerance here would only invent a band in
-// which the two are "nearly" one thing, which is not a state this model has.
+// This used to compare the two rings point by point, which was correct and was
+// answering a question nobody had. It let a four-point outline exist that was
+// NOT its shape's frame, and the only way to show that state honestly was a
+// second set of handles - the numbered quad Jorge asked to have taken away.
+// Counting instead makes that state unreachable, which is the whole of the
+// simplification: one outline, one set of circles, and the frame is either the
+// outline or a value the outline pinned on its way past four.
 function shapeOutlineIsFrame(shape) {
-  const outline = shape && shape.outline;
-  const frame = shapeFrame(shape);
-  if (!frame || !Array.isArray(outline) || outline.length !== 4) return false;
-  return outline.every((p, i) => p[0] === frame[i][0] && p[1] === frame[i][1]);
+  return !!shape && Array.isArray(shape.outline) && shape.outline.length === 4;
 }
 
 // The axis-aligned bounding quad of a ring, in surface.corners order
 // [TL, TR, BR, BL]. Used when a shape that never had a content frame is given
-// a type that needs one: the box the outline already occupies is the only
-// frame the tool can honestly propose, and it is the one that leaves the
-// content covering everything the outline will let through.
+// a type that needs one, and as refitFrameToOutline's fallback: the box the
+// outline already occupies is the only frame the tool can honestly propose
+// with no previous frame to learn a perspective from, and it is the one that
+// leaves the content covering everything the outline will let through.
 function outlineBoundingQuad(points) {
   const xs = points.map((p) => p[0]);
   const ys = points.map((p) => p[1]);
@@ -493,6 +525,57 @@ function outlineBoundingQuad(points) {
     [x1, y1],
     [x0, y1],
   ];
+}
+
+// RE-FIT: MOVE THE FRAME BACK ONTO THE OUTLINE, ON PURPOSE AND ON REQUEST.
+//
+// Past four outline points the frame stops following the shape, so an outline
+// dragged somewhere new eventually has its content sitting off to one side.
+// This is the button that fixes that, and it is a button rather than something
+// automatic for one reason: recomputing on every drag would make the content
+// jump around under the hand of somebody who is trying to edit an outline,
+// which is a worse confusion than the one it solves.
+//
+// IT KEEPS THE PERSPECTIVE AND CHANGES ONLY THE EXTENT. The naive answer - the
+// outline's bounding box - throws away the keystone that was tuned against a
+// real wall, and hands back an upright rectangle for a surface that is not
+// upright. So instead: pull every outline point back through the CURRENT
+// frame's homography into unit-square space, take the bounding box THERE, and
+// push that box's four corners back out. The result is the same trapezoid,
+// grown or shrunk to sit exactly around the outline. A quad tuned against a
+// wall at an angle stays tuned against that wall.
+//
+// Falls back to the bounding box when there is no usable frame to learn from,
+// or when the frame is degenerate enough that a point maps to the horizon.
+function refitFrameToOutline(shape) {
+  const outline = shapeOutline(shape);
+  if (!outline) return null;
+  const frame = shapeFrame(shape);
+
+  const box = (pts) => {
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    return [Math.min.apply(null, xs), Math.min.apply(null, ys), Math.max.apply(null, xs), Math.max.apply(null, ys)];
+  };
+
+  const into = frame && computeHomography(frame, UNIT_SQUARE_CORNERS);
+  const outOf = frame && computeHomography(UNIT_SQUARE_CORNERS, frame);
+  if (into && outOf) {
+    const local = [];
+    for (const p of outline) {
+      const u = applyHomography(into, p);
+      if (!u) { local.length = 0; break; }
+      local.push(u);
+    }
+    if (local.length === outline.length) {
+      const [x0, y0, x1, y1] = box(local);
+      const corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map((u) => applyHomography(outOf, u));
+      if (corners.every(Boolean)) {
+        return corners.map(([x, y]) => [clampCoord(x), clampCoord(y)]);
+      }
+    }
+  }
+  return outlineBoundingQuad(outline).map(([x, y]) => [clampCoord(x), clampCoord(y)]);
 }
 
 // =========================================================================
@@ -555,37 +638,27 @@ let project = emptyProject();
 // Control-local UI state — never persisted, never broadcast.
 let selectedShapeId = null;
 
-// WHAT IS LIVE INSIDE THE SELECTED SHAPE, and the two are mutually exclusive
-// because the preview shows one live handle at a time - a second one at a
-// projector is a misclick waiting to happen.
+// WHICH OUTLINE POINT IS LIVE, as an index into the selected shape's outline.
+// Set by clicking a point handle, or by the 1-4 keys for the first four points
+// - which are the four the test pattern numbers on the wall, and on a shape
+// still at four points they are its corners. Delete removes it; arrows nudge
+// it; 0 or Escape clears it.
 //
-//   selectedPointIndex - an index into the shape's OUTLINE. Set by clicking a
-//                        point handle. Delete removes it; arrows nudge it.
-//   activeCornerIndex  - one of the CONTENT FRAME's 4 corners (0=TL, 1=TR,
-//                        2=BR, 3=BL), picked with the 1-4 keys, matching the
-//                        numbers baked into the test pattern.
+// There used to be a second one of these for the content frame's corners, and
+// removing it is the point of this change: one outline, one index into it, one
+// set of circles on screen.
 //
-// Both default to null on every fresh selection, so a click-select can be
-// followed straight by arrow-key coarse placement of the whole shape with no
-// extra keypress - precision is opt-in. 0 or Escape clears back to that.
+// Defaults to null on every fresh selection, so a click-select can be followed
+// straight by arrow-key coarse placement of the whole shape with no extra
+// keypress - precision is opt-in.
 let selectedPointIndex = null;
-let activeCornerIndex = null;
 
 function clearShapeSubselection() {
   selectedPointIndex = null;
-  activeCornerIndex = null;
 }
 
-// The two halves of the exclusivity above, each used wherever one of them is
-// being set, so neither can be left live alongside the other.
 function setSelectedPointIndex(index) {
   selectedPointIndex = index;
-  activeCornerIndex = null;
-}
-
-function setActiveCornerIndex(index) {
-  activeCornerIndex = index;
-  selectedPointIndex = null;
 }
 
 // Latest output-window size in real screen pixels, learned from the
@@ -742,6 +815,7 @@ function duplicateShape(id) {
 function setShapeOutline(id, points) {
   const shape = findShape(id);
   if (!shape || !isValidPointRing(points)) return false;
+  pinFrame(shape); // before the outline stops being four points, if it was
   shape.outline = points.map(([x, y]) => [clampCoord(x), clampCoord(y)]);
   selectedPointIndex = null; // an index into the old ring means nothing now
   commitProjectChange();
@@ -754,12 +828,18 @@ function setShapeOutline(id, points) {
 // bookend the array, folding the polygon over itself.
 //
 // This is also the gesture that separates the outline from the frame: a shape
-// whose outline was its frame has five outline points afterwards and four
-// frame corners, so the content starts being clipped. That is the model
-// working, not a side effect of it.
+// whose outline WAS its frame has five outline points afterwards and a pinned
+// quad behind them, so the content stops following the outline and starts
+// being clipped by it. That is the model working, not a side effect of it -
+// and "Re-fit content" is how you tell it to catch up.
 function insertShapePoint(id, index, point) {
   const shape = findShape(id);
   if (!shape) return;
+  // The moment that matters: a four-point outline IS the frame, and one more
+  // point ends that. Write the quad down first, so the content goes on being
+  // warped onto exactly what it was warped onto a moment ago and only starts
+  // being clipped. This is the one call site the rule exists for.
+  pinFrame(shape);
   shape.outline.splice(index, 0, [clampCoord(point[0]), clampCoord(point[1])]);
   setSelectedPointIndex(index);
   commitProjectChange();
@@ -775,6 +855,18 @@ function deleteShapePoint(id, index) {
   if (index == null || index < 0 || index >= shape.outline.length) return;
   shape.outline.splice(index, 1);
   selectedPointIndex = null;
+  commitProjectChange();
+}
+
+// Move the content frame back onto the current outline, deliberately. Only
+// ever reached from the panel button - see refitFrameToOutline for why this is
+// not something that happens on its own.
+function refitShapeContent(id) {
+  const shape = findShape(id);
+  if (!shape || !shapeCarriesContent(shape)) return;
+  const corners = refitFrameToOutline(shape);
+  if (!corners) return;
+  shape.corners = corners;
   commitProjectChange();
 }
 
@@ -1771,9 +1863,9 @@ function renderBackdrop() {
 }
 
 // Pointer-drag plumbing shared by every preview gesture: whole-shape drag,
-// frame-corner drag, outline-point drag, edge insert, and camera-calibration
-// corner drag. The caller supplies only applyMove(evt), which writes the new
-// geometry into `project`.
+// outline-point drag, edge insert, and camera-calibration corner drag. The
+// caller supplies only applyMove(evt), which writes the new geometry into
+// `project`.
 //
 // THE DETAIL THAT MATTERS, and the v2.1 bug (found by hand 2026-08-22): the
 // move/up listeners must live on an element that OUTLIVES the gesture.
@@ -2250,24 +2342,31 @@ async function adoptShapeBoundaries(shapeId) {
 // =========================================================================
 // SHAPE EDITING (preview)
 // =========================================================================
-// Four layers of hit target per selected shape, appended in this order so SVG
+// Three layers of hit target per selected shape, appended in this order so SVG
 // paint order does the disambiguating for free (later = on top):
 //
 //   1. the filled body      -> select it, and drag the whole shape
-//   2. the content frame    -> shown only when the outline has left it, and
-//                              never a hit target: it is a read-out
-//   3. one line per edge    -> insert an outline point there, and pull it out
+//   2. one line per edge    -> insert an outline point there, and pull it out
 //                              in the same gesture
-//   4. one handle per point -> select that point, and drag it
+//   3. one handle per point -> select that point, and drag it
 //
-// ONE SET OF HANDLES AT A TIME, and that is what makes the linked case work.
-// While a shape's outline IS its content frame (shapeOutlineIsFrame) the two
-// are one thing, so the preview draws ONE set of handles - the numbered 1-4
-// corners, exactly as before v8 - and a drag writes both fields. The moment a
-// point is added the two are different things, and only then does the preview
-// show the outline's own handles alongside the frame's. Two live handle sets
-// sitting exactly on top of each other is a misclick at a projector, and this
-// is why there are never any.
+// ONE SET OF CIRCLES. There is no second set and no second thing to drag: the
+// numbered quad that used to sit alongside these, showing the content frame,
+// is gone. It was the warp's own machinery drawn on the wall - four corners
+// because a homography needs four - and having it there made a person choose
+// between two overlapping handles for every gesture.
+//
+// What replaces it is a rule about counts, not a second object. At four points
+// the outline IS the frame, so dragging one of these circles warps the content
+// live, exactly as it did before shapes had outlines. Past four there is no
+// quad to read off the outline, so the frame holds still at the value it was
+// pinned at and the extra points clip - and the panel says so, with a button
+// that moves it when moving it is what you meant.
+//
+// EVERY point of the selected shape gets a circle, whatever the shape carries.
+// A fill shape used to get none at all, because the old test read "outline
+// equals frame" as "there is nothing here to edit"; a person who had just
+// drawn one was left looking at a shape with no handles on it.
 //
 // Every one of them goes through beginPreviewDrag(), for the reason spelled
 // out in full on that function: renderPreview() does svg.innerHTML = "" on
@@ -2321,26 +2420,8 @@ function applyMarginStroke(polygon, margin, scale) {
 // paints later.
 function renderShapeHandles(svg, shape) {
   if (!isValidPointRing(shape.outline)) return;
-  const frame = shapeFrame(shape);
-  const linked = shapeOutlineIsFrame(shape);
-
-  // The frame, when it is no longer the outline: a dashed quad showing what
-  // the content is actually warped onto. Read-only chrome - the numbered
-  // handles below are how it is moved.
-  if (frame && shapeCarriesContent(shape) && !linked) {
-    const outline = document.createElementNS(SVG_NS, "polygon");
-    outline.setAttribute("points", ringPointsAttr(frame, PREVIEW_W, PREVIEW_H));
-    outline.setAttribute("class", "preview-frame-outline");
-    svg.appendChild(outline);
-  }
-
   renderShapeEdgeTargets(svg, shape);
-
-  // The linked case draws the frame's handles only, and their drag writes the
-  // outline too - see the section comment. Everything else draws the outline's
-  // own handles, plus the frame's when there is a frame to move.
-  if (!linked) renderOutlinePointHandles(svg, shape);
-  if (frame && shapeCarriesContent(shape)) renderFrameCornerHandles(svg, shape, linked);
+  renderOutlinePointHandles(svg, shape);
 }
 
 // One invisible thick line per outline edge. pointer-events:all (set in CSS)
@@ -2369,54 +2450,30 @@ function renderShapeEdgeTargets(svg, shape) {
   }
 }
 
-// No number labels here, unlike the frame's corner handles: an adopted outline
-// carries 20-40 points, and there are no keys addressing them.
+// The selected shape's outline, one circle per point.
+//
+// The first four carry the numbers 1-4, and the rest do not. That is not an
+// inconsistency to be tidied: those four are the ones the 1-4 keys address and
+// the ones the test pattern paints numbers on at the wall, so the label is
+// telling you which key moves this circle. An adopted outline carries a dozen
+// points and numbering all of them would be a ring of unreadable chrome for no
+// gain - past the fourth there is no key to name.
 function renderOutlinePointHandles(svg, shape) {
   shape.outline.forEach(([nx, ny], i) => {
     const cx = nx * PREVIEW_W;
     const cy = ny * PREVIEW_H;
 
     const group = document.createElementNS(SVG_NS, "g");
-    group.setAttribute("class", "corner-handle outline-point" + (i === selectedPointIndex ? " active" : ""));
-
-    const hitTarget = document.createElementNS(SVG_NS, "circle");
-    hitTarget.setAttribute("cx", cx);
-    hitTarget.setAttribute("cy", cy);
-    hitTarget.setAttribute("r", 15);
-    hitTarget.setAttribute("class", "corner-handle-hit");
-    group.appendChild(hitTarget);
-
-    const circle = document.createElementNS(SVG_NS, "circle");
-    circle.setAttribute("cx", cx);
-    circle.setAttribute("cy", cy);
-    circle.setAttribute("r", 8);
-    group.appendChild(circle);
-
-    group.addEventListener("pointerdown", (e) => startOutlinePointDrag(e, svg, shape, i));
-    svg.appendChild(group);
-  });
-}
-
-// The content frame's four corners, numbered 1-4 to match both the nudge keys
-// and the numbers baked into the test pattern. `linked` says whether dragging
-// one also carries the outline point sitting under it.
-function renderFrameCornerHandles(svg, shape, linked) {
-  shape.corners.forEach((corner, i) => {
-    const [nx, ny] = corner;
-    const cx = nx * PREVIEW_W;
-    const cy = ny * PREVIEW_H;
-
-    const group = document.createElementNS(SVG_NS, "g");
-    group.setAttribute("class", "corner-handle" + (i === activeCornerIndex ? " active" : ""));
+    group.setAttribute("class", "corner-handle" + (i === selectedPointIndex ? " active" : ""));
 
     // Larger invisible hit target behind the visible dot. Projector-session
-    // use is hurried and imprecise - pointer events bubble from either
-    // circle up to the group's single listener below, so this just widens
-    // what counts as "on the handle" without changing the drag logic.
-    // pointer-events:all (set in CSS) is required because the fill is
-    // transparent: SVG's default hit-testing (visiblePainted) only counts
-    // painted areas, so an unpainted circle would otherwise be a click-
-    // through hole even though it's present in the DOM.
+    // use is hurried and imprecise - pointer events bubble from either circle
+    // up to the group's single listener below, so this just widens what counts
+    // as "on the handle" without changing the drag logic. pointer-events:all
+    // (set in CSS) is required because the fill is transparent: SVG's default
+    // hit-testing (visiblePainted) only counts painted areas, so an unpainted
+    // circle would otherwise be a click-through hole even though it is present
+    // in the DOM.
     const hitTarget = document.createElementNS(SVG_NS, "circle");
     hitTarget.setAttribute("cx", cx);
     hitTarget.setAttribute("cy", cy);
@@ -2430,13 +2487,15 @@ function renderFrameCornerHandles(svg, shape, linked) {
     circle.setAttribute("r", 10);
     group.appendChild(circle);
 
-    const label = document.createElementNS(SVG_NS, "text");
-    label.setAttribute("x", cx);
-    label.setAttribute("y", cy);
-    label.textContent = String(i + 1);
-    group.appendChild(label);
+    if (i < 4) {
+      const label = document.createElementNS(SVG_NS, "text");
+      label.setAttribute("x", cx);
+      label.setAttribute("y", cy);
+      label.textContent = String(i + 1);
+      group.appendChild(label);
+    }
 
-    group.addEventListener("pointerdown", (e) => startFrameCornerDrag(e, svg, shape, i, linked));
+    group.addEventListener("pointerdown", (e) => startOutlinePointDrag(e, svg, shape, i));
     svg.appendChild(group);
   });
 }
@@ -2474,33 +2533,23 @@ function startShapeDrag(e, svg, shape) {
   });
 }
 
-// Drag one corner of the content frame. Renders locally every pointermove for
-// immediate visual feedback (both in the preview and, throttled, on the live
-// output), but only saves+broadcasts at most every ~80ms plus once on release
-// - the same "render fast, commit throttled" split commitProjectChange() was
-// designed for.
-function startFrameCornerDrag(e, svg, shape, cornerIndex, linked) {
-  setActiveCornerIndex(cornerIndex);
-
-  beginPreviewDrag(e, svg, (evt) => {
-    const [nx, ny] = svgPointerToNormalized(evt, svg);
-    const point = [clampCoord(nx), clampCoord(ny)];
-    shape.corners[cornerIndex] = point;
-    // While the outline IS the frame they are one thing, and one drag moves
-    // one point - not two that happen to be sitting on top of each other.
-    if (linked) shape.outline[cornerIndex] = [point[0], point[1]];
-  });
-}
-
-// Drag one outline point. ONE function, reached from every shape type, which
-// is the whole of the fix for "overlapping points come apart on a surface but
-// not on a keep-out": there is no second implementation left to disagree.
+// Drag one outline point. THE one drag in this tool now: every shape type
+// reaches it, and since the frame stopped being a second draggable object it
+// is also how a four-point shape is warped. Renders locally every pointermove
+// for immediate visual feedback (both in the preview and, throttled, on the
+// live output), but only saves+broadcasts at most every ~80ms plus once on
+// release - the same "render fast, commit throttled" split
+// commitProjectChange() was designed for.
+//
+// Nothing here writes `corners`, and nothing needs to: at four points
+// shapeFrame() reads the outline directly, so the warp follows the hand with
+// no second copy to keep in step.
 //
 // The listeners go on BEFORE the re-render, not after. beginPreviewDrag hosts
 // them on #preview-svg, which a re-render empties but never replaces, so
 // either order survives - but attaching first means the gesture is live before
-// anything can touch the DOM under it, which is the ordering the frame-corner
-// drag has always used and the one that has never gone wrong.
+// anything can touch the DOM under it, which is the ordering that has never
+// gone wrong.
 function startOutlinePointDrag(e, svg, shape, index) {
   if (selectedShapeId !== shape.id) selectedShapeId = shape.id;
   setSelectedPointIndex(index);
@@ -3086,14 +3135,22 @@ function buildOutlineControls(container, shape) {
     "Click an edge in the preview to insert a point and pull it out. Click a point to select it, then Delete (or the button) to remove it. Three points is the floor.";
   container.appendChild(pointHint);
 
-  // Said only where it is true. On a fill shape the outline IS the shape and
-  // there is nothing to explain; on a shape carrying content it is worth
-  // knowing that the four numbered corners and the outline are two different
-  // things the moment a fifth point exists.
+  // Said only where it is true - see updateOutlinePanelValues. On a fill shape
+  // there is no content to be warped and nothing here to explain.
   const framed = document.createElement("p");
   framed.id = "shape-frame-hint";
   framed.className = "layer-hint";
   container.appendChild(framed);
+
+  const refitRow = document.createElement("div");
+  refitRow.className = "layer-field";
+  const refitBtn = document.createElement("button");
+  refitBtn.type = "button";
+  refitBtn.id = "shape-refit";
+  refitBtn.textContent = "Re-fit content to this shape";
+  refitBtn.addEventListener("click", () => refitShapeContent(shape.id));
+  refitRow.appendChild(refitBtn);
+  container.appendChild(refitRow);
 }
 
 // "Adopt boundaries" and the two knobs it needs. Both knobs are control-local
@@ -3497,13 +3554,18 @@ function updateOutlinePanelValues(container, shape) {
 
   const frameHint = container.querySelector("#shape-frame-hint");
   if (frameHint) {
-    // Three states, and each of them is a different thing to know.
     frameHint.textContent = !shapeCarriesContent(shape)
       ? ""
       : shapeOutlineIsFrame(shape)
-        ? "The outline is still the four corners the content is warped onto, so nothing is clipped and 1–4 move both at once. Add a point and they become two things."
-        : "The dashed quad is the content frame — four corners, because that is what a perspective warp needs. The content is warped onto it and clipped to this outline. Adopting boundaries replaces the outline and leaves the frame alone.";
+        ? "At four points the outline is what the content is warped onto, so dragging a point reshapes the content with it."
+        : "Past four points the content stays warped onto the four corners this shape had at four, and the outline only clips it. Re-fit moves it onto the shape as it is now.";
   }
+
+  // Nothing to re-fit onto a shape that is still its own frame, and nothing to
+  // re-fit at all on a fill. Disabled rather than hidden, so the row does not
+  // appear and disappear under the pointer as points are added and removed.
+  const refitBtn = container.querySelector("#shape-refit");
+  if (refitBtn) refitBtn.disabled = !shapeCarriesContent(shape) || shapeOutlineIsFrame(shape);
 }
 
 function updateAdoptPanelValues(container, active) {
@@ -3534,18 +3596,19 @@ function updateAdoptPanelValues(container, active) {
 // CALIBRATION (arrow-key nudge)
 // =========================================================================
 // The critical live-calibration UX: select a shape, then arrow-key nudge it in
-// real output pixels while watching the projected result. Three levels, most
-// general first, and each one is opted into rather than defaulted to:
+// real output pixels while watching the projected result. Two levels, general
+// first, and the second is opted into rather than defaulted to:
 //
 //   nothing live  -> arrows move the WHOLE shape, outline and frame together.
 //                    Fast coarse placement, and where every fresh selection
 //                    starts.
-//   1-4           -> one corner of the content frame. The numbers match the
-//                    ones baked into the test pattern.
-//   a point       -> the outline point last clicked in the preview. This is
-//                    new in v8 and is what "editable identically on every
-//                    shape" costs: an outline point is nudgeable for the same
-//                    reason a frame corner is.
+//   a point       -> the outline point last clicked in the preview, or picked
+//                    with 1-4. On a shape still at four points those four ARE
+//                    its corners and those are the numbers the test pattern
+//                    paints on the wall, so the old calibration flow - press
+//                    2, nudge, watch the wall - works exactly as it always
+//                    has. It just addresses the outline now, because there is
+//                    nothing else left to address.
 //
 // 0 or Escape drops back to whole-shape mode. Nudges are discrete (no throttle
 // needed) and route through the normal commitProjectChange() choke point.
@@ -3564,22 +3627,9 @@ const NUDGE_ARROW_DELTAS = {
   ArrowRight: [1, 0],
 };
 
-function nudgeFrameCorner(dxPx, dyPx) {
-  const shape = getSelectedShape();
-  if (!shape || !shapeFrame(shape)) return;
-  const linked = shapeOutlineIsFrame(shape);
-  const [x, y] = shape.corners[activeCornerIndex];
-  const point = [clampCoord(x + dxPx / outputSize.w), clampCoord(y + dyPx / outputSize.h)];
-  shape.corners[activeCornerIndex] = point;
-  // Same rule as the pointer drag: while the outline IS the frame, one nudge
-  // moves one point rather than leaving a copy of it behind.
-  if (linked) shape.outline[activeCornerIndex] = [point[0], point[1]];
-  commitProjectChange();
-}
-
 function nudgeOutlinePoint(dxPx, dyPx) {
   const shape = getSelectedShape();
-  if (!shape || selectedPointIndex >= shape.outline.length) return;
+  if (!shape || selectedPointIndex == null || selectedPointIndex >= shape.outline.length) return;
   const [x, y] = shape.outline[selectedPointIndex];
   shape.outline[selectedPointIndex] = [
     clampCoord(x + dxPx / outputSize.w),
@@ -3624,11 +3674,12 @@ function handleControlKeydown(e) {
     return;
   }
 
-  // 1-4 address the content frame's corners, and a fill shape has no frame -
-  // so on one, these keys do nothing rather than selecting a corner that is
-  // not there.
-  if (e.key >= "1" && e.key <= "4" && shapeFrame(shape) && shapeCarriesContent(shape)) {
-    setActiveCornerIndex(Number(e.key) - 1);
+  // 1-4 address the first four OUTLINE points, on every shape type - which on
+  // a shape still at four points are its corners, in the order the test
+  // pattern numbers them. A shape with fewer points than the key asks for
+  // simply does not answer.
+  if (e.key >= "1" && e.key <= "4" && Number(e.key) <= shape.outline.length) {
+    setSelectedPointIndex(Number(e.key) - 1);
     renderControl(); // the panel's point read-out follows the selection too
     return;
   }
@@ -3645,8 +3696,6 @@ function handleControlKeydown(e) {
     const step = e.shiftKey ? 1 : 5; // output px; shift = fine
     if (selectedPointIndex != null) {
       nudgeOutlinePoint(delta[0] * step, delta[1] * step);
-    } else if (activeCornerIndex != null) {
-      nudgeFrameCorner(delta[0] * step, delta[1] * step);
     } else {
       nudgeWholeShape(delta[0] * step, delta[1] * step);
     }

@@ -17,9 +17,10 @@ The counterpart to that: **Muralista maps, but it does not perform.** Working ou
 - **Built and verified at a real projector** (2026-07-02): corner-pin warp sits flush on a physical box, an animation plays across several surfaces at once, alpha compositing works at the wall.
 - **Never played a room.** It has been driven at a wall in a studio, never during a show with an audience in front of it. This is why Muralista is deliberately **not** promoted on [changopepper.com/tramoya](https://changopepper.com/tramoya) — the suite's rule is that everything on that page has done real work, and this has not yet.
 - **Keep-outs landed 2026-08-23**, with the shadow suggestion. Verified in real headed Chrome against painted geometry and decoded pixels — but **the suggestion has never been run against a real wall.** Its optical loop (a camera actually seeing the projected plate, the countdown clearing off the wall, a real body's shadow under real auto-exposure) was driven with a synthetic camera feed, because it is the one part that a desk cannot stand in for. Treat the first venue run as the real test of it; the shape it hands back is meant to be coarse either way.
+- **The text layer landed 2026-08-23**, replacing the lyric PNGs the studio session had been faking with. Verified in real headed Chrome against painted geometry: the catalogue's longest entry cannot overflow its quad at any slider setting, at every quad shape it was tried on including a deliberately narrow one, and a quad redrawn smaller with a real mouse rescales its text with it to within 0.02%. **Never read off a wall.** Its legibility choices — stroke weight, shadow, how big is big enough — were judged on a monitor, and the room they are for is a dark one seen from the back.
 - **The media folder landed 2026-08-23.** Resolution, the Blob hand-off to the projector window, object-URL lifecycle and every fallback are verified in real headed Chrome against decoded pixels. **The picking flow itself is not automatable** — `showDirectoryPicker` opens an OS dialog no browser automation can drive — so it was exercised through a stand-in handle, and the one thing only a person can run is the round trip: pick a folder, quit Chrome, reopen, and see whether it comes back granted or asks to reconnect.
 - **Direct manipulation is now verified by hand** (2026-08-22). It landed in July and was only ever checked headlessly, and it did not in fact work: a drag moved a quad by one mouse-move and then froze, and pressing an unselected quad did not move it at all. Fixed, and confirmed in Chrome with a real mouse against painted output. **Transport-synced overlays are still hand-untested.**
-- **The desk-tool shape described above is the direction, not the current build.** Today Muralista still renders live: it has a transport, because v1 was designed as a tool that runs during the show. That decision was reversed on 2026-08-20. The sound-reactive half was removed on 2026-08-22 and preserved at the tag `mic-reactivity-archive`: a tool that maps a wall before a show cannot also be the thing listening to the room during it. The beat layer that removal left standing went too (2026-08-23) — with mic mode gone it was a circle pulsing at a fixed BPM, and nothing about drawing shapes on a wall needs one. **What Muralista renders today is video and image layers on warped surfaces, plus keep-out polygons it holds dark**, plus the test pattern you align against. The behaviours that left survive as direction — they become properties declared in the venue mapping and executed by [Pregonero](https://github.com/jorgevallejos/pregonero) — but nothing has moved across yet, and Pregonero cannot read a venue mapping today.
+- **The desk-tool shape described above is the direction, not the current build.** Today Muralista still renders live: it has a transport, because v1 was designed as a tool that runs during the show. That decision was reversed on 2026-08-20. The sound-reactive half was removed on 2026-08-22 and preserved at the tag `mic-reactivity-archive`: a tool that maps a wall before a show cannot also be the thing listening to the room during it. The beat layer that removal left standing went too (2026-08-23) — with mic mode gone it was a circle pulsing at a fixed BPM, and nothing about drawing shapes on a wall needs one. **What Muralista renders today is video, image and text layers on warped surfaces, plus keep-out polygons it holds dark**, plus the test pattern you align against. The behaviours that left survive as direction — they become properties declared in the venue mapping and executed by [Pregonero](https://github.com/jorgevallejos/pregonero) — but nothing has moved across yet, and Pregonero cannot read a venue mapping today.
 
 No test suite. This is a spike, run with spike discipline, and it graduates to tests and a PR flow when it earns them.
 
@@ -34,7 +35,7 @@ cd mapper/
 python3 -m http.server 8123
 ```
 
-**If you edit the code, hard-reload** (`Cmd-Shift-R`). `python3 -m http.server` sends no cache headers, so Chrome will happily keep serving the `mapper.js` it already has — a plain reload can leave you testing the old build while reading the new source. This costs half an hour the first time it happens.
+`python3 -m http.server` sends no cache headers, so a plain reload used to leave you testing the `mapper.js` Chrome already had while reading the new source. That is handled in the code now: `mapper.html` injects its subresources with a per-session `?v=` token, and **Open output window** passes the control window's token through, so both windows always run the same build. A normal reload is enough.
 
 Open `http://localhost:8123/mapper.html`. That is the **control** window — the performer UI, with the surface list, the calibration handles and the layer panel. Click **Open output window**, drag the new window onto the projector's display, and press `F` to fullscreen it. That second window is the projector image and nothing else; the two stay in sync over a `BroadcastChannel`.
 
@@ -100,7 +101,25 @@ You have an alpha WebM of a character that should appear over the animation, in 
 
 That copies the surface with identical corners, drops it immediately after the original so it paints on top, and selects it. Change the copy's source to the overlay and you are done. Stacking order is the list order; **▲ / ▼** move a surface back and forward through it.
 
-### 7. Hold part of the wall dark
+### 7. Put the lyrics somewhere
+
+Add a surface over the part of the wall that will carry the words, and switch its layer to **text**.
+
+Two fields at the top of the panel, and they are not the same fact:
+
+- **Role** is what the region *is*. `lyrics` means this is a **slot** — the place lyrics go, to be filled from the song file when Pregonero learns to read a venue mapping. `static` means the text below is the content and stays, which is what a title card is.
+- **Text** is what is *in* it. Under `lyrics` the panel calls it *preview text*, because that is what it is: a real line, pasted in so the layout is tuned against a real length rather than against "Lorem ipsum".
+
+**Paste the longest line you will actually sing.** A layout tuned against a short line is not tuned. Line breaks you type are line breaks on the wall — several entries in the catalogue carry one and render as two lines, and a region sized against a single line clips them.
+
+Then set the size by eye, with the projector on. Two things about that slider:
+
+- **It is a fraction of the shape, not a font size.** The number stored in the mapping is a percentage of the quad's height, so when you redraw that quad in the next room the text comes with it. An absolute size would quietly break every layout you ever tuned.
+- **It is a ceiling, not a size.** Text that would not fit is shrunk below it until it does — wrapping on word boundaries, honouring your line breaks, keeping a margin off the edge. So it cannot overflow the shape at any setting, and short lines still get to be big.
+
+The background stays transparent, so a text surface duplicated onto a video surface's corners (step 6) puts the words over the animation rather than over a black plate. Legibility comes from a dark outline and a slight shadow instead, the way cinema subtitles do it — that is a deliberate exception to how restrained everything else in the suite is, and it is not up for debate at the back of a dark room.
+
+### 8. Hold part of the wall dark
 
 Muralista's design is subtractive. The projector floods the whole background, and the mapping is a layout of that flood — **including which parts stay dark**. Black is a decision, so it is an object: a **keep-out**, listed in its own section of the sidebar, below the surfaces.
 
@@ -126,7 +145,7 @@ The traced points are stored in **output space**, so the keep-out stays valid lo
 
 Not in this version: the polygon following you live. On a dark stage, mid-song, a mask that flickers is worse than no mask.
 
-### 8. Export the room
+### 9. Export the room
 
 **Export** writes the mapping to a JSON file. That file is this room — the surfaces, their corners, their layers, their order, and the keep-outs it holds dark.
 
@@ -143,6 +162,8 @@ Two things worth knowing:
 **It autosaves continuously.** Every edit is written to `localStorage`, so a reloaded tab does not lose an hour of calibration. The export is for carrying a room between machines and between nights.
 
 **The storage key still carries the tool's old name** — `wallmapper.project.v1`, from the working title this was built under. It is left alone deliberately, with a guard comment on the definition. It is an *address*, not a name: renaming it would not rename anything, it would point the tool at an empty place and silently orphan every mapping you have saved. Same for the `BroadcastChannel` name and the export filename.
+
+**A text layer records two facts, and keeping them apart is the point.** `role` says what the region is for; the string says what is currently previewing in it. A mapping that recorded only "this region shows this string" could not tell the lyric slot from a caption somebody typed, and every venue file would have to be re-authored by hand the day Pregonero learns to read one. There are exactly two roles — `lyrics` and `static` — and there will not be a third until something actually needs one.
 
 **Where this is going:** the mapping grows into a full **venue file** — adding the outer field of usable wall and named regions for lyrics and animation, alongside the keep-outs it already carries — which Pregonero reads and executes on stage. See `project-context.md` in this repo, under "V1 design (2026-08-20)", for the design and its open questions.
 
@@ -164,7 +185,7 @@ Not Chrome? The control is hidden and every name falls back silently.
 
 ### Keep-outs and the shadow rule
 
-The one rule that governs every keep-out you draw around a person. Step 7 above is how; this is why.
+The one rule that governs every keep-out you draw around a person. Step 8 above is how; this is why.
 
 A keep-out's first job is the performer: standing in the beam is physically unpleasant, and a keep-out is what you use when the room will not let you put the beam above or beside the person instead.
 
@@ -183,6 +204,8 @@ Deliberate, not defects:
 - **Flat facets only.** Every surface is a four-corner plane — one perspective warp per quad. Curved and organic surfaces need a mesh warp, which is out of scope.
 - **The camera is a backdrop, not an auto-calibrator.** A webcam beside the lens gives you a live, rectified view of the wall to draw on. It does not find surfaces for you — you still calibrate by dragging while watching the projected result — and it is exact only on the wall plane. A phone photo remains a planning aid at best: a phone does not stand where the projector stands.
 - **One projector.** A second one is another separate zone, never a blended overlap. Edge blending is explicitly out.
+- **Text is warped with its quad, letterforms included.** A surface's content is drawn into a square and mapped onto four corners, so a quad far from square stretches the type along with everything else. That is what keeps the fit honest — text measured in that square cannot leave the quad — but it means a very narrow region squeezes the letters rather than re-wrapping them into it. Draw the region roughly the shape you want the words to read in.
+- **Auto-fit has a floor, and it is loud.** Below 8px it stops shrinking and lets the text overflow rather than clip it silently, because a quad drawn far too small for its content is something you need to see. There is a lot of room before that: the catalogue's longest entry fits at 93px, and an entire song's worth of text still fits at 16px.
 - **Chrome only.** Alpha WebM transparency and the autoplay behaviour this leans on are Chrome-specific; Safari drops the alpha channel.
 - **Media is referenced, never copied.** Point the tool at the folder your media already lives in (see *The media folder* above) or drop files into `mapper/media/` by hand. Either way Muralista reads the files where they are — the picker fills in a name, it does not copy anything, and media stays out of this repo.
 - **`python3 -m http.server` has no Range support**, so seeking within a long video feels sluggish. `npx http-server` is a drop-in replacement that does — and a source resolved through a chosen media folder sidesteps the server entirely, so it does not have this problem in the first place.

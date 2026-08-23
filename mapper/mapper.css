@@ -248,6 +248,42 @@ button.danger:hover {
   width: 100%;
 }
 
+.layer-field textarea {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg-row);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.layer-field input[type="color"] {
+  width: 48px;
+  height: 28px;
+  padding: 0;
+  background: var(--bg-row);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* Checkbox rows read as a row, not as the label-above-control column every
+   other field uses. */
+.layer-field-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.layer-field-check label {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 13px;
+  color: var(--text);
+}
+
 .layer-opacity-value {
   font-size: 12px;
   color: var(--text-dim);
@@ -641,6 +677,45 @@ body.role-output {
   width: 100%;
   height: 100%;
   object-fit: fill;
+}
+
+/* Text layer: real DOM text inside the warped wrapper, rasterized by the
+   browser AFTER the transform, so it stays crisp in a keystoned quad.
+
+   The background is TRANSPARENT and stays that way: the overlay case v1
+   needs is lyrics over a video layer, and a plate behind them would black
+   out the video the text is meant to sit on. Legibility comes from the
+   stroke and the shadow set inline by applyTextLayer instead.
+
+   Note, explicitly: the suite's "contrast is a budget" rule does NOT apply
+   to this surface. Everywhere else, restraint. Here, a line read from the
+   back of a dark room through a projector - legibility wins, and the outline
+   is not decoration. */
+.layer-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center; /* vertically centred, always - not a control */
+  box-sizing: border-box; /* the inset is padding, set in px by mapper.js */
+}
+
+.layer-text-inner {
+  width: 100%;
+  /* pre-wrap, not normal: the catalogue's lyric entries carry embedded
+     newlines and render as two lines. Collapsing them would silently turn a
+     two-line entry into one long line - and a layout tuned against that is
+     tuned against the wrong shape. Wrapping itself stays on word boundaries
+     (overflow-wrap: normal); auto-fit shrinks rather than breaking a word. */
+  white-space: pre-wrap;
+  overflow-wrap: normal;
+  line-height: 1.15;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-weight: 700;
+  /* Stroke behind the fill. Without this, -webkit-text-stroke is centred on
+     the glyph outline and eats half its own width out of every stem, thinning
+     the font exactly where it is already weakest. Chrome-only, like the rest
+     of this tool. */
+  paint-order: stroke fill;
 }
 
 /* Media layer box: fills the warped wrapper; holds the <video>/<img> plus

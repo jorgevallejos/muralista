@@ -107,7 +107,7 @@ A keep-out is not a surface, and it is worth knowing why the tool treats them as
 
 Add one and it arrives as a tall hexagon. Drag the whole shape to move it, drag a point to reshape it, **click an edge to insert a point and pull it out** in one gesture, and select a point and press Delete to remove it. Three points is the floor. Keep-outs paint above every surface, always, whatever order either list is in.
 
-**The margin slider inflates the whole outline outward**, and it is the one control that turns the rule below into a number. It is drawn as a round-joined stroke on the same shape rather than as a recomputed outline, which makes it a true dilation: a thin limb gets *thicker*, not longer. (SVG centres a stroke on its path, so the shape grows outward by half the width the slider sets.)
+**The margin slider inflates the whole outline outward**, and it is the one control that turns the rule below into a number: its value *is* how much bigger than your shadow the shape gets, as a fraction of frame height. It is drawn as a round-joined stroke on the same shape rather than as a recomputed outline, which makes it a true dilation: a thin limb gets *thicker*, not longer.
 
 #### Suggest from my shadow
 

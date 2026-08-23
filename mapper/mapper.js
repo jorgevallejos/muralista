@@ -203,8 +203,9 @@ function defaultSurface(index) {
 
 const KEEPOUT_MIN_POINTS = 3;
 
-// Margin is a fraction of FRAME HEIGHT, rendered as a stroke rather than as
-// a polygon offset - see applyKeepOutMarginStroke().
+// How far outward the shape is grown, as a fraction of FRAME HEIGHT. Drawn
+// as a stroke rather than as a polygon offset, but the number means the
+// growth itself - see applyKeepOutMarginStroke().
 const KEEPOUT_MARGIN_MAX = 0.15;
 
 // A ring of >= 3 normalized points, the shape keepOut.points uses. Unlike a
@@ -1690,12 +1691,21 @@ async function suggestKeepOutFromShadow(keepOutId) {
 // face on every lean.
 //
 // `scale` is the pixel height of the frame being drawn into, since margin is
-// a fraction of FRAME HEIGHT. One consequence worth knowing: SVG centres a
-// stroke on its path, so the shape grows outward by HALF the stroke width.
+// a fraction of FRAME HEIGHT.
+//
+// THE DOUBLING IS NOT A FUDGE. `margin` means how much bigger than the
+// shadow the shape is drawn - that is the question the slider answers, and
+// it is the control that keeps light off a performer's face. SVG centres a
+// stroke on its path, so a stroke of width w grows a shape outward by w/2;
+// doubling here is what makes the stored number mean the growth rather than
+// half of it. That centring is an implementation detail of how the dilation
+// is drawn, and it has no business leaking into what the number means to
+// whoever is tuning it by eye at a wall.
+//
 // Set as an inline style rather than a presentation attribute, because a
 // stylesheet rule would outrank an attribute and silently win.
 function applyKeepOutMarginStroke(polygon, margin, scale) {
-  const width = clampMargin(margin) * scale;
+  const width = clampMargin(margin) * 2 * scale;
   polygon.style.strokeWidth = `${width}px`;
 }
 
@@ -1711,9 +1721,9 @@ function renderKeepOutsPreview(svg) {
       const points = keepOutPointsAttr(keepOut, PREVIEW_W, PREVIEW_H);
 
       // The mask is drawn the same way the output paints it - black fill
-      // plus a black round-joined stroke of the margin's width - so what
-      // gets tuned on screen is what lands on the wall. The preview viewBox
-      // is 1600x900 inside a 16/9 box, so its user units are square and
+      // plus a black round-joined stroke carrying the margin - so what gets
+      // tuned on screen is what lands on the wall. The preview viewBox is
+      // 1600x900 inside a 16/9 box, so its user units are square and
       // PREVIEW_H is the right scale for a frame-height fraction.
       const mask = document.createElementNS(SVG_NS, "polygon");
       mask.setAttribute("points", points);
@@ -2343,7 +2353,7 @@ function buildKeepOutPanel(container, keepOut) {
   const marginHint = document.createElement("p");
   marginHint.className = "layer-hint";
   marginHint.textContent =
-    "Fraction of frame height, painted as a round-joined stroke on the same shape - a true dilation, thin limbs included. Draw generously larger than the shadow: a performer sways, and an exact mask lets light onto the face on every lean.";
+    "How far the shape grows outward, as a fraction of frame height. A true dilation - it thickens thin limbs rather than lengthening them. Draw generously larger than the shadow: a performer sways, and an exact mask lets light onto the face on every lean.";
   container.appendChild(marginHint);
 
   const pointRow = document.createElement("div");

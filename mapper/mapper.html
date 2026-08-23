@@ -77,6 +77,26 @@
           <div id="layer-panel" class="layer-panel"></div>
         </div>
 
+        <!-- Media folder: where the layer sources above are actually read
+             from. Hidden until mapper.js confirms showDirectoryPicker exists
+             (Chrome only) - without it every name falls back to the served
+             directory silently, and a dead control is worse than no control.
+             The folder lasts as long as the tab for now; remembering it
+             across sessions is the next commit. See MEDIA FOLDER in
+             mapper.js. -->
+        <div class="sidebar-section" id="media-folder-section" hidden>
+          <div class="sidebar-header">
+            <h2>Media folder</h2>
+          </div>
+          <div class="backdrop-controls">
+            <button id="btn-media-folder" type="button">Choose folder&hellip;</button>
+            <button id="btn-media-folder-clear" type="button" hidden>Clear</button>
+          </div>
+          <p id="media-folder-status" class="media-folder-status"></p>
+          <p id="media-folder-failures" class="media-folder-failures" hidden></p>
+          <p class="layer-hint">Layer sources are looked up inside this folder, by name &mdash; the mapping stores the name, never the folder. A name the folder does not have falls back to the served directory, so a mapping made elsewhere still opens.</p>
+        </div>
+
         <!-- Keep-outs: a separate list from the surfaces above, because a
              keep-out is a separate primitive - a polygon in output space that
              holds black, with no layer, no z-order and no four-corner

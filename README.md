@@ -17,6 +17,7 @@ The counterpart to that: **Muralista maps, but it does not perform.** Working ou
 - **Built and verified at a real projector** (2026-07-02): corner-pin warp sits flush on a physical box, an animation plays across several surfaces at once, alpha compositing works at the wall.
 - **Never played a room.** It has been driven at a wall in a studio, never during a show with an audience in front of it. This is why Muralista is deliberately **not** promoted on [changopepper.com/tramoya](https://changopepper.com/tramoya) — the suite's rule is that everything on that page has done real work, and this has not yet.
 - **Keep-outs became shapes on 2026-08-23** (v1.1.0), after Jorge's first extended session at a wall. There is no keep-out any more: there are shapes, and one of the types a shape can be is a **fill** — a solid colour, black by default. The performer mask is a black-filled shape, so it takes part in the z-order like everything else and edits exactly like everything else. Verified in real headed Chrome against painted pixels, including the one assertion that matters for a mapping you already have: **a v7 file with keep-outs opens under v8 and paints a byte-identical frame.**
+- **One shape, one set of circles, since 2026-08-23** (v1.2.0), after a second session at the wall. Every shape is drawn in the same ink whatever is inside it, every point of the selected shape gets a handle, and the numbered quad that used to show the content frame is gone — it was the warp's own machinery drawn on screen, and it made you pick between two overlapping handles for every gesture. Verified in real headed Chrome against painted pixels: dragging a four-point shape's own handle warps the wall to a **byte-identical frame** with what v1.1.0's numbered handle produced.
 - **Adopting boundaries has never been run against a real wall.** The capture (raise a white plate, photograph the wall, count the thing into the beam, photograph it again, keep what got darker) is verified against a synthetic camera feed, because its optical loop — a camera actually seeing the projected plate, a real body's shadow under real auto-exposure — is the one part a desk cannot stand in for. Treat the first venue run as the real test of it; the shape it hands back is meant to be coarse either way.
 - **The text layer landed 2026-08-23**, replacing the lyric PNGs the studio session had been faking with, and **stopped inheriting the quad's stretch** the same day. Verified in real headed Chrome against painted pixels: the catalogue's 81-character worst case cannot overflow its quad at any combination of maximum size and letter width, across eight quad shapes including keystones and a deliberately narrow column; a quad redrawn smaller with a real mouse rescales its text with it and does not refit at all; and glyph proportions measured in a 9.6:1 strip, a 0.26:1 column and a square all come out identical to the font's natural proportions to four decimal places. **Never read off a wall.** Its legibility choices — stroke weight, shadow, how big is big enough, and now whether the corrected letters actually read better — were judged on a monitor, and the room they are for is a dark one seen from the back. **This is the one acceptance criterion the layer has never had.**
 - **The media folder landed 2026-08-23.** Resolution, the Blob hand-off to the projector window, object-URL lifecycle and every fallback are verified in real headed Chrome against decoded pixels. **The picking flow itself is not automatable** — `showDirectoryPicker` opens an OS dialog no browser automation can drive — so it was exercised through a stand-in handle, and the one thing only a person can run is the round trip: pick a folder, quit Chrome, reopen, and see whether it comes back granted or asks to reconnect.
@@ -58,13 +59,13 @@ Drag from inside the polygon to move the whole shape — that is coarse placemen
 
 Then get it flush with the arrow keys, watching the wall rather than the screen:
 
-- **`1`–`4`** pick which corner is live. They match the numbers baked into the pattern.
+- **`1`–`4`** pick which point is live. On a four-point shape those are its corners, in the order the test pattern numbers them, so the numbers on the wall are the keys on the keyboard. A shape with more points than four still answers to these for its first four; the rest you click.
 - **arrows** nudge in real output pixels — unshifted 5 px, **Shift** 1 px.
 - **`0`** or **Escape** drops back to whole-shape mode, so the arrows move everything at once.
 
 The keys work while focus is in the control window, so you can keep nudging without clicking back and forth. When the grid lines converge toward the narrow edge of the quad instead of merely skewing, the perspective warp is doing its job.
 
-Four corners is what you get here, and four corners is what a perspective warp needs. A shape is not *only* four corners — it also has an **outline**, which starts out being those same four corners and can become any polygon you like. That matters from step 8 onwards; until then the two are the same thing and you can forget the distinction entirely.
+Four points is what you get here, and while a shape has four points they are also what the perspective warp maps the content onto — so dragging one reshapes the content with it, and there is nothing else on screen to drag. A shape can have more than four points, and that is where the two come apart; it matters from step 8 onwards, and until then you can forget the distinction entirely.
 
 Name it `back wall`.
 
@@ -147,14 +148,18 @@ Add a shape, set its **Type** to **fill**, and leave the colour black. That is t
 
 This is where the two halves of a shape come apart, so it is worth saying once, properly.
 
-- Every shape has an **outline**: three points or more, and you can push them anywhere.
-- A shape carrying video, an image or text also has a **content frame**: four corners, drawn dashed in the preview, and *that* is what the perspective warp maps the content onto. Four is not a limitation to be lifted — a homography maps a square onto a quad, and a seven-point polygon has no homography.
+Every shape has an **outline**: three points or more, one circle each, and you can push them anywhere. That is the only thing you ever drag. Content, though, is warped by a **perspective transform**, and a perspective transform maps a square onto exactly four corners — a seven-point polygon has no such thing. So there is a four-corner **content frame** underneath, and the rule that governs it is a rule about counting:
 
-Content is **warped by the frame and clipped to the outline**. A new shape starts as a square where the two are the same four points, so it clips nothing and behaves exactly as it always has. **Click an edge to insert an outline point and pull it out** in one gesture, and from that moment the outline is its own thing: the numbered handles go on moving the frame, and the smaller round handles move the outline. Click a point and press **Delete** to remove it. Three points is the floor.
+- **At four points, the outline is the frame.** Drag a circle and the content warps with it, live. Nothing is clipped, and nothing else is on screen.
+- **Past four points, the frame holds still** at the four corners the shape had when the fifth point arrived, and the extra points **clip** what it paints. The panel says so, under the point count.
+
+**Click an edge to insert a point and pull it out** in one gesture — that is the moment the two come apart. Click a point and press **Delete** to remove it; drop back to four and the outline is the frame again. Three points is the floor.
+
+The frame does not chase the outline around, and that is deliberate: recomputing it on every drag would make the content jump about under the hand of somebody who is trying to edit an outline. When you *do* want it to catch up, press **Re-fit content to this shape**. It keeps the perspective you tuned and changes only the extent — so a quad squared up against a wall the projector is hitting from one side stays squared up against that wall, just bigger or smaller.
 
 A fill shape needs no frame at all, because the outline *is* the content.
 
-Which means a polygon is not a special kind of object you reach for when you want black — it is available on everything. A video clipped to a seven-sided outline is the same feature as a performer mask, used differently. (Lyrics are the one thing to be careful with: clipping cuts words rather than re-wrapping them, so a text shape usually wants its outline left as the frame.)
+Which means a polygon is not a special kind of object you reach for when you want black — it is available on everything. A video clipped to a seven-sided outline is the same feature as a performer mask, used differently. (Lyrics are the one thing to be careful with: clipping cuts words rather than re-wrapping them, so a text shape usually wants to stay at four points.)
 
 #### The margin, and where it lives
 
@@ -170,9 +175,13 @@ With the camera calibrated, press **Adopt boundaries…** and the tool traces th
 2. It photographs the wall.
 3. It counts you into place — **on the wall itself**, in numbers big enough to read from inside the beam, and in the control window too.
 4. At zero it takes the countdown *off* the wall, waits for it to clear, and photographs the wall again.
-5. Whatever got darker between the two frames is the thing. It takes the largest such region, traces its outline, simplifies it to twenty-odd points, and maps those through the camera calibration into output space.
+5. Whatever got darker between the two frames is the thing. It takes the largest such region, wraps it in its **convex hull**, thins that to eight or so points, and maps them through the camera calibration into output space.
 
-Then it hands you the shape and gets out of the way. **It writes the outline and never the content frame** — so on a fill shape this is the performer mask, and on a video shape it clips the animation to the silhouette of something that was really standing there, with the warp untouched.
+Then it hands you the shape and gets out of the way.
+
+**Simple and generous, not faithful.** An earlier version traced the blob's actual contour and handed back thirty points — every wrinkle of a jacket and every gap under an arm, recorded exactly. That is the wrong answer twice over: the margin has to inflate the shape anyway, so detail at the outline is detail that gets swallowed, and a dozen points can be pushed by hand at a wall where thirty cannot. The hull removes every concavity by construction, with nothing to tune, and it can only ever make the shape *bigger* — which is the one direction a mask is allowed to be wrong in. A standing person comes back looking roughly like a coffin, which is what a standing person's shadow is once you stop pretending to trace fingers.
+
+**It writes the outline.** What the content does about that is the counting rule above: a silhouette comes back with more than four points, so the content stays where it was warped and starts being clipped by the shape. A flat rectangular thing — a placed box, a panel — comes back as four points, and four points *are* a frame, so the content lands on it. Adopt the boundaries of a box on a video shape and the video is on the box.
 
 **It detects a difference, so the thing must be absent from one of the two frames.** It finds a person who walks into the beam, or an object placed and then removed. It cannot find a painting that hung on that wall the whole time: there is nothing to difference against, and no threshold setting changes that.
 
@@ -202,7 +211,7 @@ Three things worth knowing:
 
 **The storage key still carries the tool's old name** — `wallmapper.project.v1`, from the working title this was built under. It is left alone deliberately, with a guard comment on the definition. It is an *address*, not a name: renaming it would not rename anything, it would point the tool at an empty place and silently orphan every mapping you have saved. Same for the `BroadcastChannel` name and the export filename.
 
-**A shape records an outline and, when it needs one, a frame.** `outline` is a ring of three or more normalized points; `corners` is the four the warp uses, and is `null` on a shape that has never carried content. When they are the same four points the shape clips nothing and the tool edits them as one thing. Nothing has to be recorded about that state — it is read off the geometry, so a point added and then removed puts them back together on its own.
+**A shape records an outline and, when it needs one, a frame.** `outline` is a ring of three or more normalized points and is the whole of what you edit. `corners` is the four the warp uses; it is consulted **only when the outline has more than four points**, and holds the value pinned at the moment the fifth arrived. At four points the outline *is* the frame and `corners` is simply kept in step with it. Nothing has to be recorded about which state a shape is in — it is a count, so a point added and then removed puts the two back together on its own.
 
 **A text layer records two facts, and keeping them apart is the point.** `role` says what the region is for; the string says what is currently previewing in it. A mapping that recorded only "this region shows this string" could not tell the lyric slot from a caption somebody typed, and every venue file would have to be re-authored by hand the day Pregonero learns to read one. There are exactly two roles — `lyrics` and `static` — and there will not be a third until something actually needs one.
 
@@ -274,6 +283,7 @@ Two caveats travel with it:
 Deliberate, not defects:
 
 - **Flat facets only.** Content is warped by a four-corner frame — one perspective warp per quad. An outline of any shape can then clip it, but clipping is not bending: curved and organic surfaces need a mesh warp, which is out of scope.
+- **Nothing spans a corner.** A perspective transform maps one rectangle onto one *flat plane*, so a single shape cannot bend across the join between two walls — text least of all, since it would break mid-letter at the fold. The answer is one shape per facet: two text shapes, one on each wall, each mapped to its own plane. This is the same limit as the one above wearing a different hat, and lifting it means mesh warping, which is parked in Tier 2 and not coming soon.
 - **The camera is a backdrop, not an auto-calibrator.** A webcam beside the lens gives you a live, rectified view of the wall to draw on. It does not find shapes for you — you still calibrate by dragging while watching the projected result — and it is exact only on the wall plane. A phone photo remains a planning aid at best: a phone does not stand where the projector stands.
 - **One projector.** A second one is another separate zone, never a blended overlap. Edge blending is explicitly out.
 - **Video and images are stretched to their frame; text is not.** A shape's content is drawn into a square and mapped onto four corners, so a frame far from square stretches whatever is in it. For video and images that is deliberate and there is no fit option — a stretched pig is a style, and cropping or letterboxing one is a decision the tool does not make for you. Text is the single exception, because a stretched lyric is not a style: it takes the stretch back out and re-wraps instead, and the **Letter width** slider is there for the part arithmetic cannot know, since the tool sees the quad you drew and never the wall it lands on.

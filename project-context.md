@@ -169,6 +169,24 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23: the text layer.** PR #8, squash-merged as `7e0d66b`; umbrella `86249d7`. **Schema
+  v6.** Size is stored as a fraction of the shape's height, and the architecture did most of the
+  work: every surface already draws into a fixed 1000×1000 box that `matrix3d` maps onto four
+  corners, so measuring the fit *there* is measuring a fraction of the quad — **containment is
+  structural rather than a rule to be kept**, and a quad redrawn in a new room rescales its text with
+  no refit at all. Auto-fit binary-searches down from the slider's ceiling; word-boundary wrap,
+  embedded newlines, a 6% inset, real DOM text, transparent background, stroke behind fill plus a
+  slight shadow. `role` is `"lyrics"` or `"static"` and nothing else. Hostile imports clamp
+  (`role:"karaoke"`, `maxSize:-9`, a `javascript:` colour all fall back to defaults). Verified
+  against painted pixels: the 81-character Tragedia line fits at five quad shapes, and a quad
+  redrawn to 0.4788 of its height painted text at 0.4787 of its height with the stored `maxSize`
+  untouched — which is the fraction-not-pixels decision proving itself.
+  **Three limits, reported rather than buried:** auto-fit has an **8px floor where text overflows
+  visibly rather than clipping silently** (loud over silent, because silent clipping is the exact
+  surtitle failure this layer exists to prevent; reached past ~40,000 characters, about 316× the
+  catalogue's worst case). **Legibility was judged on a monitor** — stroke weight, shadow and "how
+  big is big enough" are what a desk cannot stand in for. And the narrow-quad result is a limit, not
+  a pass: see "Text inherits the stretch" below.
 - **2026-08-23 (evening): the studio session that proved both unverifiable features.** Eleven hand
   checks, all passed — the four optical checks on the shadow suggestion and the seven on the media
   folder, including the one nothing else could answer: quit Chrome entirely, reopen, and the chosen
@@ -451,9 +469,14 @@ by how much they could change the plan.
    of those. If the canvas stays, the field has two quality zones and the layout falls out of the
    physics — lyrics on the canvas where the pixels and contrast are, animation spilling onto the wall
    where atmosphere is enough. That is the more robust design.
-3. **How long does mapping an unfamiliar room take?** *(2026-08-23: Jorge is timing the studio
-   configuration as he works, so the first honest number arrives as a by-product rather than as an
-   exercise. The venue half is dormant until there is a venue.)* A café gives 30–45 minutes with the lights up
+3. **How long does mapping an unfamiliar room take?** **First measurement, 2026-08-23: no more than
+   five minutes** — against a café budget of 30–45. Read it honestly: that is a *known* room, with
+   the camera already mounted above the lens and the projector where it always sits, so it is a
+   floor rather than the venue number. What it does settle is that **the software loop is not the
+   bottleneck**, which is what this question was really asking. What will dominate an unfamiliar
+   room is physical: finding a projector position and rigging the camera beside the lens. That makes
+   a bracket holding camera and projector together as one unit the highest-value setup-time purchase
+   after the mount itself. A café gives 30–45 minutes with the lights up
    and someone stacking chairs. The venue file solves the *second* visit; nothing solves the first. If
    the first pass takes an hour, Muralista is unusable however good it is. **This is the failure mode
    that most often kills tools like this — not the capability, the clock.** Worth setting as a hard
@@ -655,6 +678,30 @@ the whiteboard's right edge. Jorge's hand calibration, done by eye against the w
 The lesson is not that the photo method was bad; it was accurate to its own inputs. It is that
 **a measurement taken once and applied blind cannot beat a loop that closes against the thing
 itself.** Any future accuracy work belongs in making the loop tighter, not in measuring harder.
+
+### The loop is the product (Jorge, 2026-08-23)
+
+**"The killer feature is being able to adjust shapes while looking at them on the wall."** Stated as
+the project's thesis, not a feature, because it explains the numbers: the three-percent error above,
+and the five-minute mapping below.
+
+And it is sharper than "drag while watching the wall", which any mapping tool allows. **Muralista
+puts the wall inside the control window, rectified, as the projector sees it** — so the person
+authoring does not need to be able to see the wall from where they are standing, and the shape lands
+where it was dragged.
+
+Three consequences that should govern future work:
+
+- **It is the test for every new feature: does this keep the loop closed?** Anything that computes a
+  correction and applies it blind is suspect however clever. It is why the shadow suggestion is
+  allowed to be crude, and why text size is a live slider rather than a typed number. Modal wizards
+  should be viewed with suspicion.
+- **It is the honest one-sentence pitch**, alongside the venue file. The venue file is the
+  architectural difference from TouchDesigner; the loop is the felt one. *(Jorge, 2026-08-23: the
+  TouchDesigner relationship gets its own conversation later — do not resolve it here.)*
+- **It promotes the camera from accessory to instrument.** The loop only exists while a camera sits
+  beside the lens, so the rig is on the critical path for setup in an unfamiliar room. The Facecam
+  was bought as a stretch-goal calibration tool that doubles as a content cam; it is neither now.
 
 ### The studio rig, as measured 2026-08-22
 
@@ -906,9 +953,43 @@ points onto them by hand. What is next-version is anything smarter than that.
    (`e465a7e`, schema v5). The suggestion still needs its first wall.
 3. ~~**Media folder via the File System Access API**~~ **done 2026-08-23** (`46c0ca3`). The
    permission round trip is hand-untested; see the studio checklist.
-4. **Text layer.**
-5. **Brutalist restyle**, control window only.
-6. **Tag `v1.0.0`**, repo private, website gate shut.
+4. ~~**Text layer.**~~ **done 2026-08-23** (`7e0d66b`, schema v6). Legibility still judged only on a
+   monitor.
+5. **Text adapts to the shape** — see "Text inherits the stretch" below. Added to v1 on 2026-08-23.
+6. **Wall check on lyric legibility**, once the text layer is complete.
+7. **Brutalist restyle**, control window only, using Pregonero's stylesheet as the reference (that
+   repo is cloned locally).
+8. **Tag `v1.0.0`**, repo private, website gate shut.
+
+### Text inherits the stretch, and it is the same decision as the video
+
+Text is laid out in the square 1000×1000 content box and then mapped onto whatever quad is drawn, so
+**a quad that is not square distorts the glyphs** — squeezed in a tall thin column, fattened in a
+wide strip. The 81-character line technically fits a 4.5%-wide quad, but it fits by being squeezed,
+and that is a limit rather than a pass.
+
+This is the **same `fit` question already decided for video** (stretch in v1, a per-layer `fit`
+option next version), arriving on the layer where the cost is legibility rather than aesthetics. Two
+consequences: the working rule for v1 is *draw the region roughly the shape you want the words to
+read in*, which is in the README's Limits; and when `fit` is built, **text is the layer that needs it
+most**, because a stretched pig is a style and a stretched lyric is a failure.
+
+**DECIDED 2026-08-23: text stops inheriting the stretch, and it happens before the tag.** The stretch
+decision stands for video and images; text is exempt, because a stretched pig is a style and a
+stretched lyric is a failure. Two halves:
+
+- **Automatic:** derive the text box's proportions from the quad that was actually drawn, so a wide
+  strip lays out wide instead of fattening the glyphs. This handles most cases alone.
+- **Manual, and it is the half that fits this tool:** a slider that adjusts letter proportions while
+  watching the wall. The honest complication is that a quad on an angled wall is a trapezoid *on
+  purpose* — the warp is compensating for the projector's position — so no formula knows the
+  surface's true physical shape. Jorge's eye does, through the camera. Same loop that beat a careful
+  measurement by three percent.
+
+**Wall check owed, and sequenced after that build** (Jorge, 2026-08-23: test the finished layer, not
+a half of it): read a wide lyric strip and a tall column from the back of the room, in low light,
+against `lyric-worstcase`'s 81 characters. Acceptance for this layer was always going to be visual,
+at a wall.
 
 ### The four things only a wall can answer — ALL PASSED 2026-08-23
 
@@ -929,6 +1010,27 @@ changes:
    precisely because this could not be calibrated at the desk.
 4. **Does the traced shape land on the shadow, not offset toward the body?** That is the whole rule,
    and the wall is the only place it can be confirmed.
+
+### The unit is the gig, not the venue (Jorge, 2026-08-23)
+
+**Vocabulary correction, and it governs everything below.** A **gig** is *a concert on a specific
+date at a specific venue*. That is the unit that encapsulates song configurations, in Muralista and
+in Pregonero alike. **The venue is not a first-class citizen** — it is an attribute of a gig, not the
+owner of a file.
+
+This is simpler than the "venue file" framing inherited from the Venue Turn, and it matches how the
+work actually happens: you map the room you are standing in, tonight, and what you produce belongs
+to tonight. A second gig at the same venue starts from the previous gig's file and gets adjusted;
+whether that copying ever becomes painful enough to justify splitting room facts out is a question
+for a second gig to answer, not for a design session to guess at.
+
+It also lines the two tools up: Pregonero's setlist is per gig, and Muralista's configuration is per
+gig. **Do not reintroduce "venue file" as the name of the artifact.**
+
+**Surface names, adopted 2026-08-23:** name surfaces for what they physically are — `board`, `crate`,
+`door-strip` — not `Surface 1`. Renaming already exists in the surface list, so this is a convention
+rather than a feature. It costs nothing and it is the hook any future addressing-by-name would hang
+on.
 
 ### The output model — proposed 2026-08-23, not yet decided
 
@@ -966,11 +1068,35 @@ records only "this region shows `lyric-01.png`", nothing distinguishes *the lyri
 image someone happened to place*, and the day Pregonero reads it, every mapping is re-authored by
 hand.
 
-**Left deliberately open** for the Pregonero integration session: SP JSON is already "the document
-about performing this song", so a song's visual arrangement is on its face another section of it.
-But format ownership says exactly one tool may write each file, and Bombista writes SP JSON — so
-either the arrangement is its own file, or ownership becomes per-section, which the Venue Turn never
-contemplated.
+**Closed by Jorge, 2026-08-23: the arrangement is NOT a section of SP JSON.** His reason is the right
+one and it is stronger than the ownership argument: **SP JSON is venue-independent, and everything
+Muralista writes is venue-dependent.** Fusing them would drag a room into a document that has no
+business knowing about rooms. Format ownership (Bombista writes SP JSON) would also have had to
+become per-section, which the Venue Turn never contemplated — but it is the venue-independence that
+decides it.
+
+**Opened by Jorge, and it is the better question: is Pregonero's gig setlist the same file as
+Muralista's gig configuration?** Both are gig-shaped. A setlist is the songs, in order, for one
+night; a Muralista gig configuration is what each song puts on which region, that same night. They
+are two halves of one document about an evening, and Pregonero has no such file yet, so nothing has
+to be unpicked to make it one. **The crux is ownership**: exactly one tool may write each file, and
+here two tools each want to author half. Carried to the Pregonero integration session, unresolved.
+
+**On named regions, restated plainly, because the first attempt did not land.** Today a mapping says
+*this content goes at these four corner coordinates*. Coordinates only mean something in the room
+they were measured in, so a song's arrangement written that way can only ever be used in that room —
+which is exactly what Jorge means by "venue-dependent".
+
+Naming is the alternative: **the room mapping labels its surfaces** — `board`, `crate`, `door-strip`
+— and the song arrangement then says *cerdo on `board`, lyrics on `door-strip`*, never a coordinate.
+Play a different room, map it, and label one of its surfaces `board`: every song arrangement written
+for `board` plays there untouched. The room file holds the geometry; the song file holds the
+intention; the name is the hinge between them. It is the lighting desk's patch-versus-cues split.
+
+**Not a decision for v1, and possibly never needed.** If arrangements stay venue-dependent, they get
+re-authored per venue, which for a handful of gigs is cheap and honest. The cost only bites at many
+songs × many rooms. **What is worth doing now, because it is free: give surfaces real names anyway.**
+A named surface costs nothing today and is the hook everything above hangs on if the day comes.
 
 **None of this changes v1.** Do not design the format, earn it: v1 keeps emitting one file,
 studio-only. What this buys is knowing which seam to cut when a second room or a second song forces

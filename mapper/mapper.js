@@ -968,8 +968,8 @@ function toggleWhiteField() {
 }
 
 // Control -> output: a big number on the wall itself, so the countdown for
-// "Suggest from my shadow" can be read from where the performer is standing
-// rather than from the laptop they just walked away from. `value` is the
+// "Adopt boundaries" can be read from where the performer is standing rather
+// than from the laptop they just walked away from. `value` is the
 // seconds remaining, or null to clear it. Nonce per project convention.
 function broadcastCountdown(value) {
   channel.postMessage({ kind: "countdown", value, nonce: Date.now() });
@@ -997,7 +997,7 @@ function handleControlMessage(event) {
     broadcastMedia();
     broadcastState();
     broadcastWhiteField(); // a reopened output must not come back with a stale plate
-    broadcastCountdown(suggestionCountdownValue); // nor with a stale countdown
+    broadcastCountdown(adoptCountdownValue); // nor with a stale countdown
     if (lastTransport) {
       // Bring a late joiner up to speed on playback too - without this, an
       // output opened after Play was already pressed sits frozen on its
@@ -1858,19 +1858,31 @@ function releasePointerSafely(el, pointerId) {
 }
 
 // =========================================================================
-// SUGGEST FROM MY SHADOW
+// ADOPT BOUNDARIES
 // =========================================================================
-// Raise a white plate, photograph the empty wall, count the performer into
-// place on the wall itself, photograph it again, and keep the region that got
-// DARKER. Then trace that region and make it the shape's OUTLINE - never the
-// content frame, which this gesture has no business touching.
+// Raise a white plate, photograph the empty wall, count the thing into place
+// on the wall itself, photograph it again, and keep the region that got
+// DARKER. Then trace that region and make it the shape's OUTLINE.
 //
-// That region is the shadow, by construction - it is precisely the set of
-// projector pixels the body blocks - and the shadow, not the body, is what a
-// mask must be traced around. The camera and the lens do not stand in the same
-// place, so they disagree about where a body is; they cannot disagree about
-// where its shadow falls, because the shadow lands on the wall plane, which is
-// exactly where the existing calibration is exact.
+// AVAILABLE ON EVERY SHAPE, and that is v8's doing rather than a new feature:
+// on a fill shape this is the performer mask, and on a video shape it clips an
+// animation to the silhouette of a real object on the stage. It was only ever
+// a keep-out's gesture because a keep-out was the only thing with an outline.
+// It writes the outline and NEVER the content frame: adopting a silhouette
+// says where a shape ends, not how its content is warped.
+//
+// IT DETECTS A DIFFERENCE, so the thing must be ABSENT FROM ONE OF THE TWO
+// FRAMES. It finds a person who walks into the beam, or an object placed and
+// then removed. It cannot find a painting that hung on that wall the whole
+// time - there is nothing to difference against, and no threshold setting
+// changes that. Said out loud in the panel too, because it is the one thing
+// about this gesture that surprises people.
+//
+// AND THE SHADOW RULE IS UNCHANGED: for anything standing out from the wall,
+// trace the SHADOW, not the thing. The camera and the lens do not stand in the
+// same place, so they disagree about where a body is; they cannot disagree
+// about where its shadow falls, because the shadow lands on the wall plane,
+// which is exactly where the existing calibration is exact.
 //
 // ACCURACY IS EXPLICITLY NOT THE GOAL. A coarse blob roughly the right shape
 // is the CORRECT output here: the margin slider has to inflate it anyway (a
@@ -1906,10 +1918,10 @@ const SHADOW_TARGET_MAX_POINTS = 40;
 // settings for one gesture against one room's light, not geometry: putting
 // them in the venue file would ship a transient camera parameter inside the
 // artifact this tool exists to produce.
-let shadowThreshold = 22; // 0-255 luminance drop
-let shadowCountdownSeconds = 10;
-let suggestionRunning = false;
-let suggestionCountdownValue = null;
+let adoptThreshold = 22; // 0-255 luminance drop
+let adoptCountdownSeconds = 10;
+let adoptRunning = false;
+let adoptCountdownValue = null;
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -1917,11 +1929,11 @@ function delay(ms) {
 
 // Why the button is disabled, or null if it is not. Said out loud in the
 // panel rather than left as a dead control.
-function shadowSuggestionBlocker() {
+function adoptBoundariesBlocker() {
   if (!isCameraMode()) return "Set Backdrop \u2192 Source to Live camera first.";
   if (!isCameraEnabled()) return "Enable the camera first.";
   if (!isValidQuad(project.cameraQuad)) {
-    return "Calibrate the camera first. The suggestion maps your shadow into output space through that calibration, so without it there is nothing to map through.";
+    return "Calibrate the camera first. The capture maps what it traces into output space through that calibration, so without it there is nothing to map through.";
   }
   return null;
 }
@@ -2118,8 +2130,8 @@ function shadowRingFromFrames(frameA, frameB, threshold, H) {
   return ring.length >= SHAPE_MIN_POINTS ? ring : null;
 }
 
-function setSuggestStatus(text) {
-  const el = document.getElementById("shape-suggest-status");
+function setAdoptStatus(text) {
+  const el = document.getElementById("shape-adopt-status");
   if (el) el.textContent = text || "";
 }
 
@@ -2138,21 +2150,21 @@ function setPreviewCountdown(value) {
 }
 
 function showCountdown(value) {
-  suggestionCountdownValue = value;
+  adoptCountdownValue = value;
   broadcastCountdown(value);
   setPreviewCountdown(value);
 }
 
 // The sequence, and its order is the whole design. See the section comment.
-async function suggestShapeFromShadow(shapeId) {
-  if (suggestionRunning) return;
+async function adoptShapeBoundaries(shapeId) {
+  if (adoptRunning) return;
   const shape = findShape(shapeId);
   if (!shape) return;
-  if (shadowSuggestionBlocker()) return;
+  if (adoptBoundariesBlocker()) return;
 
   const H = computeHomography(project.cameraQuad, UNIT_SQUARE_CORNERS);
   if (!H) {
-    setSuggestStatus("The camera calibration is degenerate - recalibrate before capturing.");
+    setAdoptStatus("The camera calibration is degenerate - recalibrate before capturing.");
     return;
   }
 
@@ -2160,7 +2172,7 @@ async function suggestShapeFromShadow(shapeId) {
   // If the plate was already up, leave it up afterwards: this gesture should
   // give the output back exactly as it found it.
   const plateWasUp = whiteFieldOn;
-  suggestionRunning = true;
+  adoptRunning = true;
   renderControl();
 
   try {
@@ -2169,35 +2181,35 @@ async function suggestShapeFromShadow(shapeId) {
       whiteFieldOn = true;
       broadcastWhiteField();
     }
-    setSuggestStatus("Lighting the wall\u2026");
+    setAdoptStatus("Lighting the wall\u2026");
     await delay(SHADOW_PLATE_SETTLE_MS);
 
     // 2. Frame A: the wall WITHOUT the thing. Taken BEFORE the countdown
     //    exists, so it cannot contain one.
     const frameA = grabCameraFrameLuma(video);
     if (!frameA) {
-      setSuggestStatus("No camera frame to capture - is the feed running?");
+      setAdoptStatus("No camera frame to capture - is the feed running?");
       return;
     }
 
     // 3. Count the thing into place, on the wall and at the desk.
-    for (let t = shadowCountdownSeconds; t > 0; t--) {
+    for (let t = adoptCountdownSeconds; t > 0; t--) {
       showCountdown(t);
-      setSuggestStatus(`Step into the beam \u2014 ${t}\u2026`);
+      setAdoptStatus(`Get into the beam \u2014 ${t}\u2026`);
       await delay(1000);
     }
 
     // 4. Take the countdown off the output FIRST, then settle, then capture.
     showCountdown(null);
-    setSuggestStatus("Capturing\u2026");
+    setAdoptStatus("Capturing\u2026");
     await delay(SHADOW_CLEAR_SETTLE_MS);
     const frameB = grabCameraFrameLuma(video);
 
     // 5/6. Difference, blob, trace, simplify, and map into output space.
-    const ring = shadowRingFromFrames(frameA, frameB, shadowThreshold, H);
+    const ring = shadowRingFromFrames(frameA, frameB, adoptThreshold, H);
     if (!ring) {
-      setSuggestStatus(
-        "No shadow found. Lower the threshold, or check that you were standing in the beam and inside the camera's view."
+      setAdoptStatus(
+        "Nothing changed between the two frames. Lower the threshold, or check that the thing was in the beam, inside the camera's view, and absent from the first frame."
       );
       return;
     }
@@ -2206,15 +2218,15 @@ async function suggestShapeFromShadow(shapeId) {
     // touch: on a video shape the animation goes on being warped exactly as
     // it was, and starts being clipped to what was just traced.
     if (setShapeOutline(shapeId, ring)) {
-      setSuggestStatus(
-        `Traced ${ring.length} points into the outline. Push any point that reads wrong; on a fill shape, raise the margin until the shape is comfortably bigger than you.`
+      setAdoptStatus(
+        `Traced ${ring.length} points into the outline. Push any point that reads wrong; on a fill shape, raise the margin until the shape is comfortably bigger than the thing.`
       );
     } else {
-      setSuggestStatus("The traced shape came out unusable - try again with a different threshold.");
+      setAdoptStatus("The traced shape came out unusable - try again with a different threshold.");
     }
   } catch (err) {
-    console.warn("Muralista: shadow suggestion failed.", err);
-    setSuggestStatus(`The suggestion failed: ${(err && err.message) || err}`);
+    console.warn("Muralista: adopting boundaries failed.", err);
+    setAdoptStatus(`The capture failed: ${(err && err.message) || err}`);
   } finally {
     // 7. Give the output back as we found it, whatever happened above.
     showCountdown(null);
@@ -2222,12 +2234,12 @@ async function suggestShapeFromShadow(shapeId) {
       whiteFieldOn = false;
       broadcastWhiteField();
     }
-    suggestionRunning = false;
+    adoptRunning = false;
     selectedShapeId = shapeId; // leave it selected and editable
-    const status = document.getElementById("shape-suggest-status");
+    const status = document.getElementById("shape-adopt-status");
     const carried = status ? status.textContent : "";
     renderControl();
-    setSuggestStatus(carried); // renderControl rebuilds the panel; keep the message
+    setAdoptStatus(carried); // renderControl rebuilds the panel; keep the message
   }
 }
 
@@ -2912,7 +2924,7 @@ function buildLayerPanel(container, shape, layer) {
   container.appendChild(opacityRow);
 
   buildOutlineControls(container, shape);
-  buildShadowSuggestControls(container, shape);
+  buildAdoptBoundariesControls(container, shape);
   updateLayerPanelValues(container, shape, layer);
 }
 
@@ -3080,50 +3092,57 @@ function buildOutlineControls(container, shape) {
   container.appendChild(framed);
 }
 
-// "Suggest from my shadow" and the two knobs it needs. Both knobs are
-// control-local (see shadowThreshold): they describe this room's light and how
-// long it takes to walk to the wall, not the venue's geometry, and a transient
-// camera setting has no business inside the artifact this tool exists to
-// produce.
-function buildShadowSuggestControls(container, shape) {
-  panelDivider(container, "Suggest");
+// "Adopt boundaries" and the two knobs it needs. Both knobs are control-local
+// (see adoptThreshold): they describe this room's light and how long it takes
+// to walk to the wall, not the venue's geometry, and a transient camera
+// setting has no business inside the artifact this tool exists to produce.
+function buildAdoptBoundariesControls(container, shape) {
+  panelDivider(container, "Adopt boundaries");
 
   const row = document.createElement("div");
   row.className = "layer-field";
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.id = "shape-suggest";
-  btn.textContent = "Suggest from my shadow";
-  btn.addEventListener("click", () => suggestShapeFromShadow(shape.id));
+  btn.id = "shape-adopt";
+  btn.textContent = "Adopt boundaries…";
+  btn.addEventListener("click", () => adoptShapeBoundaries(shape.id));
   row.appendChild(btn);
   container.appendChild(row);
 
   const status = document.createElement("p");
-  status.id = "shape-suggest-status";
-  status.className = "suggest-status";
+  status.id = "shape-adopt-status";
+  status.className = "adopt-status";
   container.appendChild(status);
 
   const hint = document.createElement("p");
-  hint.id = "shape-suggest-hint";
+  hint.id = "shape-adopt-hint";
   hint.className = "layer-hint";
   container.appendChild(hint);
+
+  // The two facts that decide whether this gesture can work at all, said
+  // before it is pressed rather than after it comes back empty.
+  const rules = document.createElement("p");
+  rules.className = "layer-hint";
+  rules.textContent =
+    "It detects a DIFFERENCE between two photographs of the wall, so the thing has to be absent from one of them: it finds a person who walks in, or an object placed and removed, and cannot find a painting that was hanging there the whole time. And for anything standing out from the wall, trace the SHADOW, not the thing — the camera and the lens disagree about where a body is, and never about where its shadow falls.";
+  container.appendChild(rules);
 
   const secsRow = document.createElement("div");
   secsRow.className = "layer-field";
   const secsLabel = document.createElement("label");
   secsLabel.textContent = "Countdown (s)";
-  secsLabel.setAttribute("for", "shape-suggest-countdown-input");
+  secsLabel.setAttribute("for", "shape-adopt-countdown-input");
   const secsInput = document.createElement("input");
   secsInput.type = "number";
-  secsInput.id = "shape-suggest-countdown-input";
+  secsInput.id = "shape-adopt-countdown-input";
   secsInput.min = "3";
   secsInput.max = "60";
   secsInput.step = "1";
-  secsInput.value = String(shadowCountdownSeconds);
+  secsInput.value = String(adoptCountdownSeconds);
   secsInput.addEventListener("change", () => {
     const n = Math.round(Number(secsInput.value));
-    shadowCountdownSeconds = isFinite(n) ? Math.max(3, Math.min(60, n)) : 10;
-    secsInput.value = String(shadowCountdownSeconds);
+    adoptCountdownSeconds = isFinite(n) ? Math.max(3, Math.min(60, n)) : 10;
+    secsInput.value = String(adoptCountdownSeconds);
   });
   secsRow.append(secsLabel, secsInput);
   container.appendChild(secsRow);
@@ -3132,21 +3151,21 @@ function buildShadowSuggestControls(container, shape) {
   thrRow.className = "layer-field";
   const thrLabel = document.createElement("label");
   thrLabel.textContent = "Threshold";
-  thrLabel.setAttribute("for", "shape-suggest-threshold-input");
+  thrLabel.setAttribute("for", "shape-adopt-threshold-input");
   const thrInput = document.createElement("input");
   thrInput.type = "range";
-  thrInput.id = "shape-suggest-threshold-input";
+  thrInput.id = "shape-adopt-threshold-input";
   thrInput.min = "4";
   thrInput.max = "120";
   thrInput.step = "1";
-  thrInput.value = String(shadowThreshold);
+  thrInput.value = String(adoptThreshold);
   const thrValue = document.createElement("span");
-  thrValue.id = "shape-suggest-threshold-value";
+  thrValue.id = "shape-adopt-threshold-value";
   thrValue.className = "layer-opacity-value";
-  thrValue.textContent = String(shadowThreshold);
+  thrValue.textContent = String(adoptThreshold);
   thrInput.addEventListener("input", () => {
-    shadowThreshold = Number(thrInput.value);
-    thrValue.textContent = String(shadowThreshold);
+    adoptThreshold = Number(thrInput.value);
+    thrValue.textContent = String(adoptThreshold);
   });
   thrRow.append(thrLabel, thrInput, thrValue);
   container.appendChild(thrRow);
@@ -3154,7 +3173,7 @@ function buildShadowSuggestControls(container, shape) {
   const thrHint = document.createElement("p");
   thrHint.className = "layer-hint";
   thrHint.textContent =
-    "How much darker a pixel must get to count as shadow. One knob, not a clever guess: raise it if the trace catches the whole wall, lower it if it finds nothing. A coarse blob is the right answer here - the margin has to inflate it anyway.";
+    "How much darker a pixel must get to count. One knob, not a clever guess: raise it if the trace catches the whole wall, lower it if it finds nothing. A coarse blob is the right answer here - on a fill shape the margin has to inflate it anyway.";
   container.appendChild(thrHint);
 }
 
@@ -3397,7 +3416,7 @@ function updateLayerPanelValues(container, shape, layer) {
   if (layer.type === "fill") updateFillLayerPanelValues(container, layer, active);
 
   updateOutlinePanelValues(container, shape);
-  updateSuggestPanelValues(container, active);
+  updateAdoptPanelValues(container, active);
 }
 
 // Same contract as above: refresh, never rebuild, and never touch the control
@@ -3483,28 +3502,28 @@ function updateOutlinePanelValues(container, shape) {
   }
 }
 
-function updateSuggestPanelValues(container, active) {
+function updateAdoptPanelValues(container, active) {
   // The capture needs a calibrated, running camera. Disabled with the reason
   // said out loud, rather than left as a dead control.
-  const blocker = shadowSuggestionBlocker();
-  const adoptBtn = container.querySelector("#shape-suggest");
+  const blocker = adoptBoundariesBlocker();
+  const adoptBtn = container.querySelector("#shape-adopt");
   if (adoptBtn) {
-    adoptBtn.disabled = !!blocker || suggestionRunning;
-    adoptBtn.textContent = suggestionRunning ? "Capturing…" : "Suggest from my shadow";
+    adoptBtn.disabled = !!blocker || adoptRunning;
+    adoptBtn.textContent = adoptRunning ? "Capturing…" : "Adopt boundaries…";
   }
-  const adoptHint = container.querySelector("#shape-suggest-hint");
+  const adoptHint = container.querySelector("#shape-adopt-hint");
   if (adoptHint) {
     adoptHint.textContent = blocker
       ? blocker
-      : "Raises the white plate, photographs the empty wall, counts you into the beam, photographs it again, and makes what got darker this shape's outline. That region IS your shadow - trace the shadow, never the body: the camera and the lens disagree about where you are, and cannot disagree about where your shadow falls.";
+      : "Raises the white plate, photographs the wall, counts you (or whatever is being traced) into the beam, photographs it again, and makes what got darker this shape's outline.";
     adoptHint.classList.toggle("blocked", !!blocker);
   }
-  const thrInput = container.querySelector("#shape-suggest-threshold-input");
-  if (thrInput && active !== thrInput) thrInput.value = String(shadowThreshold);
-  const thrValue = container.querySelector("#shape-suggest-threshold-value");
-  if (thrValue) thrValue.textContent = String(shadowThreshold);
-  const secsInput = container.querySelector("#shape-suggest-countdown-input");
-  if (secsInput && active !== secsInput) secsInput.value = String(shadowCountdownSeconds);
+  const thrInput = container.querySelector("#shape-adopt-threshold-input");
+  if (thrInput && active !== thrInput) thrInput.value = String(adoptThreshold);
+  const thrValue = container.querySelector("#shape-adopt-threshold-value");
+  if (thrValue) thrValue.textContent = String(adoptThreshold);
+  const secsInput = container.querySelector("#shape-adopt-countdown-input");
+  if (secsInput && active !== secsInput) secsInput.value = String(adoptCountdownSeconds);
 }
 
 // =========================================================================

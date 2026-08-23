@@ -656,7 +656,7 @@ button.danger:hover {
   text-transform: uppercase;
 }
 
-.suggest-status {
+.adopt-status {
   margin: 6px 0;
   color: var(--accent);
   font-size: 12px;

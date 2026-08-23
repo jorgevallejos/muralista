@@ -169,6 +169,17 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23: strip pass done — the beat layer is gone.** Merged as `14ec208` (PR #4,
+  `refactor(mapper)!: remove the beat layer`); umbrella pointer `2b766b9`. Out: the beat layer, its
+  renderer and canvas, `beatMode`, `bpm` in all four default-layer constructions, the whole
+  beat-anchor mechanism, and `mapper/_smoke.html`. **Schema v4**: `migrateProject()` coerces a `beat`
+  layer to `pattern` and deletes `bpm`/`beatMode`, so a migrated project announces the change with a
+  visible test pattern rather than a blank surface. Net −208 lines in `mapper.js` plus the 33-line
+  harness. **The beat anchor turned out to be dead code** — `beatAnchorT0` was read only by
+  `beatPhase()`, called only by `drawBeatFrame()` — and the hint text claiming overlays "start on the
+  same downbeat" was loose prose, not a dependency: alpha WebMs ride `registeredVideoEls` and
+  `transportPlaying` exactly like video layers. Investigated and reported rather than assumed, which
+  is the correct handling of an ambiguous deletion.
 
 ## V1 design (2026-08-20)
 
@@ -737,7 +748,15 @@ light on a red feature. The v2.4 verification was done with a real mouse in Chro
 **painted** geometry (`getBoundingClientRect` on the rendered polygon, plus screenshots) against the
 pixel coordinates the mouse was actually dragged between.
 
-**Still hand-untested from the July v2 round:** transport-synced overlays and mic reactivity.
+**The July v2 round is now fully accounted for.** Mic reactivity was removed rather than tested
+(2026-08-23). **Transport-synced overlays are proven** — during the strip pass, a base video and an
+alpha WebM were driven through play, pause and restart in lockstep (both at t=1.56 playing, both
+paused there, both back to 0 on restart). The honest caveat: that run drove `applyTransportAction`
+directly in the output role, because the in-app browser reports a 0×0 viewport for a second tab and
+`BroadcastChannel` does not cross tabs there. So *overlay follows transport* is proven directly, and
+the *control→output hop* is proven separately by the same day's real-Chrome runs, where play, pause
+and restart were all confirmed arriving at the output window. Nothing in that path was changed by
+this work.
 
 ## V1 scope and shape behaviour (design session 2026-08-23)
 
@@ -768,9 +787,9 @@ on a wall in the studio?* Anything that fails the question leaves before the tag
 
 **Transport-synced overlays: nothing to strip.** The sync is not a feature with its own controls, it
 is the fact that a layer obeys the play button instead of running off on its own; removing it would
-make overlays worse, and the same list-ordering machinery is what text-over-video needs. What defers
-to the next version is the **alpha-WebM animation overlay as a use case**, and hand-testing the sync
-(ten minutes at the desk, still the one thing carried forward as unverified from July).
+make overlays worse, and the same list-ordering machinery is what text-over-video needs. *(The sync
+itself was proven during the strip pass — see "The v2.1 drag bug" section. What defers to the next
+version is the **alpha-WebM animation overlay as a use case**, not the mechanism.)*
 
 ### Design system: the light brutalist restyle
 
@@ -847,7 +866,8 @@ points onto them by hand. What is next-version is anything smarter than that.
 
 ### The build queue this produces
 
-1. **Strip pass** (beat layer + `beatMode` + the one-option Mode select, `_smoke.html`).
+1. ~~**Strip pass**~~ **done 2026-08-23** (`14ec208`) — beat layer, `beatMode`, `bpm`, the beat
+   anchor and `_smoke.html`, with a schema bump to v4.
 2. **Polygon shape** with the margin slider and the shadow suggestion — one feature.
 3. **Text layer.**
 4. **Brutalist restyle**, control window only.

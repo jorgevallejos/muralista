@@ -156,14 +156,15 @@ function migrateProject(obj) {
   (Array.isArray(proj.keepOuts) ? proj.keepOuts : [])
     .filter((k) => k && typeof k === "object" && isValidPointRing(k.points))
     .forEach((k, i) => {
-      shapes.push({
+      const fill = {
         id: typeof k.id === "string" && k.id ? k.id : genShapeId(),
         // Kept verbatim. Renaming somebody's labels is not migration's job -
         // "Keep-out 1" is what they called it and what they will look for.
         name: typeof k.name === "string" && k.name.trim() ? k.name.trim() : `Fill ${i + 1}`,
-        // No content frame, and none invented: a fill shape needs none. One is
-        // materialised only if the type is ever changed to something that
-        // carries content (see setLayerType).
+        // No content frame, and none invented: a fill shape needs none. A
+        // four-point ring gets one anyway, from pinFrame below - not an
+        // invention either, since at four points the outline IS the frame
+        // (see shapeFrame) and this only writes down what it already reads.
         corners: null,
         outline: k.points.map(([x, y]) => [clampCoord(x), clampCoord(y)]),
         layer: {
@@ -174,7 +175,9 @@ function migrateProject(obj) {
           margin: clampMargin(k.margin),
         },
         visible: k.visible !== false,
-      });
+      };
+      pinFrame(fill); // the same rule migrateShape applies, so both agree
+      shapes.push(fill);
     });
   delete proj.keepOuts;
 

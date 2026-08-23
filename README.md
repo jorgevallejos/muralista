@@ -17,6 +17,7 @@ The counterpart to that: **Muralista maps, but it does not perform.** Working ou
 - **Built and verified at a real projector** (2026-07-02): corner-pin warp sits flush on a physical box, an animation plays across several surfaces at once, alpha compositing works at the wall.
 - **Never played a room.** It has been driven at a wall in a studio, never during a show with an audience in front of it. This is why Muralista is deliberately **not** promoted on [changopepper.com/tramoya](https://changopepper.com/tramoya) — the suite's rule is that everything on that page has done real work, and this has not yet.
 - **Keep-outs landed 2026-08-23**, with the shadow suggestion. Verified in real headed Chrome against painted geometry and decoded pixels — but **the suggestion has never been run against a real wall.** Its optical loop (a camera actually seeing the projected plate, the countdown clearing off the wall, a real body's shadow under real auto-exposure) was driven with a synthetic camera feed, because it is the one part that a desk cannot stand in for. Treat the first venue run as the real test of it; the shape it hands back is meant to be coarse either way.
+- **The media folder landed 2026-08-23.** Resolution, the Blob hand-off to the projector window, object-URL lifecycle and every fallback are verified in real headed Chrome against decoded pixels. **The picking flow itself is not automatable** — `showDirectoryPicker` opens an OS dialog no browser automation can drive — so it was exercised through a stand-in handle, and the one thing only a person can run is the round trip: pick a folder, quit Chrome, reopen, and see whether it comes back granted or asks to reconnect.
 - **Direct manipulation is now verified by hand** (2026-08-22). It landed in July and was only ever checked headlessly, and it did not in fact work: a drag moved a quad by one mouse-move and then froze, and pressing an unselected quad did not move it at all. Fixed, and confirmed in Chrome with a real mouse against painted output. **Transport-synced overlays are still hand-untested.**
 - **The desk-tool shape described above is the direction, not the current build.** Today Muralista still renders live: it has a transport, because v1 was designed as a tool that runs during the show. That decision was reversed on 2026-08-20. The sound-reactive half was removed on 2026-08-22 and preserved at the tag `mic-reactivity-archive`: a tool that maps a wall before a show cannot also be the thing listening to the room during it. The beat layer that removal left standing went too (2026-08-23) — with mic mode gone it was a circle pulsing at a fixed BPM, and nothing about drawing shapes on a wall needs one. **What Muralista renders today is video and image layers on warped surfaces, plus keep-out polygons it holds dark**, plus the test pattern you align against. The behaviours that left survive as direction — they become properties declared in the venue mapping and executed by [Pregonero](https://github.com/jorgevallejos/pregonero) — but nothing has moved across yet, and Pregonero cannot read a venue mapping today.
 
@@ -89,7 +90,7 @@ Lost track of which quad is which? **Identify** flashes each surface's name onto
 
 ### 5. Put the animation on it
 
-Switch `back wall` to the **video** layer and point its source at `media/cerdo.mp4`. Press **Play** in the header — all video layers share one transport, so the wall and the crate start together on the same frame.
+Switch `back wall` to the **video** layer and point its source at the animation — `cerdo.mp4` if you have chosen a media folder, `media/cerdo.mp4` if you are working out of the served directory. Press **Play** in the header — all video layers share one transport, so the wall and the crate start together on the same frame.
 
 Nudge a corner while it is playing. The video keeps playing: calibration does not interrupt playback, which matters because the only way to get a surface truly flush is to adjust it against the content you will actually show.
 
@@ -145,6 +146,22 @@ Two things worth knowing:
 
 **Where this is going:** the mapping grows into a full **venue file** — adding the outer field of usable wall and named regions for lyrics and animation, alongside the keep-outs it already carries — which Pregonero reads and executes on stage. See `project-context.md` in this repo, under "V1 design (2026-08-20)", for the design and its open questions.
 
+### The media folder
+
+A layer's source is a **name** — `cerdo.mp4`, or `clips/pig.mp4`. What the name is resolved *against* is the one thing the mapping does not store.
+
+By default it resolves next to the served page, which means "where my media lives" is really a fact about which directory you started `python3 -m http.server` in. Choose a **Media folder** in the sidebar and the tool knows instead: Chrome hands over a durable handle, and it comes back after a full browser restart without asking again.
+
+Three things follow from a browser only ever being granted a *handle*, never a path:
+
+- **The mapping stores the name, never the folder.** The handle is kept outside the project, in the browser. A venue file exported from a machine with a folder chosen opens on a machine without one, and needed no schema change to do it.
+- **The projector window never asks for anything.** It has no handle and touches no files. The control window reads the bytes and hands them over; a permission dialog appearing on the wall halfway through setting up is not something the tool will do.
+- **Nothing chosen is still a working tool.** No folder, permission not granted yet, or a name the folder simply does not have — all fall back to the served directory exactly as before. Anything the folder could not produce is named in the sidebar, next to the folder it was not found in.
+
+After a browser restart Chrome may return the folder as *remembered but not yet permitted*. A **Reconnect media folder** button appears; the tool will not raise that dialog on its own, because a dialog nobody asked for on load is the same objection as one on the projector. Until it is clicked, names fall back.
+
+Not Chrome? The control is hidden and every name falls back silently.
+
 ### Keep-outs and the shadow rule
 
 The one rule that governs every keep-out you draw around a person. Step 7 above is how; this is why.
@@ -167,8 +184,8 @@ Deliberate, not defects:
 - **The camera is a backdrop, not an auto-calibrator.** A webcam beside the lens gives you a live, rectified view of the wall to draw on. It does not find surfaces for you — you still calibrate by dragging while watching the projected result — and it is exact only on the wall plane. A phone photo remains a planning aid at best: a phone does not stand where the projector stands.
 - **One projector.** A second one is another separate zone, never a blended overlap. Edge blending is explicitly out.
 - **Chrome only.** Alpha WebM transparency and the autoplay behaviour this leans on are Chrome-specific; Safari drops the alpha channel.
-- **Media is not managed.** Drop files into `mapper/media/` by hand — the picker fills in the path, it does not copy anything. Media is gitignored and stays out of this repo.
-- **`python3 -m http.server` has no Range support**, so seeking within a long video feels sluggish. `npx http-server` is a drop-in replacement that does.
+- **Media is referenced, never copied.** Point the tool at the folder your media already lives in (see *The media folder* above) or drop files into `mapper/media/` by hand. Either way Muralista reads the files where they are — the picker fills in a name, it does not copy anything, and media stays out of this repo.
+- **`python3 -m http.server` has no Range support**, so seeking within a long video feels sluggish. `npx http-server` is a drop-in replacement that does — and a source resolved through a chosen media folder sidesteps the server entirely, so it does not have this problem in the first place.
 
 ## Development
 

@@ -305,6 +305,26 @@ button.danger:hover {
   color: var(--danger);
 }
 
+/* Which folder is connected, and how many sources come out of it. Dim, not
+   red: no folder chosen is a normal state, not a fault. */
+.media-folder-status {
+  margin: 0 16px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+/* The names a connected folder could not produce. Red, and one per line -
+   a wrapped run-on of filenames is unreadable at exactly the moment it is
+   needed, which is while typing the next one. */
+.media-folder-failures {
+  margin: 0 16px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+
 /* The white-field plate is live on the projector right now - the button has
    to say so from across the room, not just read "Hide white". */
 #btn-white-field.active {

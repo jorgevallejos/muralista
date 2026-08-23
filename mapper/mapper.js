@@ -593,9 +593,21 @@ function replaceProject(newProject) {
 }
 
 // Persist + broadcast + re-render, called after every control-side mutation.
+//
+// The state broadcast stays SYNCHRONOUS for the overwhelmingly common case - a
+// corner drag or an arrow-key nudge commits per mouse-move and per keystroke,
+// and the wall has to follow the hand. Only a change to the set of referenced
+// media names takes the async path, where the folder is re-read and the media
+// message goes out ahead of the state message (see refreshMediaForProjectChange).
+// Both paths post the live `project` object, so a nudge that overtakes a
+// pending resolve still carries the newer geometry - the two cannot disagree.
 function commitProjectChange() {
   saveProject(project);
-  broadcastState();
+  if (mediaNamesChanged()) {
+    refreshMediaForProjectChange();
+  } else {
+    broadcastState();
+  }
   renderControl();
 }
 
@@ -607,6 +619,34 @@ const channel = new BroadcastChannel("mapper");
 
 function broadcastState() {
   channel.postMessage({ kind: "state", project });
+}
+
+// Control -> output: the bytes behind every layer.src the control window was
+// able to resolve, as Blobs keyed by the name that appears in the project.
+//
+// This is the whole trick behind the media folder. The output window sits on
+// the projector and must NEVER touch the file system or ask for a permission
+// (a Chrome dialog on the wall mid-setup is unacceptable), and a
+// FileSystemDirectoryHandle is useless to it anyway - a handle carries the
+// grant of the window it was picked in. The July note in this repo that "blob
+// URLs do not survive a BroadcastChannel" is true and is half the picture: an
+// object URL is an address scoped to the document that minted it, but a Blob
+// is structured-cloneable, and cloning one does NOT copy its bytes - both
+// sides end up referring to the same underlying blob data. So the control
+// window does the reading and posts Blobs; the output mints its own object
+// URLs from them (see applyMediaMessage).
+//
+// `token` is how the output tells "the same file again" from "a different
+// file under the same name": size + mtime, computed on the control side. It
+// exists because structured clone gives the output a NEW Blob object every
+// time this message is sent, so object identity says nothing. Without the
+// token, every re-send would revoke and remint every URL and restart every
+// video - which is the exact churn the output's reconciler was built to
+// avoid. Nonce per project convention.
+function broadcastMedia() {
+  const entries = [];
+  resolvedMedia.forEach((rec, src) => entries.push({ src, token: rec.token, blob: rec.blob }));
+  channel.postMessage({ kind: "media", entries, nonce: Date.now() });
 }
 
 // Transport message shape (structure only — consumers land in slice 3 when
@@ -677,6 +717,13 @@ function handleControlMessage(event) {
   if (!msg || typeof msg !== "object") return;
   if (msg.kind === "hello") {
     // A fresh output window just opened and wants the current state.
+    // Media FIRST, then state: the output paints in response to the state
+    // message, and a state that names a source the media message has not
+    // arrived with yet paints one frame of the served-path fallback (and,
+    // for a name the served directory does not have, one flash of the
+    // failure note) before correcting itself. Ordering the two messages
+    // costs nothing and removes that flash entirely.
+    broadcastMedia();
     broadcastState();
     broadcastWhiteField(); // a reopened output must not come back with a stale plate
     broadcastCountdown(suggestionCountdownValue); // nor with a stale countdown
@@ -703,6 +750,8 @@ function handleOutputMessage(event) {
   if (msg.kind === "state" && isValidProject(msg.project)) {
     project = msg.project;
     renderOutput();
+  } else if (msg.kind === "media" && Array.isArray(msg.entries)) {
+    applyMediaMessage(msg.entries);
   } else if (msg.kind === "identify") {
     showIdentifyOverlay();
   } else if (msg.kind === "whiteField" && typeof msg.on === "boolean") {
@@ -712,6 +761,306 @@ function handleOutputMessage(event) {
   } else if (msg.kind === "transport" && typeof msg.action === "string") {
     applyTransportAction(msg.action);
   }
+}
+
+// =========================================================================
+// MEDIA FOLDER (control-side only)
+// =========================================================================
+// Where the media actually lives. No media is part of this app, at build time
+// or at runtime: a layer's `src` is a NAME ("cerdo.mp4", "clips/pig.mp4"), and
+// this section is what turns that name into bytes.
+//
+// Until now a name was resolved by the browser, relative to whatever directory
+// the local server happened to be serving - which works, but makes "where my
+// media lives" a fact about how the server was launched rather than something
+// the tool knows. With a directory handle, the tool knows.
+//
+// Three things this section is careful about, all consequences of the fact
+// that a page cannot read a path, only a granted handle:
+//
+//   1. THE VENUE FILE STORES NAMES, NEVER HANDLES. A directory handle is a
+//      browser object; it cannot live in a JSON that gets read, diffed, and
+//      eventually handed to Pregonero. So the handle lives in IndexedDB, keyed
+//      to this origin, and the project keeps saying "cerdo.mp4". This is why
+//      the media folder needed NO schema change: PROJECT_VERSION stays 5, and
+//      a mapping exported from a machine with a folder chosen opens on a
+//      machine without one.
+//   2. THE SERVED-DIRECTORY PATH STAYS AS A FALLBACK. No folder chosen,
+//      permission not granted, or the name simply not in the folder - the name
+//      goes to the output unresolved and the browser does what it does today.
+//      A denied permission is a degraded mode, never a dead tool.
+//   3. NONE OF THIS RUNS IN THE OUTPUT ROLE. Every function below is reached
+//      only from initControl() and from control-window clicks.
+
+const MEDIA_DB_NAME = "muralista";
+const MEDIA_DB_STORE = "handles";
+const MEDIA_FOLDER_KEY = "mediaFolder";
+
+// The chosen folder, if any, and what we are allowed to do with it:
+//   "unsupported" - not Chrome (no showDirectoryPicker); the control is hidden
+//                   and every name falls back, silently.
+//   "none"        - no folder chosen.
+//   "granted"     - handle in hand, read permission live. Names resolve.
+//   "reconnect"   - handle in hand, permission is "prompt" or "denied". We do
+//                   NOT ask: requestPermission needs a user gesture, and an
+//                   unprompted dialog on load is precisely the behaviour this
+//                   feature exists to avoid. The sidebar offers a button and
+//                   lets the click carry the gesture.
+let mediaFolderHandle = null;
+let mediaFolderState = "none";
+
+// src name -> { token, blob }. Only names actually referenced by a layer, and
+// only the ones that resolved. Everything absent from this map falls back.
+let resolvedMedia = new Map();
+// [{ src, reason }] for names a chosen folder could not produce - surfaced in
+// the sidebar, because a person configuring the wall should not have to read
+// the output window (or the console) to learn that they typed "cerdo.mp4"
+// into a folder that spells it "Cerdo.mp4".
+let mediaResolveFailures = [];
+
+// The name set the current resolvedMedia was built from, as a stable key.
+// commitProjectChange() fires on every arrow-key nudge and every opacity tick;
+// re-walking the file system on each of those would be absurd. Only a change
+// to the set of referenced names triggers a re-resolve.
+let resolvedNamesKey = null;
+
+function mediaFolderSupported() {
+  return typeof window.showDirectoryPicker === "function";
+}
+
+function mediaFolderLabel() {
+  return mediaFolderHandle ? mediaFolderHandle.name : null;
+}
+
+// --- IndexedDB: one store, one key, holding one handle. localStorage would be
+// the obvious neighbour of STORAGE_KEY, but it stores strings and a directory
+// handle is not one - IndexedDB is the only web storage that structured-clones
+// a FileSystemDirectoryHandle, so this is a constraint, not a preference.
+
+function openMediaDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(MEDIA_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(MEDIA_DB_STORE)) {
+        req.result.createObjectStore(MEDIA_DB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function mediaDbRequest(mode, run) {
+  return openMediaDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(MEDIA_DB_STORE, mode);
+        const req = run(tx.objectStore(MEDIA_DB_STORE));
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+        tx.oncomplete = () => db.close();
+      })
+  );
+}
+
+function readStoredFolderHandle() {
+  return mediaDbRequest("readonly", (store) => store.get(MEDIA_FOLDER_KEY));
+}
+
+function writeStoredFolderHandle(handle) {
+  return mediaDbRequest("readwrite", (store) => store.put(handle, MEDIA_FOLDER_KEY));
+}
+
+function clearStoredFolderHandle() {
+  return mediaDbRequest("readwrite", (store) => store.delete(MEDIA_FOLDER_KEY));
+}
+
+// --- Resolution.
+
+// Every name any visible-or-not surface currently points at. Read verbatim,
+// with no trimming or normalising: this key must match what the output reads
+// out of layer.src, and a name that differs by a space is a different name on
+// both sides or on neither.
+function referencedMediaNames() {
+  const names = new Set();
+  (project.surfaces || []).forEach((surface) => {
+    const layer = surface && surface.layer;
+    if (!layer || (layer.type !== "video" && layer.type !== "image")) return;
+    if (typeof layer.src === "string" && layer.src) names.add(layer.src);
+  });
+  return names;
+}
+
+function mediaNamesKey(names) {
+  return Array.from(names).sort().join(" ");
+}
+
+// "clips/pig.mp4" -> walk getDirectoryHandle for every segment but the last.
+// A nested name is worth supporting because a media folder for a show is a
+// folder of folders, not a flat pile. Anything unwalkable (a missing segment,
+// a "..", a file where a directory was expected) throws, and the caller turns
+// that into a fallback plus a visible note.
+async function resolveNameInFolder(handle, name) {
+  const parts = name.split("/").filter((p) => p && p !== ".");
+  if (!parts.length) throw new Error("empty name");
+  let dir = handle;
+  for (let i = 0; i < parts.length - 1; i++) {
+    dir = await dir.getDirectoryHandle(parts[i]);
+  }
+  const fileHandle = await dir.getFileHandle(parts[parts.length - 1]);
+  return fileHandle.getFile();
+}
+
+// Size + mtime. Enough to notice a re-export of the same clip under the same
+// name, cheap enough to compute on every resolve. See broadcastMedia for why
+// the output cannot just compare Blob identity.
+function mediaToken(file) {
+  return `${file.size}|${file.lastModified}`;
+}
+
+// Guards against an out-of-order finish: two resolves can be in flight (type a
+// name, then immediately type another) and the slower one must not overwrite
+// the newer result.
+let mediaResolveSeq = 0;
+
+// Rebuilds resolvedMedia from the current folder + the current name set.
+// Deliberately does NOT broadcast - callers decide the message order, which
+// matters (see the hello handler and commitProjectChange).
+async function syncResolvedMedia() {
+  const seq = ++mediaResolveSeq;
+  const names = referencedMediaNames();
+  const next = new Map();
+  const failures = [];
+
+  if (mediaFolderHandle && mediaFolderState === "granted") {
+    for (const name of names) {
+      try {
+        const file = await resolveNameInFolder(mediaFolderHandle, name);
+        next.set(name, { token: mediaToken(file), blob: file });
+      } catch (err) {
+        failures.push({
+          src: name,
+          reason: err && err.name === "NotFoundError" ? "not in this folder" : (err && err.message) || "could not be read",
+        });
+      }
+    }
+  }
+
+  if (seq !== mediaResolveSeq) return; // a newer resolve superseded this one
+
+  resolvedMedia = next;
+  mediaResolveFailures = failures;
+  resolvedNamesKey = mediaNamesKey(names);
+  renderMediaFolderControls();
+}
+
+// Re-resolve and re-broadcast because the FOLDER changed (picked, reconnected,
+// cleared). The project did not change, so no state message: the output
+// re-renders off the media message alone.
+async function refreshMediaForFolderChange() {
+  await syncResolvedMedia();
+  broadcastMedia();
+  renderControl();
+}
+
+// Re-resolve and re-broadcast because the PROJECT changed in a way that
+// touched the set of names. Media before state, for the reason spelled out in
+// the hello handler: the output should never paint a fallback frame for a name
+// the folder can resolve.
+async function refreshMediaForProjectChange() {
+  await syncResolvedMedia();
+  broadcastMedia();
+  broadcastState();
+}
+
+// True when the set of referenced names has drifted from what resolvedMedia
+// was built from - the cheap test that keeps nudges and opacity drags on the
+// synchronous path.
+function mediaNamesChanged() {
+  return mediaNamesKey(referencedMediaNames()) !== resolvedNamesKey;
+}
+
+// --- Sidebar actions. Each is a click handler, so each carries a user gesture.
+
+async function chooseMediaFolder() {
+  let handle;
+  try {
+    handle = await window.showDirectoryPicker({ id: "muralista-media", mode: "read" });
+  } catch (err) {
+    // AbortError is the person closing the dialog - not a failure worth saying
+    // anything about.
+    if (!err || err.name !== "AbortError") console.warn("Muralista: choosing a media folder failed.", err);
+    return;
+  }
+  mediaFolderHandle = handle;
+  mediaFolderState = "granted"; // the pick itself grants read for this session
+  try {
+    await writeStoredFolderHandle(handle);
+  } catch (err) {
+    // The folder still works for this session; only the round trip across a
+    // browser restart is lost. Say so rather than pretending it persisted.
+    console.warn("Muralista: could not remember the media folder.", err);
+  }
+  await refreshMediaForFolderChange();
+}
+
+// The "prompt" branch, run from a click so the gesture is real. Chrome answers
+// "denied" immediately for a folder the person has blocked; that stays a
+// reconnect state rather than becoming an error, because choosing the folder
+// again is the way out and the button is right there.
+async function reconnectMediaFolder() {
+  if (!mediaFolderHandle) return;
+  try {
+    const perm = await mediaFolderHandle.requestPermission({ mode: "read" });
+    mediaFolderState = perm === "granted" ? "granted" : "reconnect";
+  } catch (err) {
+    console.warn("Muralista: reconnecting the media folder failed.", err);
+    mediaFolderState = "reconnect";
+  }
+  await refreshMediaForFolderChange();
+}
+
+async function clearMediaFolder() {
+  mediaFolderHandle = null;
+  mediaFolderState = "none";
+  try {
+    await clearStoredFolderHandle();
+  } catch (err) {
+    console.warn("Muralista: could not forget the media folder.", err);
+  }
+  await refreshMediaForFolderChange();
+}
+
+// Boot. Reads the handle back and ASKS what we are allowed to do with it -
+// query, never request. This is the round trip the whole feature is for: close
+// Chrome entirely, reopen, and a folder that is still granted just works with
+// no dialog anywhere.
+async function initMediaFolder() {
+  if (mediaFolderSupported()) {
+    try {
+      const handle = await readStoredFolderHandle();
+      if (handle) {
+        mediaFolderHandle = handle;
+        const perm = await handle.queryPermission({ mode: "read" });
+        mediaFolderState = perm === "granted" ? "granted" : "reconnect";
+      }
+    } catch (err) {
+      console.warn("Muralista: could not read the saved media folder.", err);
+      mediaFolderHandle = null;
+      mediaFolderState = "none";
+    }
+    if (mediaFolderState === "granted") {
+      await syncResolvedMedia();
+      broadcastMedia();
+    }
+  } else {
+    mediaFolderState = "unsupported";
+  }
+  // One exit, and it re-renders the whole control: the folder decides the
+  // media section's contents AND the layer panel's src label, so a branch that
+  // refreshed only the former would leave the latter describing a folder that
+  // is not connected.
+  renderControl();
 }
 
 // =========================================================================
@@ -851,8 +1200,57 @@ function renderControl() {
   renderBackdrop();
   renderCamera();
   renderBackdropControls();
+  renderMediaFolderControls();
   renderLayerPanel();
   renderKeepOutPanel();
+}
+
+// The media folder's whole sidebar section: which buttons are live, what the
+// folder is called, and - the part that earns its place - WHICH names failed.
+// A name that does not resolve is invisible on the output until the projector
+// paints a failure note on the wall, which is the wrong place and the wrong
+// moment to learn that a file was renamed. It belongs here, next to the folder
+// it did not resolve in, where the person configuring is already looking.
+function renderMediaFolderControls() {
+  const section = document.getElementById("media-folder-section");
+  if (mediaFolderState === "unsupported") {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+
+  const chooseBtn = document.getElementById("btn-media-folder");
+  const reconnectBtn = document.getElementById("btn-media-folder-reconnect");
+  const clearBtn = document.getElementById("btn-media-folder-clear");
+  const status = document.getElementById("media-folder-status");
+  const failures = document.getElementById("media-folder-failures");
+
+  const label = mediaFolderLabel();
+  chooseBtn.textContent = label ? "Change folder…" : "Choose folder…";
+  reconnectBtn.hidden = mediaFolderState !== "reconnect";
+  clearBtn.hidden = !label;
+
+  if (mediaFolderState === "granted" && label) {
+    const n = resolvedMedia.size;
+    status.textContent = `${label} — connected. ${n} source${n === 1 ? "" : "s"} resolving from it.`;
+  } else if (mediaFolderState === "reconnect" && label) {
+    // Deliberately not phrased as an error: nothing is broken, the tool is in
+    // its degraded mode and one click restores it. Saying what happens
+    // meanwhile matters more than saying what went wrong.
+    status.textContent = `${label} — remembered, but Chrome needs your permission again before it can be read. Sources fall back to the served directory until you reconnect.`;
+  } else {
+    status.textContent = "No folder chosen — sources resolve next to the served page, as they always have.";
+  }
+
+  if (mediaResolveFailures.length) {
+    failures.hidden = false;
+    failures.textContent =
+      "Not found in this folder, falling back to the served directory:\n" +
+      mediaResolveFailures.map((f) => `• ${f.src} (${f.reason})`).join("\n");
+  } else {
+    failures.hidden = true;
+    failures.textContent = "";
+  }
 }
 
 function renderSurfaceList() {
@@ -2165,7 +2563,11 @@ function renderLayerPanel() {
 
   surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
   const layer = surface.layer;
-  const key = `${surface.id}:${layer.type}`;
+  // The connected folder is part of the key, not just of the values: it
+  // changes the src field's LABEL and what "Pick file…" writes, and both of
+  // those are built in buildLayerPanel. Without it, connecting a folder would
+  // leave the panel still saying "relative to mapper/media/".
+  const key = `${surface.id}:${layer.type}:${mediaFolderState}:${mediaFolderLabel() || ""}`;
 
   if (key !== layerPanelKey) {
     layerPanelKey = key;
@@ -2199,17 +2601,28 @@ function buildLayerPanel(container, surface, layer) {
 
   // Video / image: src path field + file-pick convenience.
   if (layer.type === "video" || layer.type === "image") {
+    // With a folder connected, a name is looked up INSIDE it and the old label
+    // is simply false. The field itself is unchanged either way - it has always
+    // held a name, and that is exactly what still gets saved to the mapping.
+    const folderLabel = mediaFolderState === "granted" ? mediaFolderLabel() : null;
+
     const srcRow = document.createElement("div");
     srcRow.className = "layer-field";
     const srcLabel = document.createElement("label");
-    srcLabel.textContent = "Source (relative to mapper/media/)";
+    srcLabel.textContent = folderLabel ? `Source (name inside ${folderLabel}/)` : "Source (relative to mapper/media/)";
     srcLabel.setAttribute("for", "layer-src-input");
     const srcInput = document.createElement("input");
     srcInput.type = "text";
     srcInput.id = "layer-src-input";
     // "e.g." prefix matters: a bare filename placeholder reads as an actual
     // prefilled value, and users assume the video is already linked.
-    srcInput.placeholder = layer.type === "video" ? "e.g. media/cerdo.mp4" : "e.g. media/character.png";
+    srcInput.placeholder = folderLabel
+      ? layer.type === "video"
+        ? "e.g. cerdo.mp4"
+        : "e.g. character.png"
+      : layer.type === "video"
+        ? "e.g. media/cerdo.mp4"
+        : "e.g. media/character.png";
     srcInput.value = layer.src || "";
     // 'change' (blur/Enter), not 'input': the reconciling output render
     // recreates the video/image element whenever layer.src changes, so
@@ -2232,15 +2645,21 @@ function buildLayerPanel(container, surface, layer) {
     fileInput.addEventListener("change", () => {
       const file = fileInput.files && fileInput.files[0];
       if (file) {
-        const relPath = `media/${file.name}`;
-        srcInput.value = relPath;
-        setLayerField(surface.id, "src", relPath);
+        // An <input type=file> hands over a name and no path, so this has
+        // always been a convenience that fills in a guess. With a folder
+        // connected the right guess is the bare name - prefixing "media/"
+        // would send the lookup into a subfolder that probably is not there.
+        const guess = folderLabel ? file.name : `media/${file.name}`;
+        srcInput.value = guess;
+        setLayerField(surface.id, "src", guess);
       }
       fileInput.value = "";
     });
     const hint = document.createElement("p");
     hint.className = "layer-hint";
-    hint.textContent = "Picking a file only fills in the path above - the file itself must already be copied into mapper/media/.";
+    hint.textContent = folderLabel
+      ? `Picking a file only fills in the name above - the file itself must live in ${folderLabel}/.`
+      : "Picking a file only fills in the path above - the file itself must already be copied into mapper/media/.";
     fileRow.append(fileBtn, fileInput, hint);
     container.appendChild(fileRow);
 
@@ -2692,6 +3111,13 @@ function wireControlEvents() {
   document.getElementById("btn-camera-calibrate").addEventListener("click", toggleCameraCalibration);
   document.getElementById("btn-camera-calibrate-clear").addEventListener("click", clearCameraQuad);
   document.getElementById("btn-white-field").addEventListener("click", toggleWhiteField);
+
+  // Each of these is a real click, which is the point: showDirectoryPicker and
+  // requestPermission both require a user gesture, and that requirement is the
+  // feature, not an obstacle around it.
+  document.getElementById("btn-media-folder").addEventListener("click", chooseMediaFolder);
+  document.getElementById("btn-media-folder-reconnect").addEventListener("click", reconnectMediaFolder);
+  document.getElementById("btn-media-folder-clear").addEventListener("click", clearMediaFolder);
 }
 
 function initControl() {
@@ -2709,6 +3135,11 @@ function initControl() {
   new ResizeObserver(() => renderCamera()).observe(document.querySelector(".preview-box"));
 
   renderControl();
+
+  // Async and deliberately un-awaited: reading the handle back out of
+  // IndexedDB must not hold up the first paint of a mapping that is already in
+  // localStorage. It re-renders itself when it lands.
+  initMediaFolder();
 }
 
 // =========================================================================
@@ -2862,17 +3293,22 @@ function renderOutputSurface(container, surface, w, h) {
 // (opacity) on the existing element so playback state survives.
 function renderLayer(surface, entry) {
   const layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
-  const nextSrc = layer.src || null;
+  // Reconcile against the URL actually mounted, not the name in the project.
+  // The name can stay put while the URL underneath it changes - a media folder
+  // arriving, being reconnected, or being cleared all re-point an unchanged
+  // "cerdo.mp4" - and those are exactly the moments the element must be
+  // rebuilt. Keying on the name would leave the old source playing.
+  const nextUrl = layer.src ? resolveMediaUrl(layer.src) : null;
   const typeChanged = entry.layerType !== layer.type;
-  const srcChanged = entry.layerSrc !== nextSrc;
+  const srcChanged = entry.layerSrc !== nextUrl;
 
   if (typeChanged || srcChanged) {
     teardownLayerContent(entry); // pause/stop+detach whatever was there before
     entry.wrapper.innerHTML = "";
-    entry.contentEl = createLayerElement(surface, layer);
+    entry.contentEl = createLayerElement(surface, layer, nextUrl);
     entry.wrapper.appendChild(entry.contentEl);
     entry.layerType = layer.type;
-    entry.layerSrc = nextSrc;
+    entry.layerSrc = nextUrl;
   }
 
   if (entry.contentEl) {
@@ -2880,12 +3316,17 @@ function renderLayer(surface, entry) {
   }
 }
 
-function createLayerElement(surface, layer) {
+// `url` is what goes on the element: a blob URL when the media folder resolved
+// layer.src, otherwise layer.src itself (the served-directory fallback).
+// Everything that reasons ABOUT the source - the .webm overlay test, the
+// failure note - keeps reading layer.src, because a blob URL has no filename
+// and no extension and means nothing to a person reading the wall.
+function createLayerElement(surface, layer, url) {
   switch (layer.type) {
     case "video":
-      return createVideoLayerElement(layer, surface);
+      return createVideoLayerElement(layer, surface, url);
     case "image":
-      return createImageLayerElement(layer, surface);
+      return createImageLayerElement(layer, surface, url);
     case "pattern":
     default:
       return renderPatternLayer(surface);
@@ -2978,13 +3419,70 @@ function applyTransportAction(action) {
 }
 
 // =========================================================================
+// MEDIA URLS (output-side)
+// =========================================================================
+// The output half of the media folder. This window never opens a picker, never
+// asks for a permission and never touches the file system - it receives Blobs
+// over the BroadcastChannel and mints its own object URLs from them. That is
+// the entire reason the control window does the reading: a permission dialog
+// on the projector, mid-setup, in front of a room, is not acceptable.
+//
+// src name -> { token, url }. Keyed by NAME, not by surface: two surfaces
+// pointing at the same clip share one object URL, which is also why revocation
+// lives here and not in teardownLayerContent - tearing down one of them must
+// not pull the URL out from under the other.
+const outputMediaUrls = new Map();
+
+// A tool left open for a whole setup, running video, cannot leak blob URLs:
+// each one pins its bytes in memory until revoked. So exactly one rule, in one
+// place - a URL is revoked the moment the map stops pointing at it, whether
+// because the file behind the name changed (new token) or because the name
+// left the set entirely (layer re-pointed, folder disconnected).
+function applyMediaMessage(entries) {
+  const seen = new Set();
+  let changed = false;
+
+  entries.forEach((entry) => {
+    if (!entry || typeof entry.src !== "string" || !entry.src) return;
+    if (!(entry.blob instanceof Blob)) return;
+    seen.add(entry.src);
+    const existing = outputMediaUrls.get(entry.src);
+    // Same file as last time: keep the live URL. Structured clone hands us a
+    // fresh Blob object on every message, so without the token comparison this
+    // branch would never be taken and every send would restart every video.
+    if (existing && existing.token === entry.token) return;
+    if (existing) URL.revokeObjectURL(existing.url);
+    outputMediaUrls.set(entry.src, { token: entry.token, url: URL.createObjectURL(entry.blob) });
+    changed = true;
+  });
+
+  for (const [src, rec] of outputMediaUrls) {
+    if (seen.has(src)) continue;
+    URL.revokeObjectURL(rec.url);
+    outputMediaUrls.delete(src);
+    changed = true;
+  }
+
+  if (changed) renderOutput();
+}
+
+// A name the control window resolved becomes a blob URL; a name it did not
+// stays exactly the string it is, and the browser resolves it against the
+// served directory the way it always has. Every mapping that opens today still
+// opens, with no folder chosen at all.
+function resolveMediaUrl(src) {
+  const rec = src ? outputMediaUrls.get(src) : null;
+  return rec ? rec.url : src;
+}
+
+// =========================================================================
 // LAYER ELEMENT FACTORIES (video / image / pattern)
 // =========================================================================
 
-function createVideoLayerElement(layer, surface) {
+function createVideoLayerElement(layer, surface, url) {
   const video = document.createElement("video");
   video.className = "layer-video";
-  video.src = layer.src || "";
+  video.src = url || "";
   video.muted = true;
   video.playsInline = true;
   video.loop = true; // sensible live default for a spike (no scripted stop point)
@@ -2996,9 +3494,13 @@ function createVideoLayerElement(layer, surface) {
   return wrapMediaWithFailureNote(video, surface, layer, "video");
 }
 
-function createImageLayerElement(layer, surface) {
-  const src = layer.src || "";
-  if (/\.webm$/i.test(src)) {
+function createImageLayerElement(layer, surface, url) {
+  // The overlay test reads the NAME. A blob URL carries no extension, so
+  // testing `url` here would silently demote every alpha-webm overlay to a
+  // still <img> the moment a media folder was connected.
+  const name = layer.src || "";
+  const src = url || "";
+  if (/\.webm$/i.test(name)) {
     // Alpha WebM (VP9 transparency, Chrome-only): the v2.2 AI-animation
     // overlay slot. An overlay authored against the show timeline needs to
     // start at the same instant as everything else, so it joins the shared

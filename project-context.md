@@ -169,6 +169,27 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23: `v1.1.0` — one shape, many fills.** The unification, built the same day it was
+  designed. **There is no keep-out**: there are shapes, `fill` is one of the layer types, and the
+  performer mask is a black-filled shape that queues in the z-order like everything else. A shape is
+  an **outline** (N points, min 3, edited identically everywhere) plus a **content frame** (four
+  corners, what the warp needs) when it carries something. Two details worth keeping:
+  **the outline/frame linkage is read off the geometry rather than remembered**, so a plain quad
+  behaves exactly as v1.0.0 did — one drag moves one point, one set of handles — and adding a point
+  then deleting it puts them back together on its own. And **the clip lives on an untransformed
+  full-frame parent**, so the outline goes on as output pixels exactly as stored, with no inverse
+  homography to keep in step with the forward one. **Schema v8**: old `keepOuts` migrate to fill
+  shapes at the *end* of `surfaces`, because list order is paint order and the end is where "above
+  everything" now lives — which is what makes the migration byte-identical. **Adopt boundaries is now
+  available on every shape**, not only fills: on a video shape it clips an animation to a real
+  object's silhouette. Verified against painted pixels with v1.0.0 served side by side: a v7 mapping
+  paints a **byte-identical frame, 0 differing pixels**; adding an outline point removes content and
+  changes nothing else, on a pattern, a real `<img>` and a real `<video>`; margin growth exact
+  (0.05 → 40px, 0.15 → 120px); text containment holds across **420** quad/size/aspect/content
+  combinations. **Open, and not reproduced:** the "Pick file…" appearing on layer types that cannot
+  use it. Measured against v1.0.0 the panel already restricted it correctly. It was made *structural*
+  anyway — built inside the video/image branch so it cannot appear elsewhere — but if Jorge can
+  place where he actually saw it, that is a different bug and still open.
 - **2026-08-23: `v1.0.0` tagged.** Four PRs, all squash-merged; umbrella pointer `7bc46f7` at the
   tag; repo stays private and the website gate stays shut. **#9 — text stops inheriting the quad's
   stretch (schema v7).** Containment stayed structural: the layout box is widened by the quad's
@@ -1177,6 +1198,88 @@ Deferred by name, so none of it reads as forgotten: the `fit` option, alpha-WebM
 and the hand-test of transport sync, the `field`, SP JSON as a text source, multi-region animation
 content, hand-drawn keep-outs for objects that cast no shadow, live silhouette tracking, the
 Pregonero integration (P2), and context-awareness (parked, below).
+
+## v2 backlog — from Jorge's first real use of v1.0.0 (2026-08-23)
+
+Written after an extended hands-on session at the wall. Jorge's verdict on the release: *"this
+rocks."* Everything below is a finding from use, not a design guess.
+
+### The big one: one shape, many fills — MOVED INTO v1 by Jorge, 2026-08-23
+
+**Jorge's cut, after testing:** there is no keep-out shape. You start a shape and choose its type,
+and one of the types is **a colour-filled shape**. Separately, **every** shape gains an option to
+**adopt the boundaries of a thing on stage**, captured as one frame with the thing and one without.
+The performer mask is then just a black-filled shape that adopted a silhouette — a use of two
+general features rather than a primitive of its own.
+
+Consequence worth naming, because it is what makes the feature honest: **the capture detects a
+difference, so the thing must be absent from one of the two frames.** It finds a person who walks
+in, or an object placed and removed. It cannot find a painting that was on the wall the whole time.
+And the shadow rule is unchanged for anything standing out from the wall: trace the shadow, not the
+body, because the camera and the lens disagree about where a body is and never about where its
+shadow is.
+
+**Jorge, after testing: "I see little value in treating the keep-out as something other than a shape
+filled with black."** He is right about the model, and the technical objection that produced the
+split survives inside his version rather than against it.
+
+The split existed because **content warping needs exactly four corners** — a homography maps a
+square onto a quad, and a seven-point polygon has no homography. A keep-out carries no content, so
+it needed none, which made "not a surface" the cheap answer. That was correct engineering and the
+wrong user model: from the hand holding the mouse, everything on that wall is a shape, and the only
+difference is what is inside it.
+
+**The unification that works: a shape is an outline plus, when it carries content, a frame.**
+
+- Every shape has an **outline**: N points, minimum 3, editable everywhere the same way.
+- A shape carrying video, image or text also has a **content frame**: four corners, which is what
+  the warp uses.
+- A new shape starts as a square where outline and frame are the same four points. Adding points
+  moves the outline away from the frame, and the content is warped by the frame and **clipped** to
+  the outline.
+- **Black is just another fill.** The keep-out stops being a separate primitive and becomes a shape
+  whose fill is black — which also means it takes part in z-order like everything else, instead of
+  being pinned above everything by a rule.
+
+What this dissolves, all reported as separate complaints in the same session: the polygon missing
+from the shape toolbox; point editing behaving differently in two places; black shapes being outside
+the ordering model; and "can I have a polygon text shape" (yes, with the caveat that clipping cuts
+words, so a lyric still wants a frame-shaped region).
+
+Not free — it is a real refactor of the shape model — but it replaces two concepts with one, and the
+concept it keeps is the one Jorge already has in his head.
+
+### Fix before v2, small
+
+- **Points that overlap can be dragged apart on a surface but not on a keep-out.** Same gesture,
+  two behaviours, and the keep-out is the one that gets fiddly outlines.
+- **"Pick file…" is offered on layer types that cannot use it.** It should be unavailable unless the
+  layer is video or image.
+
+### UX, deliberately deferred to v2
+
+- ~~**Right angles want help.**~~ **Dropped by Jorge, 2026-08-23**, and correctly: "square in the
+  projector's image" is not square on the wall, so a magnet toward 90° would fight a good mapping
+  exactly when the projector sits off to one side and the correct shape is a trapezoid. Revisit only
+  if the gap between what the camera sees and what the projector paints is ever properly corrected.
+- **Simplify the sidebar**: group functions, use icons. The text layer's options in particular eat
+  the panel.
+- **Less explanatory prose.** The hints were written for a tool nobody had used. Somebody has used
+  it now.
+- **Drag to reorder z-order**, instead of the ▲/▼ arrows. Pregonero already uses `@dnd-kit`, so
+  there is a house precedent.
+
+### One media folder: keep it, and say so
+
+The constraint is correct and the copying it forces is the point: **a gig has one bag of stuff.**
+Everything for tonight in one folder means the folder plus the configuration is portable to any
+machine. Several folders would force the configuration to record *where* each file lives, which
+turns a list of names into a list of locations and breaks the property that makes it portable.
+
+The real cost is duplication, irrelevant for logos and not irrelevant for animation masters, given
+`animations/` is 66 GB. **Untested and worth five minutes: whether a symlink inside the chosen
+folder resolves through the File System Access API.** If it does, a gig folder can be a folder of
+pointers and the cost disappears. **Make the one-folder rule explicit in the README** either way.
 
 ## Context-awareness: parked 2026-08-22, and what survives the parking
 

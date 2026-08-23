@@ -169,6 +169,23 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23: the keep-out polygon shipped, and its suggestion has never seen a wall.** PR #5,
+  squash-merged as `e465a7e`. **Schema v5**: `keepOuts` is its own top-level array — no layer, no
+  z-order, no four-corner constraint, and no surface machinery reaching it. All three preview hit
+  layers (body, edges, points) go through `beginPreviewDrag()`, so the v2.1 drag bug cannot recur
+  here. Margin is an SVG stroke rather than computed geometry, and **SVG centres a stroke on its
+  path, so the shape grows outward by half the slider's value** (see the follow-up below). The
+  shadow suggestion's difference is **signed — only pixels that got darker count** — which discards
+  most of what auto-exposure does when a body walks into a bright frame, for free. Countdown seconds
+  and threshold are control-local and deliberately **not persisted**: they describe one room's light,
+  not the venue's geometry, so they would be wrong inside the file this tool exists to produce.
+  Verified at 100 assertions in real headed Chrome, including dilation checked against Chrome's own
+  `isPointInStroke` around a deliberately thin spur. **What is not proven: the optical loop.** The
+  build machine has no video input device at all, so `getUserMedia` was handed a canvas
+  `MediaStream`; everything downstream is the shipping path, and the traced ring landed within 0.003
+  of the homography-mapped figure in output space, which proves it stores output coordinates rather
+  than raw camera ones. See "The four things only a wall can answer" below. The README says plainly
+  that the suggestion has never run against a real wall, so the doc does not out-claim the code.
 - **2026-08-23: strip pass done — the beat layer is gone.** Merged as `14ec208` (PR #4,
   `refactor(mapper)!: remove the beat layer`); umbrella pointer `2b766b9`. Out: the beat layer, its
   renderer and canvas, `beatMode`, `bpm` in all four default-layer constructions, the whole
@@ -868,10 +885,60 @@ points onto them by hand. What is next-version is anything smarter than that.
 
 1. ~~**Strip pass**~~ **done 2026-08-23** (`14ec208`) — beat layer, `beatMode`, `bpm`, the beat
    anchor and `_smoke.html`, with a schema bump to v4.
-2. **Polygon shape** with the margin slider and the shadow suggestion — one feature.
-3. **Text layer.**
-4. **Brutalist restyle**, control window only.
-5. **Tag `v1.0.0`**, repo private, website gate shut.
+2. ~~**Polygon shape** with the margin slider and the shadow suggestion~~ **done 2026-08-23**
+   (`e465a7e`, schema v5). The suggestion still needs its first wall.
+3. **Media folder via the File System Access API** — added to v1 on 2026-08-23, see "The media
+   model" below.
+4. **Text layer.**
+5. **Brutalist restyle**, control window only.
+6. **Tag `v1.0.0`**, repo private, website gate shut.
+
+### The four things only a wall can answer
+
+The shadow suggestion is code-complete and optically unproven. In order, at the wall:
+
+1. **Does frame A catch a settled white wall**, or is the camera still stopping down at 900 ms? A
+   trace that comes back as noise across the whole frame is this.
+2. **Does the countdown clear the wall inside 300 ms?** Projectors add their own latency on top of
+   the browser's.
+3. **Is the shadow's contrast above threshold 22** at real projector brightness? The slider exists
+   precisely because this could not be calibrated at the desk.
+4. **Does the traced shape land on the shadow, not offset toward the body?** That is the whole rule,
+   and the wall is the only place it can be confirmed.
+
+### The media model
+
+**Decided 2026-08-23, and shipping in v1.** No media is part of the app, at build time or at
+runtime. The user keeps media wherever it lives on their computer and **Muralista becomes aware of
+that location** through Chrome's **File System Access API**: pick a folder once, the browser hands
+over a durable handle, the app remembers it across sessions in IndexedDB.
+
+The constraint that shapes the design: **a browser page cannot read an arbitrary path.** "Aware of a
+location" therefore means a granted handle, never a string like `/Users/jorge/Pictures`.
+
+Three calls made up front:
+
+- **The venue file stores names, never handles.** A directory handle is a browser object and cannot
+  live in a JSON that gets read, diffed and handed to Pregonero. The file says `logo.png`; where that
+  resolves is the remembered folder. This preserves the property that makes the venue file worth
+  having, and that separates it from TouchDesigner: **it names things, it does not contain them.**
+- **The output window never asks for permission.** It sits on the projector, and a permission prompt
+  on the wall mid-setup is unacceptable. The July note that "blob URLs do not survive a
+  BroadcastChannel" is true and was half the picture: **Blobs themselves do survive structured
+  clone**, without copying bytes. So the control window owns the folder, reads the file, posts the
+  Blob, and the output makes its own object URL. Exactly one window touches the file system.
+- **The served-directory path stays as a fallback.** With no folder picked, or permission lapsed,
+  media resolves relative to the served directory as it does today. `python3 -m http.server` keeps
+  working, existing mappings keep opening, and a denied permission is a degraded mode rather than a
+  dead tool.
+
+Sequenced after the polygon and before the text layer: it touches every media path, so doing it
+after the restyle would mean restyling twice, and the text layer touches no media at all.
+
+Consequence worth stating: **the Chango Pepper logo needs no special treatment.** It is one more file
+in the media location — not committed, not an exception. Projecting it onto a small surface beside
+the animation is a real v1 use case that needs nothing built, though it should be given a quad at its
+own proportions, since v1 still stretches content to fill.
 
 Deferred by name, so none of it reads as forgotten: the `fit` option, alpha-WebM animation overlays
 and the hand-test of transport sync, the `field`, SP JSON as a text source, multi-region animation

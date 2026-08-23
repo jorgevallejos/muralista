@@ -77,6 +77,19 @@
           <div id="layer-panel" class="layer-panel"></div>
         </div>
 
+        <!-- Keep-outs: a separate list from the surfaces above, because a
+             keep-out is a separate primitive - a polygon in output space that
+             holds black, with no layer, no z-order and no four-corner
+             constraint. See KEEP-OUTS in mapper.js. -->
+        <div class="sidebar-section">
+          <div class="sidebar-header">
+            <h2>Keep-outs</h2>
+            <button id="btn-add-keepout" type="button">+ Add keep-out</button>
+          </div>
+          <ul id="keepout-list" class="surface-list"></ul>
+          <div id="keepout-panel" class="layer-panel"></div>
+        </div>
+
         <div class="sidebar-section">
           <div class="sidebar-header">
             <h2>Backdrop</h2>
@@ -128,6 +141,10 @@
                this element exists in the control role and nowhere else. -->
           <video id="preview-camera" class="preview-camera" autoplay muted playsinline hidden></video>
           <svg id="preview-svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid meet"></svg>
+          <!-- Countdown for "Suggest from my shadow", shown here as well as
+               on the wall: the performer reads it off the wall, but whoever
+               is still at the desk should see the same number. -->
+          <div id="preview-countdown" class="preview-countdown" hidden></div>
         </div>
       </main>
     </div>
@@ -138,10 +155,21 @@
     <!-- Per-surface matrix3d-warped wrapper divs land here (see WARP / OUTPUT
          RENDERING in mapper.js). Replaces the slice-1 SVG placeholder. -->
     <div id="output-surfaces" class="output-surfaces"></div>
+    <!-- Keep-outs: black polygons that paint above EVERY surface wrapper,
+         regardless of list order. A sibling after #output-surfaces, so paint
+         order alone puts them on top - no z-index, no interaction with the
+         surface reconciler. Deliberately BEFORE #output-white: the white
+         plate must stay a clean plate, or the shadow suggestion would be
+         tracing a shadow through its own mask. -->
+    <svg id="output-keepouts" class="output-keepouts" preserveAspectRatio="none"></svg>
     <!-- White-field helper: a full-frame white plate the control window can
          raise, so the projector's lit rectangle is visible while the camera
          backdrop's calibration corners are placed. -->
     <div id="output-white" class="output-white" hidden></div>
+    <!-- Countdown plate: ABOVE the white field so it is legible on it. It is
+         removed outright before the second capture - neither captured frame
+         may contain it, which is what the settle after it exists for. -->
+    <div id="output-countdown" class="output-countdown" hidden></div>
     <!-- Identify overlay: unwarped screen-space labels at each surface's
          centroid, shown briefly in response to a broadcast 'identify'. -->
     <div id="output-identify" class="output-identify"></div>

@@ -1163,7 +1163,7 @@ function referencedMediaNames() {
 }
 
 function mediaNamesKey(names) {
-  return Array.from(names).sort().join(" ");
+  return Array.from(names).sort().join("\u0000");
 }
 
 // "clips/pig.mp4" -> walk getDirectoryHandle for every segment but the last.

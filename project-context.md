@@ -169,6 +169,18 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23: media lives where the user keeps it.** PR #7, squash-merged as `46c0ca3`; umbrella
+  `2077bdc`. Also `fd9abcb` (PR #6) earlier the same day, making the keep-out margin mean the growth
+  rather than half of it, since SVG centres a stroke on its path. All three media calls hold:
+  `PROJECT_VERSION` stays **5** because a folder handle is not a schema fact, the output window opens
+  no database and raises no dialog, and the served-path fallback keeps a denied permission a degraded
+  mode. Object URLs are revoked in one place, keyed by name, so two surfaces sharing a clip cannot
+  pull it from under each other. One change made beyond the brief and approved after the fact: with a
+  folder connected, "Pick file…" writes a **bare filename** instead of `media/<name>`, because the
+  old prefix would emit a name that cannot resolve from the folder it was just picked from. **Two
+  ceilings, stated rather than papered over:** `showDirectoryPicker` opens an OS dialog no harness
+  can drive, and autoplay could not be confirmed because the automation pane always reports itself
+  hidden, so transport-through-a-blob-URL is hand-untested. Both belong to the studio checklist.
 - **2026-08-23: the keep-out polygon shipped, and its suggestion has never seen a wall.** PR #5,
   squash-merged as `e465a7e`. **Schema v5**: `keepOuts` is its own top-level array — no layer, no
   z-order, no four-corner constraint, and no surface machinery reaching it. All three preview hit
@@ -887,8 +899,8 @@ points onto them by hand. What is next-version is anything smarter than that.
    anchor and `_smoke.html`, with a schema bump to v4.
 2. ~~**Polygon shape** with the margin slider and the shadow suggestion~~ **done 2026-08-23**
    (`e465a7e`, schema v5). The suggestion still needs its first wall.
-3. **Media folder via the File System Access API** — added to v1 on 2026-08-23, see "The media
-   model" below.
+3. ~~**Media folder via the File System Access API**~~ **done 2026-08-23** (`46c0ca3`). The
+   permission round trip is hand-untested; see the studio checklist.
 4. **Text layer.**
 5. **Brutalist restyle**, control window only.
 6. **Tag `v1.0.0`**, repo private, website gate shut.
@@ -905,6 +917,52 @@ The shadow suggestion is code-complete and optically unproven. In order, at the 
    precisely because this could not be calibrated at the desk.
 4. **Does the traced shape land on the shadow, not offset toward the body?** That is the whole rule,
    and the wall is the only place it can be confirmed.
+
+### The output model — proposed 2026-08-23, not yet decided
+
+Jorge's framing: *"I expect a configuration per song performance. Muralista doesn't operate in terms
+of gigs; each song is its unit of configuration."* Right about the artistic unit, and it is half the
+structure.
+
+**There are two lifetimes and only one of them is the song.** Applying the Venue Turn's own test:
+quad geometry, camera calibration, the keep-out around Jorge's shadow, where the doorway is — all
+invalidated by a different **room**, and unchanged by every song played in it. What goes on which
+region, and when, is invalidated by a different **song** and survives every room. If the song file
+is the only output, either each one carries a copy of the room's geometry (so remapping a room means
+rewriting twelve files) or the geometry lives nowhere. **The first is what actually happens, and it
+is how these formats rot.**
+
+**The move that makes the song-as-unit work: regions get names, and song files address names, never
+coordinates.** The room mapping says *region `board` is this quad, in this room*. The song
+arrangement says *cerdo plays on `board`, lyrics on `strip`, the logo on `cupboard`*. Same song in a
+new room: swap the mapping. Same room, new song: swap the arrangement. That is the lighting desk's
+patch-versus-cues split, and it is already the suite's shape, since **SP JSON is per song and knows
+nothing about rooms.**
+
+So Muralista's eventual output is **two documents linked by names**: a room mapping and a set of
+per-song arrangements. Jorge's unit of work stays the song; the geometry stops being copied around
+behind it.
+
+**Text and video shapes become placeholders, and that is the same idea arriving.** A region stops
+being "a thing with content in it" and becomes a **slot with a role**: this is where lyrics go, that
+is where the animation goes. Pregonero fills the slots at runtime from SP JSON. Muralista's own
+rendering of sample text and sample video is a *preview of a slot*, not the slot's contents.
+
+**The consequence to hold onto while the text layer is built, because it is free now and expensive
+later: a region's role and the sample content previewing it are two different facts.** If the file
+records only "this region shows `lyric-01.png`", nothing distinguishes *the lyric slot* from *an
+image someone happened to place*, and the day Pregonero reads it, every mapping is re-authored by
+hand.
+
+**Left deliberately open** for the Pregonero integration session: SP JSON is already "the document
+about performing this song", so a song's visual arrangement is on its face another section of it.
+But format ownership says exactly one tool may write each file, and Bombista writes SP JSON — so
+either the arrangement is its own file, or ownership becomes per-section, which the Venue Turn never
+contemplated.
+
+**None of this changes v1.** Do not design the format, earn it: v1 keeps emitting one file,
+studio-only. What this buys is knowing which seam to cut when a second room or a second song forces
+the question, and that the seam is **named regions**, not a bigger file.
 
 ### The media model
 

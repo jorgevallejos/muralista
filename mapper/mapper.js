@@ -36,11 +36,14 @@ const PREVIEW_H = 900;
 // REMOVED the layer field micReactivity and the beat layer's "mic" mode,
 // when the sound-reactive layer came out - Muralista is a desk tool and
 // never runs during a show, so a field describing how a layer answers a
-// live room has no executor here. This is NOT the "v1" in STORAGE_KEY -
-// that suffix is part of an address and never changes (see the guard
-// comment on STORAGE_KEY above). Older projects stay readable:
-// migrateProject() fills in what they predate and drops what they outlived.
-const PROJECT_VERSION = 3;
+// live room has no executor here. v4 (2026-08-23) REMOVED the beat layer
+// itself, along with beatMode and bpm: with mic mode gone it was a circle
+// pulsing at a fixed BPM, and nothing v1 does with a wall needs one. This
+// is NOT the "v1" in STORAGE_KEY - that suffix is part of an address and
+// never changes (see the guard comment on STORAGE_KEY above). Older
+// projects stay readable: migrateProject() fills in what they predate and
+// drops what they outlived.
+const PROJECT_VERSION = 4;
 
 function emptyProject() {
   return {
@@ -104,16 +107,19 @@ function migrateProject(obj) {
   if (typeof proj.cameraDeviceId !== "string") proj.cameraDeviceId = null;
   if (!isValidQuad(proj.cameraQuad)) proj.cameraQuad = null;
 
-  // v3: the sound-reactive layer is gone. Copy each surface (and its layer)
-  // rather than mutating in place - the object handed to us may be a parsed
-  // import the caller still holds. A v2 layer that opted into mic reactivity
-  // simply loses it; a beat layer left in "mic" mode falls back to the fixed
-  // BPM it was already carrying, so it keeps pulsing instead of going dark.
+  // v3: the sound-reactive layer is gone. v4: so is the beat layer. Copy
+  // each surface (and its layer) rather than mutating in place - the object
+  // handed to us may be a parsed import the caller still holds. A v2 layer
+  // that opted into mic reactivity simply loses it; a beat layer from v2/v3
+  // becomes a test pattern, which is the honest fallback - the surface stays
+  // on the wall and stays visible, it just stops pulsing.
   proj.surfaces = (Array.isArray(proj.surfaces) ? proj.surfaces : []).map((surface) => {
     if (!surface || typeof surface !== "object" || !surface.layer) return surface;
     const layer = Object.assign({}, surface.layer);
     delete layer.micReactivity;
-    if (layer.beatMode === "mic") layer.beatMode = "bpm";
+    delete layer.beatMode;
+    delete layer.bpm;
+    if (layer.type === "beat") layer.type = "pattern";
     return Object.assign({}, surface, { layer });
   });
 
@@ -137,7 +143,7 @@ function defaultSurface(index) {
       [0.65, 0.65],
       [0.35, 0.65],
     ],
-    layer: { type: "pattern", src: null, opacity: 1, bpm: 96 },
+    layer: { type: "pattern", src: null, opacity: 1 },
     visible: true,
   };
 }
@@ -282,7 +288,7 @@ function duplicateSurface(id) {
     corners: original.corners.map(([x, y]) => [x, y]),
     layer: original.layer
       ? JSON.parse(JSON.stringify(original.layer))
-      : { type: "pattern", src: null, opacity: 1, bpm: 96 },
+      : { type: "pattern", src: null, opacity: 1 },
     visible: original.visible,
   };
   project.surfaces.splice(idx + 1, 0, copy);
@@ -297,7 +303,7 @@ function duplicateSurface(id) {
 function setLayerType(id, type) {
   const surface = project.surfaces.find((s) => s.id === id);
   if (!surface) return;
-  surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1, bpm: 96 };
+  surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
   surface.layer.type = type;
   commitProjectChange();
 }
@@ -393,25 +399,8 @@ function broadcastTransport(action) {
 // until the next transport click. See handleControlMessage.
 let lastTransport = null;
 
-// Control -> output: the downbeat timestamp all beat layers phase-lock to,
-// so multiple beat surfaces pulse in sync. Re-anchored on every Play/Restart
-// (see handleTransportButton) and replied to any output's 'hello' so a
-// window opened mid-set still lands on the current phase.
-let controlBeatAnchorT0 = null;
-
-function broadcastBeatAnchor() {
-  if (controlBeatAnchorT0 == null) return;
-  channel.postMessage({ kind: "beatAnchor", t0: controlBeatAnchorT0, nonce: Date.now() });
-}
-
-// Wired to the header Play/Pause/Restart buttons. Play and Restart both
-// re-anchor the beat phase to "now" (that moment becomes the new downbeat)
-// before broadcasting the transport action itself.
+// Wired to the header Play/Pause/Restart buttons.
 function handleTransportButton(action) {
-  if (action === "play" || action === "restart") {
-    controlBeatAnchorT0 = Date.now();
-    broadcastBeatAnchor();
-  }
   lastTransport = action;
   broadcastTransport(action);
 }
@@ -456,7 +445,6 @@ function handleControlMessage(event) {
   if (msg.kind === "hello") {
     // A fresh output window just opened and wants the current state.
     broadcastState();
-    broadcastBeatAnchor(); // no-op if no anchor set yet (nothing has played)
     broadcastWhiteField(); // a reopened output must not come back with a stale plate
     if (lastTransport) {
       // Bring a late joiner up to speed on playback too - without this, an
@@ -487,8 +475,6 @@ function handleOutputMessage(event) {
     setOutputWhiteField(msg.on);
   } else if (msg.kind === "transport" && typeof msg.action === "string") {
     applyTransportAction(msg.action);
-  } else if (msg.kind === "beatAnchor" && typeof msg.t0 === "number") {
-    beatAnchorT0 = msg.t0;
   }
 }
 
@@ -1270,7 +1256,7 @@ function renderLayerPanel() {
     return;
   }
 
-  surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1, bpm: 96 };
+  surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
   const layer = surface.layer;
   const key = `${surface.id}:${layer.type}`;
 
@@ -1293,7 +1279,7 @@ function buildLayerPanel(container, surface, layer) {
   typeLabel.setAttribute("for", "layer-type-select");
   const typeSelect = document.createElement("select");
   typeSelect.id = "layer-type-select";
-  ["pattern", "video", "image", "beat"].forEach((t) => {
+  ["pattern", "video", "image"].forEach((t) => {
     const opt = document.createElement("option");
     opt.value = t;
     opt.textContent = t;
@@ -1354,63 +1340,10 @@ function buildLayerPanel(container, surface, layer) {
     if (layer.type === "image") {
       const webmHint = document.createElement("p");
       webmHint.className = "layer-hint";
-      webmHint.textContent = "A .webm source (alpha transparency, Chrome-only) is a transport-synced overlay: it joins Play/Pause/Restart like a video layer instead of autoplaying on its own, so it starts on the same downbeat.";
+      webmHint.textContent = "A .webm source (alpha transparency, Chrome-only) is a transport-synced overlay: it joins Play/Pause/Restart like a video layer instead of autoplaying on its own, so it starts with everything else.";
       container.appendChild(webmHint);
     }
 
-  }
-
-  // Beat: mode selector + BPM field. Only 'bpm' remains as of v3; beatMode
-  // defaults to 'bpm' everywhere it's read, so projects saved before the
-  // field existed - and v2 projects migrated off 'mic' - behave the same.
-  if (layer.type === "beat") {
-    const modeRow = document.createElement("div");
-    modeRow.className = "layer-field";
-    const modeLabel = document.createElement("label");
-    modeLabel.textContent = "Mode";
-    modeLabel.setAttribute("for", "layer-beatmode-select");
-    const modeSelect = document.createElement("select");
-    modeSelect.id = "layer-beatmode-select";
-    [
-      ["bpm", "BPM"],
-    ].forEach(([value, label]) => {
-      const opt = document.createElement("option");
-      opt.value = value;
-      opt.textContent = label;
-      modeSelect.appendChild(opt);
-    });
-    modeSelect.value = layer.beatMode || "bpm";
-    modeRow.append(modeLabel, modeSelect);
-    container.appendChild(modeRow);
-
-    const bpmRow = document.createElement("div");
-    bpmRow.className = "layer-field";
-    bpmRow.id = "layer-bpm-row";
-    bpmRow.hidden = (layer.beatMode || "bpm") !== "bpm";
-    const bpmLabel = document.createElement("label");
-    bpmLabel.textContent = "BPM";
-    bpmLabel.setAttribute("for", "layer-bpm-input");
-    const bpmInput = document.createElement("input");
-    bpmInput.type = "number";
-    bpmInput.id = "layer-bpm-input";
-    bpmInput.min = "20";
-    bpmInput.max = "300";
-    bpmInput.value = String(layer.bpm ?? 96);
-    bpmInput.addEventListener("input", () => {
-      const n = Number(bpmInput.value);
-      if (Number.isFinite(n) && n > 0) setLayerField(surface.id, "bpm", n);
-    });
-    bpmRow.append(bpmLabel, bpmInput);
-    container.appendChild(bpmRow);
-
-    // Wired after bpmRow exists: switching modes commits the change AND
-    // shows/hides the BPM field locally. With 'bpm' the only mode left in v3
-    // this select has one option and the row never hides, but the wiring is
-    // the seam a future mode arrives through, so it stays intact.
-    modeSelect.addEventListener("change", () => {
-      setLayerField(surface.id, "beatMode", modeSelect.value);
-      bpmRow.hidden = modeSelect.value !== "bpm";
-    });
   }
 
   // Opacity (all layer types).
@@ -1450,18 +1383,10 @@ function updateLayerPanelValues(container, layer) {
   const srcInput = container.querySelector("#layer-src-input");
   if (srcInput && active !== srcInput) srcInput.value = layer.src || "";
 
-  const bpmInput = container.querySelector("#layer-bpm-input");
-  if (bpmInput && active !== bpmInput) bpmInput.value = String(layer.bpm ?? 96);
-
   const opacityInput = container.querySelector("#layer-opacity-input");
   if (opacityInput && active !== opacityInput) opacityInput.value = String(layer.opacity ?? 1);
   const opacityValue = container.querySelector("#layer-opacity-value");
   if (opacityValue) opacityValue.textContent = Number(layer.opacity ?? 1).toFixed(2);
-
-  const modeSelect = container.querySelector("#layer-beatmode-select");
-  if (modeSelect && active !== modeSelect) modeSelect.value = layer.beatMode || "bpm";
-  const bpmRow = container.querySelector("#layer-bpm-row");
-  if (bpmRow) bpmRow.hidden = (layer.beatMode || "bpm") !== "bpm";
 }
 
 // =========================================================================
@@ -1665,16 +1590,15 @@ function initControl() {
 // section above for the homography math. Re-renders on every received
 // state and on window resize (wired in initOutput()).
 
-// Reconciliation map: surfaceId -> { wrapper, layerType, layerSrc, contentEl,
-// rafId, beatToken, bpm, hue }. renderOutput() runs on every received state
-// AND on every window resize (arrow-key nudges commit a state broadcast per
-// keystroke). Without this map, the old "container.innerHTML = ''; rebuild
-// everything" approach would tear down and recreate every <video>/beat
-// canvas on every single nudge or resize - restarting playback and losing
-// beat phase constantly, which is exactly wrong for calibrating WHILE video
-// plays. Now: the wrapper transform + layer opacity update every render: the
-// underlying video/image/canvas element only gets recreated when its
-// surface's layer.type or layer.src actually changes.
+// Reconciliation map: surfaceId -> { wrapper, layerType, layerSrc, contentEl }.
+// renderOutput() runs on every received state AND on every window resize
+// (arrow-key nudges commit a state broadcast per keystroke). Without this
+// map, the old "container.innerHTML = ''; rebuild everything" approach would
+// tear down and recreate every <video> on every single nudge or resize -
+// restarting playback constantly, which is exactly wrong for calibrating
+// WHILE video plays. Now: the wrapper transform + layer opacity update every
+// render: the underlying video/image/canvas element only gets recreated when
+// its surface's layer.type or layer.src actually changes.
 const outputSurfaceElements = new Map();
 
 function renderOutput() {
@@ -1760,11 +1684,6 @@ function renderOutputSurface(container, surface, w, h) {
       layerType: null,
       layerSrc: null,
       contentEl: null,
-      rafId: null,
-      beatToken: null,
-      bpm: null,
-      beatMode: "bpm", // live-read on reconcile, like bpm
-      hue: null,
     };
     outputSurfaceElements.set(surface.id, entry);
   }
@@ -1776,10 +1695,9 @@ function renderOutputSurface(container, surface, w, h) {
 // Renders (or reconciles) the content that lives inside a surface's warped
 // wrapper. Only recreates the content element when layer.type or layer.src
 // changed since the last render; otherwise just refreshes cheap properties
-// (opacity, and for 'beat', the live bpm the running rAF loop reads) on the
-// existing element so playback/animation state survives.
+// (opacity) on the existing element so playback state survives.
 function renderLayer(surface, entry) {
-  const layer = surface.layer || { type: "pattern", src: null, opacity: 1, bpm: 96 };
+  const layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
   const nextSrc = layer.src || null;
   const typeChanged = entry.layerType !== layer.type;
   const srcChanged = entry.layerSrc !== nextSrc;
@@ -1787,20 +1705,10 @@ function renderLayer(surface, entry) {
   if (typeChanged || srcChanged) {
     teardownLayerContent(entry); // pause/stop+detach whatever was there before
     entry.wrapper.innerHTML = "";
-    entry.contentEl = createLayerElement(surface, layer, entry);
+    entry.contentEl = createLayerElement(surface, layer);
     entry.wrapper.appendChild(entry.contentEl);
     entry.layerType = layer.type;
     entry.layerSrc = nextSrc;
-  }
-
-  if (layer.type === "beat") {
-    // Live value: the running rAF loop reads entry.bpm off the entry each
-    // frame, so a bpm edit takes effect without recreating the canvas.
-    // beatMode is carried alongside it - 'bpm' is the only mode as of v3, so
-    // nothing in the draw path branches on it, but the field stays the seam
-    // the mode select writes through.
-    entry.bpm = layer.bpm || 96;
-    entry.beatMode = layer.beatMode || "bpm";
   }
 
   if (entry.contentEl) {
@@ -1808,14 +1716,12 @@ function renderLayer(surface, entry) {
   }
 }
 
-function createLayerElement(surface, layer, entry) {
+function createLayerElement(surface, layer) {
   switch (layer.type) {
     case "video":
       return createVideoLayerElement(layer, surface);
     case "image":
       return createImageLayerElement(layer, surface);
-    case "beat":
-      return createBeatLayerElement(surface, layer, entry);
     case "pattern":
     default:
       return renderPatternLayer(surface);
@@ -1823,14 +1729,9 @@ function createLayerElement(surface, layer, entry) {
 }
 
 // Stops/detaches whatever content element (if any) currently lives in an
-// entry: pauses+releases a <video>, cancels a beat layer's rAF loop. Safe to
-// call on an entry with no content yet.
+// entry: pauses+releases a <video>. Safe to call on an entry with no
+// content yet.
 function teardownLayerContent(entry) {
-  if (entry.rafId != null) {
-    cancelAnimationFrame(entry.rafId);
-    entry.rafId = null;
-  }
-  entry.beatToken = null; // any in-flight rAF callback checks this and bails
   if (entry.contentEl) {
     // Media layers are a .layer-box wrapper with the <video>/<img> inside
     // (so a failure note can overlay them) - release any video found.
@@ -1913,7 +1814,7 @@ function applyTransportAction(action) {
 }
 
 // =========================================================================
-// LAYER ELEMENT FACTORIES (video / image / beat)
+// LAYER ELEMENT FACTORIES (video / image / pattern)
 // =========================================================================
 
 function createVideoLayerElement(layer, surface) {
@@ -1936,7 +1837,7 @@ function createImageLayerElement(layer, surface) {
   if (/\.webm$/i.test(src)) {
     // Alpha WebM (VP9 transparency, Chrome-only): the v2.2 AI-animation
     // overlay slot. An overlay authored against the show timeline needs to
-    // start on the same downbeat as everything else, so it joins the shared
+    // start at the same instant as everything else, so it joins the shared
     // transport exactly like a 'video' layer (registeredVideoEls + the
     // transportPlaying join-mid-playback pattern) rather than autoplaying on
     // its own. The type distinction between 'video' and alpha-webm 'image'
@@ -1958,69 +1859,6 @@ function createImageLayerElement(layer, surface) {
   img.src = src;
   img.alt = "";
   return wrapMediaWithFailureNote(img, surface, layer, "image");
-}
-
-function createBeatLayerElement(surface, layer, entry) {
-  const canvas = document.createElement("canvas");
-  canvas.width = UNIT_SIZE;
-  canvas.height = UNIT_SIZE;
-  canvas.className = "beat-canvas";
-  const ctx = canvas.getContext("2d");
-
-  entry.bpm = layer.bpm || 96;
-  entry.beatMode = layer.beatMode || "bpm"; // missing field (old projects) -> bpm
-  entry.hue = surfaceHue(surface);
-
-  // A fresh token per (re)start; the loop bails as soon as it no longer
-  // matches entry.beatToken, i.e. the moment this layer gets torn down or
-  // replaced - avoids a stray rAF callback drawing into a detached canvas.
-  const token = {};
-  entry.beatToken = token;
-
-  function frame() {
-    if (entry.beatToken !== token) return;
-    drawBeatFrame(ctx, entry.bpm, entry.hue);
-    entry.rafId = requestAnimationFrame(frame);
-  }
-  entry.rafId = requestAnimationFrame(frame);
-
-  return canvas;
-}
-
-// Module-level default: until a 'beatAnchor' broadcast arrives, phase from
-// the moment this output window loaded (same-machine clocks, Date.now() is
-// fine per kickoff - no NTP-grade sync needed for a spike).
-let beatAnchorT0 = Date.now();
-
-function beatPhase(bpm) {
-  const periodMs = 60000 / (bpm || 96);
-  return ((Date.now() - beatAnchorT0) % periodMs) / periodMs; // 0..1, wraps every beat
-}
-
-// Simple radial pulse: a ring expands from center and fades out over one
-// beat period, plus a soft core glow, in the surface's own hue so multiple
-// beat surfaces read as distinguishable even though they share phase.
-function drawBeatFrame(ctx, bpm, hue) {
-  const phase = beatPhase(bpm);
-  const mid = UNIT_SIZE / 2;
-  const maxR = UNIT_SIZE * 0.45;
-
-  ctx.fillStyle = `hsl(${hue}, 55%, 6%)`;
-  ctx.fillRect(0, 0, UNIT_SIZE, UNIT_SIZE);
-
-  const glow = ctx.createRadialGradient(mid, mid, 0, mid, mid, maxR * 0.4);
-  glow.addColorStop(0, `hsla(${hue}, 90%, 70%, ${0.55 * (1 - phase)})`);
-  glow.addColorStop(1, "hsla(0, 0%, 0%, 0)");
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(mid, mid, maxR * 0.4, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(mid, mid, Math.max(maxR * phase, 1), 0, Math.PI * 2);
-  ctx.strokeStyle = `hsla(${hue}, 90%, 65%, ${1 - phase})`;
-  ctx.lineWidth = 16 * (1 - phase * 0.6);
-  ctx.stroke();
 }
 
 // 1000x1000 canvas: numbered grid + brighter center crosshair + the

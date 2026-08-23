@@ -506,8 +506,7 @@ body.role-output {
   transform-origin: 0 0;
 }
 
-.pattern-canvas,
-.beat-canvas {
+.pattern-canvas {
   display: block;
   width: 100%;
   height: 100%;

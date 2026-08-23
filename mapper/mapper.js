@@ -780,12 +780,11 @@ function handleOutputMessage(event) {
 //
 //   1. THE VENUE FILE STORES NAMES, NEVER HANDLES. A directory handle is a
 //      browser object; it cannot live in a JSON that gets read, diffed, and
-//      eventually handed to Pregonero. So the project keeps saying
-//      "cerdo.mp4", and the handle is held here, outside it. This is why the
-//      media folder needed NO schema change: PROJECT_VERSION stays 5, and a
-//      mapping exported from a machine with a folder chosen opens on a
-//      machine without one. (Remembering the handle across sessions is the
-//      next commit; for now the folder lasts as long as the tab does.)
+//      eventually handed to Pregonero. So the handle lives in IndexedDB, keyed
+//      to this origin, and the project keeps saying "cerdo.mp4". This is why
+//      the media folder needed NO schema change: PROJECT_VERSION stays 5, and
+//      a mapping exported from a machine with a folder chosen opens on a
+//      machine without one.
 //   2. THE SERVED-DIRECTORY PATH STAYS AS A FALLBACK. No folder chosen,
 //      permission not granted, or the name simply not in the folder - the name
 //      goes to the output unresolved and the browser does what it does today.
@@ -793,11 +792,20 @@ function handleOutputMessage(event) {
 //   3. NONE OF THIS RUNS IN THE OUTPUT ROLE. Every function below is reached
 //      only from initControl() and from control-window clicks.
 
+const MEDIA_DB_NAME = "muralista";
+const MEDIA_DB_STORE = "handles";
+const MEDIA_FOLDER_KEY = "mediaFolder";
+
 // The chosen folder, if any, and what we are allowed to do with it:
 //   "unsupported" - not Chrome (no showDirectoryPicker); the control is hidden
 //                   and every name falls back, silently.
 //   "none"        - no folder chosen.
 //   "granted"     - handle in hand, read permission live. Names resolve.
+//   "reconnect"   - handle in hand, permission is "prompt" or "denied". We do
+//                   NOT ask: requestPermission needs a user gesture, and an
+//                   unprompted dialog on load is precisely the behaviour this
+//                   feature exists to avoid. The sidebar offers a button and
+//                   lets the click carry the gesture.
 let mediaFolderHandle = null;
 let mediaFolderState = "none";
 
@@ -822,6 +830,49 @@ function mediaFolderSupported() {
 
 function mediaFolderLabel() {
   return mediaFolderHandle ? mediaFolderHandle.name : null;
+}
+
+// --- IndexedDB: one store, one key, holding one handle. localStorage would be
+// the obvious neighbour of STORAGE_KEY, but it stores strings and a directory
+// handle is not one - IndexedDB is the only web storage that structured-clones
+// a FileSystemDirectoryHandle, so this is a constraint, not a preference.
+
+function openMediaDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(MEDIA_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(MEDIA_DB_STORE)) {
+        req.result.createObjectStore(MEDIA_DB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function mediaDbRequest(mode, run) {
+  return openMediaDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(MEDIA_DB_STORE, mode);
+        const req = run(tx.objectStore(MEDIA_DB_STORE));
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+        tx.oncomplete = () => db.close();
+      })
+  );
+}
+
+function readStoredFolderHandle() {
+  return mediaDbRequest("readonly", (store) => store.get(MEDIA_FOLDER_KEY));
+}
+
+function writeStoredFolderHandle(handle) {
+  return mediaDbRequest("readwrite", (store) => store.put(handle, MEDIA_FOLDER_KEY));
+}
+
+function clearStoredFolderHandle() {
+  return mediaDbRequest("readwrite", (store) => store.delete(MEDIA_FOLDER_KEY));
 }
 
 // --- Resolution.
@@ -943,19 +994,68 @@ async function chooseMediaFolder() {
   }
   mediaFolderHandle = handle;
   mediaFolderState = "granted"; // the pick itself grants read for this session
+  try {
+    await writeStoredFolderHandle(handle);
+  } catch (err) {
+    // The folder still works for this session; only the round trip across a
+    // browser restart is lost. Say so rather than pretending it persisted.
+    console.warn("Muralista: could not remember the media folder.", err);
+  }
+  await refreshMediaForFolderChange();
+}
+
+// The "prompt" branch, run from a click so the gesture is real. Chrome answers
+// "denied" immediately for a folder the person has blocked; that stays a
+// reconnect state rather than becoming an error, because choosing the folder
+// again is the way out and the button is right there.
+async function reconnectMediaFolder() {
+  if (!mediaFolderHandle) return;
+  try {
+    const perm = await mediaFolderHandle.requestPermission({ mode: "read" });
+    mediaFolderState = perm === "granted" ? "granted" : "reconnect";
+  } catch (err) {
+    console.warn("Muralista: reconnecting the media folder failed.", err);
+    mediaFolderState = "reconnect";
+  }
   await refreshMediaForFolderChange();
 }
 
 async function clearMediaFolder() {
   mediaFolderHandle = null;
   mediaFolderState = "none";
+  try {
+    await clearStoredFolderHandle();
+  } catch (err) {
+    console.warn("Muralista: could not forget the media folder.", err);
+  }
   await refreshMediaForFolderChange();
 }
 
-// Boot. Nothing to restore yet - the folder lasts as long as the tab - so this
-// only settles whether the control is offered at all.
+// Boot. Reads the handle back and ASKS what we are allowed to do with it -
+// query, never request. This is the round trip the whole feature is for: close
+// Chrome entirely, reopen, and a folder that is still granted just works with
+// no dialog anywhere.
 async function initMediaFolder() {
-  if (!mediaFolderSupported()) mediaFolderState = "unsupported";
+  if (mediaFolderSupported()) {
+    try {
+      const handle = await readStoredFolderHandle();
+      if (handle) {
+        mediaFolderHandle = handle;
+        const perm = await handle.queryPermission({ mode: "read" });
+        mediaFolderState = perm === "granted" ? "granted" : "reconnect";
+      }
+    } catch (err) {
+      console.warn("Muralista: could not read the saved media folder.", err);
+      mediaFolderHandle = null;
+      mediaFolderState = "none";
+    }
+    if (mediaFolderState === "granted") {
+      await syncResolvedMedia();
+      broadcastMedia();
+    }
+  } else {
+    mediaFolderState = "unsupported";
+  }
   // One exit, and it re-renders the whole control: the folder decides the
   // media section's contents AND the layer panel's src label, so a branch that
   // refreshed only the former would leave the latter describing a folder that
@@ -1120,17 +1220,24 @@ function renderMediaFolderControls() {
   section.hidden = false;
 
   const chooseBtn = document.getElementById("btn-media-folder");
+  const reconnectBtn = document.getElementById("btn-media-folder-reconnect");
   const clearBtn = document.getElementById("btn-media-folder-clear");
   const status = document.getElementById("media-folder-status");
   const failures = document.getElementById("media-folder-failures");
 
   const label = mediaFolderLabel();
   chooseBtn.textContent = label ? "Change folder…" : "Choose folder…";
+  reconnectBtn.hidden = mediaFolderState !== "reconnect";
   clearBtn.hidden = !label;
 
   if (mediaFolderState === "granted" && label) {
     const n = resolvedMedia.size;
     status.textContent = `${label} — connected. ${n} source${n === 1 ? "" : "s"} resolving from it.`;
+  } else if (mediaFolderState === "reconnect" && label) {
+    // Deliberately not phrased as an error: nothing is broken, the tool is in
+    // its degraded mode and one click restores it. Saying what happens
+    // meanwhile matters more than saying what went wrong.
+    status.textContent = `${label} — remembered, but Chrome needs your permission again before it can be read. Sources fall back to the served directory until you reconnect.`;
   } else {
     status.textContent = "No folder chosen — sources resolve next to the served page, as they always have.";
   }
@@ -3009,6 +3116,7 @@ function wireControlEvents() {
   // requestPermission both require a user gesture, and that requirement is the
   // feature, not an obstacle around it.
   document.getElementById("btn-media-folder").addEventListener("click", chooseMediaFolder);
+  document.getElementById("btn-media-folder-reconnect").addEventListener("click", reconnectMediaFolder);
   document.getElementById("btn-media-folder-clear").addEventListener("click", clearMediaFolder);
 }
 
@@ -3028,6 +3136,9 @@ function initControl() {
 
   renderControl();
 
+  // Async and deliberately un-awaited: reading the handle back out of
+  // IndexedDB must not hold up the first paint of a mapping that is already in
+  // localStorage. It re-renders itself when it lands.
   initMediaFolder();
 }
 

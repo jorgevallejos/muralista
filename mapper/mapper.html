@@ -128,8 +128,12 @@
               <button id="btn-white-field" type="button" title="Make the output window paint a full white frame, so the projector&#39;s lit rectangle is visible">Show white</button>
             </div>
             <div class="backdrop-controls">
+              <!-- Populated whether or not a stream is running (see
+                   populateCameraDeviceList): without a granted permission the
+                   labels are blank, which is still a menu you can pick from
+                   and still a way out of a remembered camera that has gone. -->
               <select id="select-camera-device" disabled>
-                <option value="">Enable the camera to list inputs</option>
+                <option value="">Looking for cameras&hellip;</option>
               </select>
             </div>
             <div class="backdrop-controls">

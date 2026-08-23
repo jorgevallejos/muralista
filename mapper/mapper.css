@@ -495,11 +495,20 @@ button.danger:hover {
   color: var(--text-dim);
 }
 
+/* Two lines: what went wrong, named, and what to do about it. `pre-line` so
+   the name stays on its own line and reads at a glance in a dark room. */
 .camera-status {
   margin: 0 16px 8px;
   font-size: 11px;
   line-height: 1.4;
+  white-space: pre-line;
   color: var(--danger);
+}
+
+/* A substitution is news, not a fault - the tool recovered and is saying so.
+   Red here would spend the danger colour on something that is working. */
+.camera-status.note {
+  color: var(--warn);
 }
 
 /* Which folder is connected, and how many sources come out of it. Dim, not

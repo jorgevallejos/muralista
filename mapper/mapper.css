@@ -693,10 +693,23 @@ body.role-output {
    is not decoration. */
 .layer-text {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  /* Unstretched defaults. mapper.js overrides width, padding and transform
+     per surface: the box is laid out as wide as the quad's stretch calls for
+     and counter-scaled back onto the unit square, which takes that stretch out
+     of the letterforms while leaving the fit measuring a space that still
+     means "the quad". See TEXT ASPECT in mapper.js.
+     Right/bottom are deliberately not set - an `inset: 0` here would
+     over-constrain the explicit width. */
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center; /* vertically centred, always - not a control */
   box-sizing: border-box; /* the inset is padding, set in px by mapper.js */
+  /* The counter-scale must pivot on the box's own top-left for that mapping
+     to be exact; the default 50% 50% would leave it centred but offset. */
+  transform-origin: 0 0;
 }
 
 .layer-text-inner {

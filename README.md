@@ -17,7 +17,7 @@ The counterpart to that: **Muralista maps, but it does not perform.** Working ou
 - **Built and verified at a real projector** (2026-07-02): corner-pin warp sits flush on a physical box, an animation plays across several surfaces at once, alpha compositing works at the wall.
 - **Never played a room.** It has been driven at a wall in a studio, never during a show with an audience in front of it. This is why Muralista is deliberately **not** promoted on [changopepper.com/tramoya](https://changopepper.com/tramoya) — the suite's rule is that everything on that page has done real work, and this has not yet.
 - **Keep-outs landed 2026-08-23**, with the shadow suggestion. Verified in real headed Chrome against painted geometry and decoded pixels — but **the suggestion has never been run against a real wall.** Its optical loop (a camera actually seeing the projected plate, the countdown clearing off the wall, a real body's shadow under real auto-exposure) was driven with a synthetic camera feed, because it is the one part that a desk cannot stand in for. Treat the first venue run as the real test of it; the shape it hands back is meant to be coarse either way.
-- **The text layer landed 2026-08-23**, replacing the lyric PNGs the studio session had been faking with. Verified in real headed Chrome against painted geometry: the catalogue's longest entry cannot overflow its quad at any slider setting, at every quad shape it was tried on including a deliberately narrow one, and a quad redrawn smaller with a real mouse rescales its text with it to within 0.02%. **Never read off a wall.** Its legibility choices — stroke weight, shadow, how big is big enough — were judged on a monitor, and the room they are for is a dark one seen from the back.
+- **The text layer landed 2026-08-23**, replacing the lyric PNGs the studio session had been faking with, and **stopped inheriting the quad's stretch** the same day. Verified in real headed Chrome against painted pixels: the catalogue's 81-character worst case cannot overflow its quad at any combination of maximum size and letter width, across eight quad shapes including keystones and a deliberately narrow column; a quad redrawn smaller with a real mouse rescales its text with it and does not refit at all; and glyph proportions measured in a 9.6:1 strip, a 0.26:1 column and a square all come out identical to the font's natural proportions to four decimal places. **Never read off a wall.** Its legibility choices — stroke weight, shadow, how big is big enough, and now whether the corrected letters actually read better — were judged on a monitor, and the room they are for is a dark one seen from the back. **This is the one acceptance criterion the layer has never had.**
 - **The media folder landed 2026-08-23.** Resolution, the Blob hand-off to the projector window, object-URL lifecycle and every fallback are verified in real headed Chrome against decoded pixels. **The picking flow itself is not automatable** — `showDirectoryPicker` opens an OS dialog no browser automation can drive — so it was exercised through a stand-in handle, and the one thing only a person can run is the round trip: pick a folder, quit Chrome, reopen, and see whether it comes back granted or asks to reconnect.
 - **Direct manipulation is now verified by hand** (2026-08-22). It landed in July and was only ever checked headlessly, and it did not in fact work: a drag moved a quad by one mouse-move and then froze, and pressing an unselected quad did not move it at all. Fixed, and confirmed in Chrome with a real mouse against painted output. **Transport-synced overlays are still hand-untested.**
 - **The desk-tool shape described above is the direction, not the current build.** Today Muralista still renders live: it has a transport, because v1 was designed as a tool that runs during the show. That decision was reversed on 2026-08-20. The sound-reactive half was removed on 2026-08-22 and preserved at the tag `mic-reactivity-archive`: a tool that maps a wall before a show cannot also be the thing listening to the room during it. The beat layer that removal left standing went too (2026-08-23) — with mic mode gone it was a circle pulsing at a fixed BPM, and nothing about drawing shapes on a wall needs one. **What Muralista renders today is video, image and text layers on warped surfaces, plus keep-out polygons it holds dark**, plus the test pattern you align against. The behaviours that left survive as direction — they become properties declared in the venue mapping and executed by [Pregonero](https://github.com/jorgevallejos/pregonero) — but nothing has moved across yet, and Pregonero cannot read a venue mapping today.
@@ -112,10 +112,25 @@ Two fields at the top of the panel, and they are not the same fact:
 
 **Paste the longest line you will actually sing.** A layout tuned against a short line is not tuned. Line breaks you type are line breaks on the wall — several entries in the catalogue carry one and render as two lines, and a region sized against a single line clips them.
 
+If you want the worst case, this is it — the longest entry in the whole catalogue, from *Tragedia de Cerdo Asado*, 81 characters over two lines, or 152 over four with the translation stacked under it:
+
+```
+Respiro libre, siento la brisa,
+me fui del infierno, dejé las cenizas.
+I breathe out free, I feel the breeze,
+I fled from hell, I left the ashes behind.
+```
+
+**Judge legibility against that one, not against a short line.** A region that reads with three words in it tells you nothing.
+
 Then set the size by eye, with the projector on. Two things about that slider:
 
 - **It is a fraction of the shape, not a font size.** The number stored in the mapping is a percentage of the quad's height, so when you redraw that quad in the next room the text comes with it. An absolute size would quietly break every layout you ever tuned.
 - **It is a ceiling, not a size.** Text that would not fit is shrunk below it until it does — wrapping on word boundaries, honouring your line breaks, keeping a margin off the edge. So it cannot overflow the shape at any setting, and short lines still get to be big.
+
+**Letter width** is the second slider, and most of the time you will not touch it. A surface's content is drawn into a square and mapped onto four corners, so a quad far from square would ordinarily stretch whatever is in it — and for video and images it still does, deliberately. Text is the exception: the shape corrects itself, so a wide strip lays the words out wide instead of fattening them, and ×1.00 is normal letters in a quad of any shape.
+
+The slider is there for the part no formula can reach. **Muralista only ever sees the quad you drew, never the wall it lands on** — a quad on an angled wall is a trapezoid *on purpose*, because the warp is compensating for where the projector happens to stand, so the drawn shape and the physical shape are different things and only one of them is in the file. You can see the other one, through the camera. Nudge it until the letters look right on the wall, not until the number looks right on the screen.
 
 The background stays transparent, so a text surface duplicated onto a video surface's corners (step 6) puts the words over the animation rather than over a black plate. Legibility comes from a dark outline and a slight shadow instead, the way cinema subtitles do it — that is a deliberate exception to how restrained everything else in the suite is, and it is not up for debate at the back of a dark room.
 
@@ -165,6 +180,23 @@ Two things worth knowing:
 
 **A text layer records two facts, and keeping them apart is the point.** `role` says what the region is for; the string says what is currently previewing in it. A mapping that recorded only "this region shows this string" could not tell the lyric slot from a caption somebody typed, and every venue file would have to be re-authored by hand the day Pregonero learns to read one. There are exactly two roles — `lyrics` and `static` — and there will not be a third until something actually needs one.
 
+### What version the file is, and what each bump did
+
+The mapping carries a `version`, and the current one is **7**. Every bump is enforced in one place — `migrateProject()`, which runs on load **and** on import — so an older file always opens, gaining what it predates and losing what it outlived. There is no separate upgrade step and no file you have to convert by hand.
+
+| Version | What changed |
+|---|---|
+| 1–2 | The original mapping: surfaces, corners, layers, order. |
+| 3 | The sound-reactive layer was removed. A layer that opted into mic reactivity simply loses it. |
+| 4 | The beat layer went too. One from an older file becomes a test pattern — the honest fallback, since the surface stays on the wall and stays visible, it just stops pulsing. |
+| 5 | **Keep-outs.** A top-level list, a sibling of `surfaces` rather than a member of it. A file that predates them carries none, which is exactly true of it. |
+| 6 | **The text layer**, and the fields only it uses — `text`, `role`, `maxSize`, `align`, `color`, `outline`, `outlineWidth`. |
+| 7 | **`aspect`** on a text layer: the manual half of letter width. Existing text layers default to `1.0`, which is "automatic only". |
+
+Bumps 3 through 7 are marked **breaking**, and they mean it in one direction only: a v7 file will not open correctly in an older build, because that build would read something it has no code for and paint a test pattern instead. Going forward is always safe.
+
+Hostile values do not reach the renderer. An import is arbitrary JSON, and a `role` of `42`, a negative size, an `aspect` of `0` or a `javascript:` colour all fall back or clamp at the same single enforcement point — because the alternative is something inexplicable appearing on a wall with no visible cause.
+
 **Where this is going:** the mapping grows into a full **venue file** — adding the outer field of usable wall and named regions for lyrics and animation, alongside the keep-outs it already carries — which Pregonero reads and executes on stage. See `project-context.md` in this repo, under "V1 design (2026-08-20)", for the design and its open questions.
 
 ### The media folder
@@ -204,8 +236,11 @@ Deliberate, not defects:
 - **Flat facets only.** Every surface is a four-corner plane — one perspective warp per quad. Curved and organic surfaces need a mesh warp, which is out of scope.
 - **The camera is a backdrop, not an auto-calibrator.** A webcam beside the lens gives you a live, rectified view of the wall to draw on. It does not find surfaces for you — you still calibrate by dragging while watching the projected result — and it is exact only on the wall plane. A phone photo remains a planning aid at best: a phone does not stand where the projector stands.
 - **One projector.** A second one is another separate zone, never a blended overlap. Edge blending is explicitly out.
-- **Text is warped with its quad, letterforms included.** A surface's content is drawn into a square and mapped onto four corners, so a quad far from square stretches the type along with everything else. That is what keeps the fit honest — text measured in that square cannot leave the quad — but it means a very narrow region squeezes the letters rather than re-wrapping them into it. Draw the region roughly the shape you want the words to read in.
-- **Auto-fit has a floor, and it is loud.** Below 8px it stops shrinking and lets the text overflow rather than clip it silently, because a quad drawn far too small for its content is something you need to see. There is a lot of room before that: the catalogue's longest entry fits at 93px, and an entire song's worth of text still fits at 16px.
+- **Video and images are stretched to their quad; text is not.** A surface's content is drawn into a square and mapped onto four corners, so a quad far from square stretches whatever is in it. For video and images that is deliberate and there is no fit option — a stretched pig is a style, and cropping or letterboxing one is a decision the tool does not make for you. Text is the single exception, because a stretched lyric is not a style: it takes the stretch back out and re-wraps instead, and the **Letter width** slider is there for the part arithmetic cannot know, since the tool sees the quad you drew and never the wall it lands on.
+- **Nothing knows the wall's real shape.** The automatic half of that correction is exact about the *quad*, and the quad is not the surface — a trapezoid drawn to compensate for the projector's position is doing its job, and no formula can tell that apart from a genuinely trapezoidal wall. Which is why the last few percent is a slider you set by eye and not a number the tool computes. Muralista is built around closing that loop rather than measuring harder: a careful automatic calibration lost to a hand calibration by three percent on 2026-08-22, and that is the tool's whole thesis rather than an anecdote in it.
+- **Auto-fit has a floor, and it is loud.** Below 8px it stops shrinking and lets the text overflow rather than clip it silently, because a quad drawn far too small for its content is something you need to see. There is a lot of room before that: in a quad that reads square on the wall, the catalogue's 81-character worst case fits at 127px, an entire song's worth of text still fits at 17px, and the floor is only reached somewhere past 40,000 characters, which is not a lyric.
+- **The shadow suggestion only helps for things that cast a shadow.** It works by differencing two photographs of the wall, so it finds a performer and nothing else. A dark alcove, a window, a picture rail, a speaker stack in front of the wall — anything you want held dark that does not block the beam — is a keep-out you draw by hand, point by point. That works, and it is untested as a workflow.
+- **Nothing has moved to Pregonero yet.** The mapping is designed to grow into a venue file that [Pregonero](https://github.com/jorgevallejos/pregonero) reads and executes on stage, and `role: "lyrics"` already says "this region is a slot to be filled". But Pregonero cannot read a venue mapping today, so a lyric region is a preview of a promise, not a live surtitle feed.
 - **Chrome only.** Alpha WebM transparency and the autoplay behaviour this leans on are Chrome-specific; Safari drops the alpha channel.
 - **Media is referenced, never copied.** Point the tool at the folder your media already lives in (see *The media folder* above) or drop files into `mapper/media/` by hand. Either way Muralista reads the files where they are — the picker fills in a name, it does not copy anything, and media stays out of this repo.
 - **`python3 -m http.server` has no Range support**, so seeking within a long video feels sluggish. `npx http-server` is a drop-in replacement that does — and a source resolved through a chosen media folder sidesteps the server entirely, so it does not have this problem in the first place.
@@ -217,6 +252,10 @@ A spike: no test suite, no PR flow, conventional commits on `main`.
 There is also a six-step desk pass that exercises sync, warp, calibration, playback and round-tripping the mapping, without a projector — worth running before any trip to a venue. It is written out in `project-context.md`.
 
 The internal `mapper/` folder and the `mapper.*` filenames keep the shape they were built with. They are internal paths, nobody says them out loud, and renaming them would churn the run instructions for nothing.
+
+**The control window uses [Pregonero](https://github.com/jorgevallejos/pregonero)'s design system**, taken from its `src/control.css` rather than approximated: the ink ground, the clay accent, hairline rules, no radii, and a monospace voice for anything you operate or read as data. Two deliberate departures. It does not load Pregonero's webfont — that belongs to Pregonero's *projection* screen, and neither control window phones a font CDN. And the drawing layer is exempt from the suite's contrast discipline: quad outlines, corner handles and keep-out shapes sit on top of a live camera feed of an arbitrary wall, so they keep their own high-contrast colours on their own `--draw-*` tokens. They are not chrome; they are the instrument, and a hairline in clay over whitewash is invisible.
+
+**The output window has no styling to speak of and that is on purpose.** It is not a UI, it is the projection: black, no cursor, and nothing on it that the mapping did not put there.
 
 ## License
 

@@ -169,6 +169,29 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23: `v1.2.0` — one shape, one set of circles.** Merged `63d2dd2`, tag `v1.2.0`, umbrella
+  `a752361`. From Jorge's second session at the wall. **Fill shapes stopped looking different** — one
+  idiom, a body carrying what is inside and an outline carrying stroke and selection; the dashed red
+  is gone. **The numbered cyan frame handles are gone**, and the frame became *a rule about counts*:
+  at four outline points the outline **is** the frame, so dragging a circle warps content live; past
+  four it holds the value pinned when the fifth point arrived, and the extras clip. *Re-fit content
+  to this shape* moves it deliberately, through the current frame's homography, so a quad tuned
+  against an angled wall stays tuned rather than being boxed upright. **Adopt boundaries now returns
+  a convex hull thinned to 8–14 points** instead of a 30-point contour: on a person-shaped silhouette
+  it gave 10 points with the gaps under the arms swallowed. Accuracy was never the goal — the margin
+  has to inflate the result anyway.
+  **A deliberate collision, resolved in favour of the count rule:** v1.1.0 said adopt never touches
+  the frame; the count rule says four points *are* a frame. Four-point adopt results therefore move
+  the content — adopt the boundaries of a placed box on a video shape and **the video lands on the
+  box**, which is a feature rather than a side effect, while a silhouette comes back with more than
+  four points and only clips. **Confirmed as correct by Jorge.**
+  **A migration bug the round-trip check caught:** migrating a v7 keep-out wrote `corners: null`
+  while `migrateShape` pinned a four-point outline's frame, so export-then-import changed the file
+  underneath you. Both paths go through `pinFrame` now. No schema bump — nothing gained or lost a
+  field, and a v1.2.0 file still opens in v1.1.0.
+  **Recorded as a limit rather than built: nothing spans a corner.** A homography maps one rectangle
+  onto one flat plane, so a single shape cannot bend across two walls. One shape per facet — two text
+  shapes, one per wall. Mesh warping stays Tier 2.
 - **2026-08-23: `v1.1.0` — one shape, many fills.** The unification, built the same day it was
   designed. **There is no keep-out**: there are shapes, `fill` is one of the layer types, and the
   performer mask is a black-filled shape that queues in the z-order like everything else. A shape is
@@ -1255,6 +1278,9 @@ words, so a lyric still wants a frame-shaped region).
 
 Not free — it is a real refactor of the shape model — but it replaces two concepts with one, and the
 concept it keeps is the one Jorge already has in his head.
+
+**Everything in this backlog that Jorge hit again at the wall was built the same day, in `v1.1.0`
+and `v1.2.0`.** What remains below is what he has not asked for twice.
 
 ### Fix before v2, small
 

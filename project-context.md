@@ -169,6 +169,11 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23 (evening): the studio session that proved both unverifiable features.** Eleven hand
+  checks, all passed — the four optical checks on the shadow suggestion and the seven on the media
+  folder, including the one nothing else could answer: quit Chrome entirely, reopen, and the chosen
+  folder comes back. Two features that no harness on the build machine could reach are now known
+  good at a real wall with a real projector.
 - **2026-08-23: media lives where the user keeps it.** PR #7, squash-merged as `46c0ca3`; umbrella
   `2077bdc`. Also `fd9abcb` (PR #6) earlier the same day, making the keep-out margin mean the growth
   rather than half of it, since SVG centres a stroke on its path. All three media calls hold:
@@ -905,9 +910,16 @@ points onto them by hand. What is next-version is anything smarter than that.
 5. **Brutalist restyle**, control window only.
 6. **Tag `v1.0.0`**, repo private, website gate shut.
 
-### The four things only a wall can answer
+### The four things only a wall can answer — ALL PASSED 2026-08-23
 
-The shadow suggestion is code-complete and optically unproven. In order, at the wall:
+**Run at the wall the same evening, together with the seven media-folder checks. Everything passed.**
+So the shadow suggestion is optically proven, not merely code-complete: the traced shape lands on the
+shadow rather than offset toward the body, which is the rule the whole keep-out design rests on, and
+the only place it could ever have been confirmed. The media folder's permission round trip and
+autoplay through a blob URL are proven too — both were beyond any harness on this machine.
+
+The checks, kept because they are the regression list if the camera, the projector or the room
+changes:
 
 1. **Does frame A catch a settled white wall**, or is the camera still stopping down at 900 ms? A
    trace that comes back as noise across the whole frame is this.

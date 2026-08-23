@@ -158,6 +158,17 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
 - **2026-08-11: calibration camera decided — Elgato Facecam 4K.** Full rationale in the Hardware section above. Not a v1 dependency (Tier 1 needs no camera); it's for the Tier 2 / structured-light auto-cal path and doubles as a content cam.
 - **2026-08-20: Muralista v1 design session (Cowork).** New goal, new architecture — no longer gated on the Q4 animation project. Full design and decisions: see **"V1 design (2026-08-20)"** below.
 - **2026-08-22: v2.4 — live camera backdrop, and direct manipulation actually fixed.** Two things, one pass. The camera backdrop turns a webcam beside the projector lens into a rectified authoring surface (see "Live camera backdrop" below). The direct-manipulation fix closes the July v2.1 entry above, which had never worked: see "The v2.1 drag bug" below. Project schema bumped to **2**; v1 files still open.
+- **2026-08-23: the sound-reactive layer is gone and the stale output window is impossible.** Both
+  items queued on 22/08, executed and merged. The mic removal is preserved at the tag
+  **`mic-reactivity-archive`** (`ada25da`, the last commit before removal, pushed to origin), landed
+  as three commits squashed into one PR: the code removal, a **schema bump to v3** dropping
+  `micReactivity` and coercing `beatMode: "mic"` back to `"bpm"`, and the README correction. 429
+  deletions, 45 insertions. The cache-bust is **PR #3, `94d975f`** on muralista's main; umbrella
+  pointer at **`e40907b`**. Verification for both ran in a real headed Chrome driven over CDP, after
+  the in-app browser was found to fire rAF once in 1.5s — the exact trap that produced the v2.1 drag
+  bug, caught this time before it certified anything.
+- **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
+  shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
 
 ## V1 design (2026-08-20)
 
@@ -346,9 +357,13 @@ for the lyric-region work, when it happens, is visual, at a wall, in low light.
 
 Decided by thinking, not by looking (contrast "Open questions — the room" below).
 
-1. **Animation in v1 or not?** Under the parallel track, Muralista renders its own animation in the
-   studio, so this is no longer a question about Pregonero gaining a compositing layer. What
-   survives: does the **first concert** use Muralista at all, or is v1 studio-only?
+1. ~~**Animation in v1 or not?**~~ **ANSWERED 2026-08-23: v1 is studio-only.** Jorge: Muralista will
+   not be used for the coming concerts. Three consequences, all pointing the same way: the Pregonero
+   legibility work loses its deadline and gets to be done properly; the consolidation trigger (the day
+   Muralista's output points at an audience) stays far off, so the deliberately-bad borrowed renderer
+   is a **stable** state rather than a temporary one; and the two per-room questions below — how long
+   a first mapping takes, and what walks through the beam — go dormant for want of a room. Nothing
+   external pulls against the shapes-first order.
 2. **Does the venue file own audio** (volume, speaker position, room baseline)? Venue Turn question 3,
    still open. The prior: leave it on paper for v1.
 3. **How is the field measured** without a camera? **Largely answered 2026-08-22:** with a camera
@@ -391,7 +406,9 @@ by how much they could change the plan.
    of those. If the canvas stays, the field has two quality zones and the layout falls out of the
    physics — lyrics on the canvas where the pixels and contrast are, animation spilling onto the wall
    where atmosphere is enough. That is the more robust design.
-3. **How long does mapping an unfamiliar room take?** A café gives 30–45 minutes with the lights up
+3. **How long does mapping an unfamiliar room take?** *(2026-08-23: Jorge is timing the studio
+   configuration as he works, so the first honest number arrives as a by-product rather than as an
+   exercise. The venue half is dormant until there is a venue.)* A café gives 30–45 minutes with the lights up
    and someone stacking chairs. The venue file solves the *second* visit; nothing solves the first. If
    the first pass takes an hour, Muralista is unusable however good it is. **This is the failure mode
    that most often kills tools like this — not the capability, the clock.** Worth setting as a hard
@@ -482,7 +499,9 @@ zones, and pretending otherwise will cost legibility rather than buy coverage.
 
 Not yet answered: room question 1, the pixel-and-brightness budget, still has no arithmetic behind
 it. The studio was flooded with daylight through the roof gable throughout, so nothing measured there
-today would have been honest anyway. **Blackout is a precondition for that measurement.**
+today would have been honest anyway. **Blackout is a precondition for that measurement.** *(Jorge,
+2026-08-23: blackout comes with the testing in the coming days or weeks; the current focus is
+functionality.)*
 
 ### Architecture question 3, partly answered: a photo taken beside the lens is worth drawing on
 
@@ -612,8 +631,20 @@ accepting that the wood carries atmosphere only.
 
 Not found: an ECO or lamp-power setting. The projector's menu is the simplified one (Installation
 holds Projection, Keystone, Digital zoom out, Image shift, Language, Reset) with no Management tab.
-**Unresolved** — the remaining tabs were never checked. `Image shift` and `Digital zoom out` are the
-untried levers for lifting the beam off the performer without a mount.
+**ECO remains unresolved** — the remaining tabs were never checked, and it is worth five low-stakes
+minutes: a dimmer lamp means less glare, quieter fan and longer life, affordable on the whiteboard
+and not on the wood.
+
+**`Image shift` and `Digital zoom out` were dropped as levers, 2026-08-23.** They are projector menu
+knobs, not Muralista features, so nothing is removed from the tool. Both were candidates for
+*framing* (getting content onto the board instead of spilling onto wood), and drawing the quad
+against the live camera view does that better and without cost — both knobs work by using less of
+the chip, so they buy the right shape at lower resolution. **What resizing a quad does not do is
+touch brightness or glare**: the lamp keeps pointing where it points at the same intensity, and a
+smaller mapped shape simply means more of the wall shows projector black, which is dim grey light
+rather than off. The roughly four-fifths waste and the light in the performer's eyes both survive
+any amount of reshaping. **Geometry — the mount — stays the only complete fix.** Recorded so nobody
+concludes later that shape resizing solved brightness.
 
 ### Content shape versus surface shape: the `fit` gap
 
@@ -624,13 +655,19 @@ First real mapping surfaced a gap the tool had no answer for. The studio whitebo
 **This is the normal case, not an edge case.** Surfaces are physical objects and content is not, so
 their shapes will almost never agree.
 
-**Not decided. Carried to the next design session (Jorge, 2026-08-22), and deliberately not queued
-for build.** The reflex answer is a per-layer `fit` choice (`fill` as today, plus `contain` and
-`cover`), which is one CSS property on the media element and sits outside the warp, so it is close
-to free. But *stretch, letterbox or crop* is a decision about how the work looks in a room, not a
-technical gap to close by reflex — and the third option, **reshaping the surface to the content**,
-is not in that list at all and may be the right one for a whiteboard. Worth an hour of thinking
-before it becomes a dropdown nobody revisits.
+**DECIDED 2026-08-23: v1 keeps stretching exactly as it is. A `fit` option comes in the next
+version.** Not a deferral of a gap, because **the manual escape already exists and is two corner
+drags**: with the live camera backdrop, draw the quad at the content's own 16:9 and let it overhang
+the whiteboard onto the wood, where light barely registers. You get a board-height, correctly
+proportioned image whose edges dissolve into a surface that shows almost nothing.
+
+The alternative considered and not taken: letterboxing inside the 4:3 board keeps proportions but
+**projector black on a white board reads as visible grey bands**, so it paints the mismatch onto the
+brightest surface in the room. Cropping to 4:3 is clean but throws away the sides of every frame.
+
+For the next version the shape of the feature is settled even though the build is not: a per-layer
+`fit` (`fill` as today, `contain`, `cover`), one CSS property outside the warp, **defaulting to
+`contain`** so the accidental 74% squeeze becomes impossible.
 
 ### The stale output window, which cost a debugging round
 
@@ -641,8 +678,23 @@ caches**, so refreshing one does nothing for the other.
 The failure mode is nasty because it is silent: an outdated output window still understands the
 old message kinds, renders surfaces correctly, and simply **ignores any new one**. It presents as
 "the new feature does nothing" rather than as an error, which sends you looking in the wrong place.
-Fix queued: open the output window with a cache-busting query string, so it cannot happen rather
-than merely being unlikely.
+
+**Fixed 2026-08-23 (PR #3, `94d975f`), and the fix is stronger than a cache-buster.** The invariant
+built is *the control window and the output window always run the same build, by construction*: a
+per-session build token is read from `v` in the query string or minted on boot, and "Open output
+window" passes the **control window's own** token through. A cache-busted HTML URL does not bust a
+plain `<link>`/`<script>` href — which is exactly how the stale `mapper.js` survived the first time —
+so `mapper.html` no longer hard-links its subresources; an inline bootstrap in `<head>` injects
+`mapper.css?v=` and `mapper.js?v=`. That bootstrap holds the script injection until
+`DOMContentLoaded`, because a script element created in JS is async no matter what and `defer` is
+honoured only on parser-inserted scripts; holding reproduces the old end-of-body guarantee. The why
+is commented next to the line.
+
+**The residual edge, recorded rather than papered over.** The token pins the two windows to the same
+URL, not to the same bytes. If the file changes between the control's load and the output's, the
+control can briefly be running *older* code than the output. What is dead outright is the failure
+that cost the debugging round: **the output can never be older than the control**, and reloading the
+control collapses them back together.
 
 ## The v2.1 drag bug — found 2026-08-22, four weeks after it was declared fixed
 
@@ -687,6 +739,125 @@ pixel coordinates the mouse was actually dragged between.
 
 **Still hand-untested from the July v2 round:** transport-synced overlays and mic reactivity.
 
+## V1 scope and shape behaviour (design session 2026-08-23)
+
+The session that turns "richer shape behaviour" from a phrase into a spec, and draws the line around
+what v1 is. Jorge's order, unchanged and held to: **shape mapping and shape behaviour first, then
+the Pregonero integration, and only then context-awareness.**
+
+### The frame: studio-only, and a release at the end of shapes
+
+**Muralista is not used for the coming concerts** (Jorge, 2026-08-23 — this answers architecture
+question 1 above). **A first version is released once shape behaviour is complete.**
+
+Release and promotion are two different things and only one of them is happening. *Releasing* means
+tagging **`v1.0.0`** with a README that describes what the tool actually does. *Promotion* means the
+`changopepper.com/tramoya` page, which is gated on having played a room and **stays shut**. The tag
+costs nothing and gives the strip pass a finish line.
+
+### The strip rule
+
+**Standing rule, applied continuously while testing rather than once:** *does this help draw shapes
+on a wall in the studio?* Anything that fails the question leaves before the tag.
+
+| out | stays |
+|---|---|
+| the **beat layer** — with mic mode gone it is a circle pulsing at a fixed BPM, and nothing in v1 uses it. Takes `beatMode` and the one-option Mode select with it | surfaces, warp, drag, layer ordering, ⧉ duplicate, transport, test patterns, import/export, the camera backdrop, the white plate, `white.html` |
+| **`_smoke.html`** — the two-iframe harness that certified the drag bug as working. Not neutral dead weight, a false witness | the **photo backdrop**, kept deliberately as the fallback for a room where a camera cannot be rigged beside the lens |
+| the **`field` primitive** — designed on 20/08, never built, and its only consumer is Pregonero letterboxing its output, which is P2. Not added | |
+
+**Transport-synced overlays: nothing to strip.** The sync is not a feature with its own controls, it
+is the fact that a layer obeys the play button instead of running off on its own; removing it would
+make overlays worse, and the same list-ordering machinery is what text-over-video needs. What defers
+to the next version is the **alpha-WebM animation overlay as a use case**, and hand-testing the sync
+(ten minutes at the desk, still the one thing carried forward as unverified from July).
+
+### Design system: the light brutalist restyle
+
+Muralista's control window adopts **Pregonero's design system**, per the vault-wide rule that
+Chango Pepper tool UIs are brutalist too, in a quiet register.
+
+**Scope is the control window only.** The output window is not a UI, it is the projection: it stays
+black and unstyled forever. One constraint specific to this tool: the preview sits on top of a live
+camera feed of an arbitrary wall, so quad outlines, handles and the selected-surface state must stay
+readable against *any* image. "Contrast is a budget" governs the panels and the chrome, **not the
+drawing layer**.
+
+**Sequenced last, immediately before the tag**, so it styles the tool that survives the strip pass
+rather than the one being cut down.
+
+### Shape behaviour, specified
+
+**Video shape — ready.** Ships stretching exactly as today; see "Content shape versus surface shape"
+above for why, and for the two-corner-drag escape that makes it a choice rather than a defect.
+
+**Text shape — a new layer type.** Four requirements from Jorge, and one architectural decision that
+carries all of them:
+
+- **Size is stored as a fraction of the shape, never in pixels.** An absolute font size silently
+  breaks every tuned layout the moment a quad is redrawn in a new room; a fraction of the shape's
+  height travels with the shape, so a remapped room still reads. The live slider adjusts that
+  fraction while the projector is on, which is the "change the size while configuring" Jorge asked
+  for.
+- **"No exceeding limits" is a guarantee, not a discipline.** Auto-fit shrinks the text until it fits
+  the quad, wrapping on word boundaries, honouring the embedded newlines some catalogue entries
+  carry, with an inset so text never touches the edge. The slider sets the **maximum**; auto-fit only
+  ever goes below it. The 81-character Tragedia line therefore cannot overflow at any setting, and
+  short lines still get to be big.
+- **Real DOM text inside the warped element, never a pre-rendered image.** The browser rasterizes
+  after the warp, so it stays crisp in a keystoned quad. Text baked into a PNG and then warped is
+  precisely how surtitles fail.
+- **Transparent background with a cinema outline** — dark stroke plus a slight shadow, adjustable —
+  so it composites over video, which is the overlay case v1 actually needs. Worth restating: the
+  suite's "contrast is a budget" rule **does not apply to a lyric surface**; legibility from the back
+  of a dark room wins.
+- **Content is typed into a field. SP JSON is deferred.** The timeline was in the parallel-track plan
+  so layouts would be tested against real line lengths — pasting real lines, including
+  `lyric-worstcase.png`'s, buys the same thing. This boundary is what stops Muralista quietly
+  becoming a second Pregonero.
+
+**Singer shape — one polygon primitive, with a suggestion inside it.**
+
+**A keep-out is not a surface.** Every shape in the tool today is exactly four corners because four
+corners is what a homography needs to warp content. A keep-out carries no content, it holds black. So
+it needs no warp, no homography and no four-corner constraint: it is a polygon in output space,
+filled black, painted on top of everything. **Irregular is the cheap version, not the hard one** —
+this asks for less machinery, not more.
+
+- **The primitive:** add a polygon like any other shape; it arrives with a handful of points; move,
+  add and delete points to make it whatever the room needs. Filled black, always on top.
+- **The margin slider** inflates the whole outline outward. The rule is to draw generously larger
+  than the shadow, because a performer sways and an exact mask lets light onto the face on every
+  lean. One knob turns that discipline into a number.
+- **"Suggest from my shadow":** raise the white plate, capture, Jorge steps in, capture, difference
+  the two frames — the region that got darker *is* the shadow, by construction, being precisely the
+  pixels the body blocks — trace it to a contour and replace the polygon's points with it. Same
+  differencing trick as the morning-of-22/08 photo workflow, except the loop now closes against the
+  wall instead of against a measurement.
+- **The suggestion does not need to be accurate**, which takes the risk out of the only novel piece
+  of image processing in the plan. A coarse blob roughly the right shape, inflated by the margin
+  slider and tidied with a few points, **is the correct output**, because generosity is required
+  anyway.
+- **Out of this version:** the polygon following the performer live. The 2026-08-20 reasoning stands
+  — low light, mid-song, performer inside the beam, and a mask that flickers is worse than no mask.
+
+Because the polygon is a general shape rather than a shadow-only one, keep-outs for things that cast
+no shadow — the doorway, the window, the mirror behind the bar — are **in** v1 after all: push the
+points onto them by hand. What is next-version is anything smarter than that.
+
+### The build queue this produces
+
+1. **Strip pass** (beat layer + `beatMode` + the one-option Mode select, `_smoke.html`).
+2. **Polygon shape** with the margin slider and the shadow suggestion — one feature.
+3. **Text layer.**
+4. **Brutalist restyle**, control window only.
+5. **Tag `v1.0.0`**, repo private, website gate shut.
+
+Deferred by name, so none of it reads as forgotten: the `fit` option, alpha-WebM animation overlays
+and the hand-test of transport sync, the `field`, SP JSON as a text source, multi-region animation
+content, hand-drawn keep-outs for objects that cast no shadow, live silhouette tracking, the
+Pregonero integration (P2), and context-awareness (parked, below).
+
 ## Context-awareness: parked 2026-08-22, and what survives the parking
 
 **Decided by Jorge, 2026-08-22.** The sound-reactive half of v2 comes out of the working
@@ -721,6 +892,20 @@ preserved option is a decaying one. A tag is exact, permanent and costs nothing 
 
 Suggested name: **`mic-reactivity-archive`**, on the last commit before removal. The v2.3 slice
 itself is `065c03f`.
+
+**Executed 2026-08-23.** The tag exists on `ada25da` and is pushed to origin, created and verified
+*before* a line was deleted. Removal merged as one squashed PR (code, schema v3, README). Migration
+runs on load and on import, so every autosave under the untouched `STORAGE_KEY` and every previously
+exported venue JSON still opens; a layer left in mic mode falls back to the fixed BPM it was already
+carrying, so it keeps pulsing rather than going dark. Note for anyone reaching for the tag: the
+autosave stays v2 on disk until the first edit commits, and after that there is no v2 left in
+localStorage. **The tag preserves the code that read the old field, not anyone's data** — judged not
+worth a backup step, since the only thing v3 drops is a field nothing executed.
+
+**What the removal deliberately left standing, and why it is not debt for long:** `beatMode` is now
+written in three places and read in none on the output side, and the Mode dropdown has a single
+option. Both were left untouched rather than half-deleted, because the **whole beat layer is cut in
+the strip pass** (see "V1 scope" below) and the two leave together in a commit whose subject says so.
 
 ### The part actually worth keeping is the tuning, not the code
 

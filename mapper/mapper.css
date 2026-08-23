@@ -600,21 +600,42 @@ button.danger:hover {
   touch-action: none; /* the drag listeners live here now, so the gesture guard does too */
 }
 
-.preview-surface-outline {
+/* ===== Shapes (preview) =====
+
+   Two polygons per shape, the same two whatever is inside it. The body carries
+   the contents and the gesture; the outline carries the stroke and the
+   selection. Splitting them is not decoration: a fill shape's body spends its
+   one stroke on the margin (applyMarginStroke), so the selected state needs a
+   stroke of its own to live on.
+
+   A fill overrides `fill`, `stroke` and `opacity` inline from its layer
+   colour. Everything else keeps the faint wash below, which is what makes an
+   otherwise empty quad findable and clickable over a camera feed. */
+.preview-shape-body {
   fill: rgba(94, 234, 212, 0.06);
-  /* Lifted off the old chrome grey: the outline sits over a camera image, so
-     it needs to read against a wall, not against the panel behind it. */
-  stroke: var(--draw-surface-idle);
-  stroke-width: 2;
-  paint-order: stroke;
+  stroke: none;
   cursor: move;
-  touch-action: none; /* stop the browser hijacking whole-surface drags as scroll/zoom */
+  touch-action: none; /* stop the browser hijacking whole-shape drags as scroll/zoom */
 }
 
-.preview-surface-outline.selected {
+.preview-shape-body.selected {
+  fill: rgba(94, 234, 212, 0.14);
+}
+
+/* Never a hit target: the body underneath owns the gesture, and an outline
+   stealing pointerdown would make the polygon's own edge un-draggable.
+   Lifted off the old chrome grey: it sits over a camera image, so it needs to
+   read against a wall, not against the panel behind it. */
+.preview-shape-outline {
+  fill: none;
+  stroke: var(--draw-surface-idle);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.preview-shape-outline.selected {
   stroke: var(--draw-surface);
   stroke-width: 4;
-  fill: rgba(94, 234, 212, 0.14);
 }
 
 .preview-layer-badge {
@@ -683,43 +704,9 @@ button.danger:hover {
   pointer-events: none;
 }
 
-/* ===== Fill shapes (preview) =====
-
-   Two polygons per fill shape, for one reason: the mask's stroke is spoken for
-   by the margin (see applyMarginStroke in mapper.js) and an element has only
-   one stroke, so selection state needs an element of its own.
-
-   Fill, stroke and opacity are all set INLINE by mapper.js - the colour is the
-   layer's, and the opacity is held under full strength so the wall being drawn
-   on stays visible underneath. Nothing here may set them, or a stylesheet rule
-   would outrank the attribute and silently win. */
-.preview-fill-mask {
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  cursor: move;
-  touch-action: none; /* stop the browser hijacking the drag as scroll/zoom */
-}
-
-/* Selection outline. Never a hit target: the mask underneath owns the
-   gesture, and an outline stealing pointerdown would make the polygon's own
-   edge un-draggable. */
-.preview-fill-outline {
-  fill: none;
-  stroke: var(--draw-outline);
-  stroke-width: 2;
-  stroke-dasharray: 8 6;
-  pointer-events: none;
-}
-
-.preview-fill-outline.selected {
-  stroke-width: 3;
-  stroke-dasharray: none;
-}
-
 /* The CONTENT FRAME of the selected shape, drawn only once the outline has
-   left it: four corners, dashed, in the surface accent, saying what the
-   content is actually warped onto. Read-only - the numbered handles are how it
-   moves - so never a hit target. */
+   left it: four corners, dashed, saying what the content is warped onto.
+   Read-only - the numbered handles are how it moves - so never a hit target. */
 .preview-frame-outline {
   fill: none;
   stroke: var(--draw-surface);

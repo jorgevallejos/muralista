@@ -1678,6 +1678,22 @@ function ringCentroidNormalized(points) {
 
 // One shape's body in the preview: the polygon you click to select it and
 // drag to move it, plus whatever says at a glance what is inside it.
+//
+// TWO ELEMENTS, AND THE SAME TWO FOR EVERY SHAPE. There is no fill branch and
+// no content branch here any more: a fill shape was drawing itself in its own
+// dashed red idiom, left over from when it was a keep-out, and from the hand
+// holding the mouse that read as a different kind of object rather than as a
+// shape with a colour in it. The only thing allowed to distinguish one shape
+// from another is what is INSIDE it, plus the badge that already says so.
+//
+//   body    - what is inside the shape, and the hit target. A fill paints its
+//             own colour here; everything else gets the same faint wash, which
+//             is what makes an empty quad clickable over a camera feed.
+//   outline - the stroke, and the selected state, and nothing else.
+//
+// They have to be two elements rather than one: a fill's body already spends
+// its single stroke on the margin (see applyMarginStroke), and an element has
+// only one stroke to spend.
 function renderShapePreview(svg, shape) {
   const outline = shapeOutline(shape);
   if (!outline) return;
@@ -1686,47 +1702,35 @@ function renderShapePreview(svg, shape) {
   const selected = shape.id === selectedShapeId;
   const points = ringPointsAttr(outline, PREVIEW_W, PREVIEW_H);
 
+  const body = document.createElementNS(SVG_NS, "polygon");
+  body.setAttribute("points", points);
+  body.setAttribute("class", "preview-shape-body" + (selected ? " selected" : ""));
   if (type === "fill") {
     // Painted the way the output paints it - the fill colour, plus a stroke of
     // the same colour carrying the margin - so what gets tuned on screen is
     // what lands on the wall. The preview viewBox is 1600x900 inside a 16/9
     // box, so its user units are square and PREVIEW_H is the right scale for a
     // frame-height fraction.
-    const mask = document.createElementNS(SVG_NS, "polygon");
-    mask.setAttribute("points", points);
-    mask.setAttribute("class", "preview-fill-mask");
     const fields = sanitizeFillLayer(layer);
-    mask.style.fill = fields.color;
-    mask.style.stroke = fields.color;
+    body.style.fill = fields.color;
+    body.style.stroke = fields.color;
     // Held under full strength here and nowhere else: the whole job of the
     // preview is to show the wall you are drawing on, and an opaque black
     // shape over a camera feed hides the thing being traced. `opacity` on the
     // element (rather than fill-opacity) composites fill and stroke as one
     // group, so the margin stroke does not double up over the fill and leave a
     // visible seam at the shape's own outline.
-    mask.style.opacity = String(0.82 * (layer.opacity ?? 1));
-    applyMarginStroke(mask, fields.margin, PREVIEW_H);
-    mask.addEventListener("pointerdown", (e) => startShapeDrag(e, svg, shape));
-    svg.appendChild(mask);
-
-    // A separate outline on top carries the selection state. It has to be its
-    // own element: the mask's stroke is already spoken for by the margin, and
-    // an element has only one of those. Not a hit target - pointer-events:none
-    // in CSS - so the mask below keeps the gesture.
-    const edge = document.createElementNS(SVG_NS, "polygon");
-    edge.setAttribute("points", points);
-    edge.setAttribute("class", "preview-fill-outline" + (selected ? " selected" : ""));
-    svg.appendChild(edge);
-    return;
+    body.style.opacity = String(0.82 * (layer.opacity ?? 1));
+    applyMarginStroke(body, fields.margin, PREVIEW_H);
   }
-
-  const poly = document.createElementNS(SVG_NS, "polygon");
-  poly.setAttribute("points", points);
-  poly.setAttribute("class", "preview-surface-outline");
-  if (selected) poly.classList.add("selected");
   // Click-to-select + whole-shape drag in one gesture.
-  poly.addEventListener("pointerdown", (e) => startShapeDrag(e, svg, shape));
-  svg.appendChild(poly);
+  body.addEventListener("pointerdown", (e) => startShapeDrag(e, svg, shape));
+  svg.appendChild(body);
+
+  const edge = document.createElementNS(SVG_NS, "polygon");
+  edge.setAttribute("points", points);
+  edge.setAttribute("class", "preview-shape-outline" + (selected ? " selected" : ""));
+  svg.appendChild(edge);
 
   // Cheap authoring aid: badge the shape with its layer type near its
   // centroid, rather than actually rendering media in the preview (explicitly

@@ -190,6 +190,13 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   use it. Measured against v1.0.0 the panel already restricted it correctly. It was made *structural*
   anyway — built inside the video/image branch so it cannot appear elsewhere — but if Jorge can
   place where he actually saw it, that is a different bug and still open.
+  **The fourth commit was a one-character fix with a disproportionate lesson:** `mediaNamesKey()`
+  joined media names on a NUL separator written as a raw byte rather than ` `. Functionally
+  identical, but one NUL makes `file(1)` report `data` and makes grep treat the whole file as binary
+  — printing *nothing*, not "no matches". Both Cowork and Claude Code hit it on `mapper.js` the same
+  day, on a term with 104 occurrences, and both suspected the vocabulary before the bytes. Merged
+  commits: muralista `86388f1`, umbrella `2ca09ed`. The general lesson lives in
+  `context/WAYS-OF-WORKING.md`, "A single NUL byte makes grep lie by saying nothing".
 - **2026-08-23: `v1.0.0` tagged.** Four PRs, all squash-merged; umbrella pointer `7bc46f7` at the
   tag; repo stays private and the website gate stays shut. **#9 — text stops inheriting the quad's
   stretch (schema v7).** Containment stayed structural: the layout box is widened by the quad's

@@ -1,15 +1,101 @@
-/* Muralista — dark theme (used in a dark venue) */
+/* Muralista — the control window, in Pregonero's clothes.
+   ==========================================================================
+   Muralista and Pregonero are one suite and should look it, so the values
+   below are LIFTED FROM pregonero/src/control.css rather than approximated:
+   the ink ground and its one step per level, the clay accent, the paper-on-ink
+   text ramp, hairline rules, and no radii anywhere. Where a name differs, the
+   Pregonero token it came from is named in the comment.
+
+   TWO THINGS THIS DELIBERATELY DOES NOT TAKE.
+
+   EB Garamond. Pregonero self-hosts it, but for its PROJECTION screen — its
+   own control window is explicit that it does not load a webfont, and neither
+   does this one. Control type is the same system sans and the same monospace
+   instrument voice.
+
+   "Contrast is a budget" — for the chrome only. It governs the panels, the
+   header and the type below, exactly as it does in Pregonero. It does NOT
+   govern the drawing layer, and that exception is the point of the second
+   block: see DRAWING LAYER below. */
 
 :root {
-  --bg: #111318;
-  --bg-raised: #191c23;
-  --bg-row: #1f232c;
-  --bg-row-hover: #262b36;
-  --border: #2c3140;
-  --text: #e6e8ee;
-  --text-dim: #8a90a3;
-  --accent: #5eead4;
-  --danger: #f87171;
+  /* ---- Grounds. Pregonero: --app-bg, --panel-bg, --control-bg-raised,
+     --surface-hover-strong. Ink, one step per level, no gradients. */
+  --bg: #121211;
+  --bg-raised: #1a1a18;
+  --bg-row: #232320;
+  --bg-row-hover: #2c2a26;
+  --bg-disabled: #161615;
+
+  /* ---- Rules. Pregonero: --rule / --control-border, --control-border-soft,
+     --control-border-hover. Hairlines, not slabs - a border you notice is a
+     border spending contrast it has not earned. */
+  --border: #423e37;
+  --border-soft: #2c2a26;
+  --border-hover: #e6dfd1;
+
+  /* ---- Text. Pregonero: --text-primary, --text-secondary, --text-dim,
+     --text-disabled. Paper on ink, one dim, one dimmer, nothing between. */
+  --text: #e6dfd1;
+  --text-dim: #8b8478;
+  --text-faint: #635d54;
+  --text-disabled: #423e37;
+
+  /* ---- Accent. Pregonero's clay, and it stays one accent. */
+  --accent: #d98b7a;
+  --accent-dim: #8f5a4e;
+
+  /* ---- Selection. Pregonero: --state-selected-bg / --state-selected-border.
+     A choice is a BRIGHT HAIRLINE BOX, not a colour: status colour is
+     reserved for liveness, and "you picked this" is a question asked at the
+     desk with time to look. */
+  --selected-bg: #232320;
+  --selected-border: #e6dfd1;
+
+  /* ---- Live. Pregonero: --state-armed-*, --state-live. Green means
+     something is live on the wall right now. */
+  --state-live-bg: #1d3129;
+  --state-live-border: #4f7d63;
+  --state-live: #7cbb97;
+
+  /* ---- Fail. Pregonero: --state-fail. */
+  --danger: #ef7a70;
+  /* ---- Warn. Pregonero: --state-warn. */
+  --warn: #e0a437;
+
+  /* ---- Type. Pregonero: --font-ui, --font-control, --font-label. A
+     monospace instrument voice for anything operated or read as data, and
+     Chromium does not let form controls inherit font-family, so --font-control
+     is the only thing that reaches a button at all. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-control: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font-label: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* ---- Shape. Pregonero: every --radius-* is 0. No radii, anywhere. */
+  --radius: 0;
+
+  /* ======================================================================
+     DRAWING LAYER — the documented exception to the budget
+     ======================================================================
+     Quad outlines, corner handles and keep-out shapes are drawn ON TOP OF A
+     LIVE CAMERA FEED OF AN ARBITRARY WALL. They are not chrome: they are the
+     instrument, and they have to stay findable over whitewash, brick, a lit
+     window or a projected image of themselves. Contrast discipline is a rule
+     about how much attention chrome may take from content; here the marks ARE
+     the content, and a hairline in clay over a bright wall is simply invisible.
+
+     So these keep Muralista's own high-contrast values rather than taking
+     Pregonero's. They are deliberately OUTSIDE the token ramp above so that
+     nobody later "tidies" them into it: --draw-surface is not --accent, and
+     the difference is the whole point. Each mark also carries its own dark
+     halo or fill at the point of use, so it survives a bright backdrop as
+     well as a dark one. */
+  --draw-surface: #5eead4;        /* selected quad + its corner handles */
+  --draw-surface-idle: #9aa3b8;   /* unselected quad outline */
+  --draw-keepout: #f87171;        /* keep-out outline + its point handles */
+  --draw-camera: #f0a53a;         /* the camera calibration quad */
+  --draw-handle-fill: rgba(10, 10, 9, 0.85);
+  --draw-label: #ffffff;
 }
 
 * {
@@ -30,40 +116,81 @@ html, body {
   padding: 0;
 }
 
+/* THE RESTYLE STOPS AT THE CONTROL ROOT, AND THIS IS WHERE IT IS ENFORCED.
+   `body` is shared by both roles, so anything inherited from here reaches the
+   output window too - and the output window is not a UI, it is the projection.
+   `color` and `font-family` therefore stay pinned to the literal values the
+   output has always inherited, rather than following the chrome tokens: a
+   layer note, the countdown plate and the identify labels all take their type
+   from here, and the projector's pixels are not the restyle's to change.
+   `background` is safe to tokenise - body.role-output overrides it to #000. */
 body {
   background: var(--bg);
-  color: var(--text);
+  color: #e6e8ee;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   font-size: 14px;
 }
 
-button {
-  font-family: inherit;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--bg-row);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 12px;
-  cursor: pointer;
+/* Pregonero's rule, and its reason: form controls do not inherit font-family
+   in Chromium - they get the UA font - so naming --font-control here is the
+   only thing that reaches a button at all. Everything you operate or read as
+   data takes the monospace instrument voice. */
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-control);
 }
 
-button:hover {
-  background: var(--bg-row-hover);
+/* Pregonero's .ctrl-btn, to its own numbers: square, hairline, weight 600,
+   and a hover that brightens the BORDER rather than flooding the fill. */
+button {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5em 1em;
+  min-height: 2.5em;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+button:hover:not(:disabled) {
+  background: var(--bg-row);
+  border-color: var(--border-hover);
 }
 
 button:disabled {
-  opacity: 0.35;
-  cursor: default;
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--text-faint);
+  background: var(--bg-disabled);
+  border-color: var(--border-soft);
 }
 
-button:disabled:hover {
-  background: var(--bg-row);
+/* The focus ring is the accent, and it is the accent's other job besides the
+   masthead - Pregonero: --control-border-focus. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* The per-row action buttons. Five or six of them sit across a 280px sidebar
+   beside a surface name, so they opt out of the .ctrl-btn minimum height AND
+   run tighter than the standard control: the monospace voice is wider than
+   the sans it replaced, and at the standard padding the name column collapses
+   to three characters. The name is the thing being read; these are the things
+   being aimed at, and they still clear a comfortable target. */
 button.icon-btn {
-  padding: 4px 8px;
-  font-size: 13px;
+  padding: 4px 5px;
+  min-height: 0;
+  font-size: 12px;
   line-height: 1;
 }
 
@@ -75,10 +202,16 @@ button.danger:hover {
 
 /* ===== Control root ===== */
 
+/* The chrome's own voice, scoped to the role that has chrome - see the note
+   on `body` above for why it cannot live there. Everything below this rule
+   styles the control window and nothing else; the output role renders this
+   whole subtree at display:none. */
 .control-root {
   height: 100%;
   display: flex;
   flex-direction: column;
+  color: var(--text);
+  font-family: var(--font-ui);
 }
 
 .header-bar {
@@ -91,11 +224,17 @@ button.danger:hover {
   flex: none;
 }
 
+/* Pregonero's .control-masthead-wordmark: uppercase, weight 800, tight
+   tracking. The one place the app says what it is. */
 .header-bar h1 {
-  font-size: 16px;
+  font-size: 15px;
   margin: 0;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-family: var(--font-ui);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  color: var(--text);
 }
 
 .header-actions {
@@ -137,10 +276,14 @@ button.danger:hover {
   padding: 14px 16px 10px;
 }
 
+/* Pregonero's .control-setup-label / .ctrl-timed-label: the monospace label
+   voice, 600, uppercase, 0.04em. */
 .sidebar-header h2 {
-  font-size: 12px;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   color: var(--text-dim);
   margin: 0;
 }
@@ -159,7 +302,7 @@ button.danger:hover {
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg-row);
   border: 1px solid transparent;
   cursor: pointer;
@@ -169,13 +312,16 @@ button.danger:hover {
   background: var(--bg-row-hover);
 }
 
+/* Pregonero: --state-selected-bg / --state-selected-border. A choice is a
+   bright hairline box, never a colour - the colours mean liveness. */
 .surface-row.selected {
-  border-color: var(--accent);
-  background: rgba(94, 234, 212, 0.08);
+  border-color: var(--selected-border);
+  background: var(--selected-bg);
 }
 
 .surface-row .surface-name {
   flex: 1;
+  min-width: 5.5em; /* a name is why the row exists; it does not lose to chrome */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -188,7 +334,7 @@ button.danger:hover {
 
 .surface-row .surface-actions {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   flex: none;
 }
 
@@ -226,36 +372,45 @@ button.danger:hover {
 }
 
 .layer-field label {
+  font-family: var(--font-label);
   font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   color: var(--text-dim);
 }
 
+/* Fields sit on Pregonero's --surface-inset (the app ground) rather than on
+   the panel, so a field reads as inset by its hairline alone - the panel and
+   the control share a ground there, and the border is what separates them. */
 .layer-field input[type="text"],
 .layer-field input[type="number"],
 .layer-field select {
-  font-family: inherit;
+  font-family: var(--font-control);
   font-size: 13px;
   color: var(--text);
-  background: var(--bg-row);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
   padding: 6px 8px;
 }
 
+/* Pregonero paints its one slider with accent-color and leaves the rest to
+   the UA. Clay here, not green: these set a value, they do not report a live
+   state. */
 .layer-field input[type="range"] {
   width: 100%;
+  accent-color: var(--accent);
 }
 
 .layer-field textarea {
-  font-family: inherit;
+  font-family: var(--font-control);
   font-size: 13px;
   line-height: 1.5;
   color: var(--text);
-  background: var(--bg-row);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
   padding: 6px 8px;
   resize: vertical;
 }
@@ -264,9 +419,9 @@ button.danger:hover {
   width: 48px;
   height: 28px;
   padding: 0;
-  background: var(--bg-row);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
 }
 
 /* Checkbox rows read as a row, not as the label-above-control column every
@@ -284,7 +439,11 @@ button.danger:hover {
   color: var(--text);
 }
 
+/* Pregonero's --font-numeric with tabular figures: a readout that shifts
+   width as you drag a slider is a readout you cannot watch. */
 .layer-opacity-value {
+  font-family: var(--font-control);
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
   color: var(--text-dim);
   align-self: flex-end;
@@ -294,7 +453,7 @@ button.danger:hover {
   margin: 0 16px 12px;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--text-dim);
+  color: var(--text-faint);
 }
 
 .layer-field .layer-hint {
@@ -321,12 +480,12 @@ button.danger:hover {
 .backdrop-controls select {
   flex: 1;
   min-width: 0; /* let a long camera label shrink instead of widening the sidebar */
-  font-family: inherit;
+  font-family: var(--font-control);
   font-size: 13px;
   color: var(--text);
-  background: var(--bg-row);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
   padding: 6px 8px;
 }
 
@@ -363,10 +522,12 @@ button.danger:hover {
 
 /* The white-field plate is live on the projector right now - the button has
    to say so from across the room, not just read "Hide white". */
+/* Pregonero's --state-armed-*: green because something is live on the wall
+   this second, which is the one thing that earns a status colour. */
 #btn-white-field.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #0a0a0a;
+  background: var(--state-live-bg);
+  border-color: var(--state-live-border);
+  color: var(--text);
 }
 
 /* ===== Preview area ===== */
@@ -387,7 +548,7 @@ button.danger:hover {
   aspect-ratio: 16 / 9;
   background: #000;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
@@ -438,20 +599,23 @@ button.danger:hover {
 
 .preview-surface-outline {
   fill: rgba(94, 234, 212, 0.06);
-  stroke: #565d70;
+  /* Lifted off the old chrome grey: the outline sits over a camera image, so
+     it needs to read against a wall, not against the panel behind it. */
+  stroke: var(--draw-surface-idle);
   stroke-width: 2;
+  paint-order: stroke;
   cursor: move;
   touch-action: none; /* stop the browser hijacking whole-surface drags as scroll/zoom */
 }
 
 .preview-surface-outline.selected {
-  stroke: var(--accent);
+  stroke: var(--draw-surface);
   stroke-width: 4;
   fill: rgba(94, 234, 212, 0.14);
 }
 
 .preview-layer-badge {
-  fill: #fff;
+  fill: var(--draw-label);
   font-size: 20px;
   font-weight: 600;
   text-anchor: middle;
@@ -534,7 +698,7 @@ button.danger:hover {
    edge un-draggable. */
 .preview-keepout-outline {
   fill: none;
-  stroke: var(--danger);
+  stroke: var(--draw-keepout);
   stroke-width: 2;
   stroke-dasharray: 8 6;
   pointer-events: none;
@@ -582,33 +746,33 @@ button.danger:hover {
 }
 
 .corner-handle circle:not(.corner-handle-hit) {
-  fill: rgba(17, 19, 24, 0.85);
-  stroke: var(--accent);
+  fill: var(--draw-handle-fill);
+  stroke: var(--draw-surface);
   stroke-width: 2;
 }
 
 .corner-handle.active circle:not(.corner-handle-hit) {
-  fill: var(--accent);
+  fill: var(--draw-surface);
 }
 
 .corner-handle.camera circle:not(.corner-handle-hit) {
-  stroke: #f0a53a;
+  stroke: var(--draw-camera);
 }
 
 /* Keep-out point handles: the same handle idiom as the surface corners, in
    the keep-out's own colour, and smaller - a traced shadow carries 20-40 of
    them and full-size dots would be a solid ring of chrome. */
 .corner-handle.keepout circle:not(.corner-handle-hit) {
-  stroke: var(--danger);
+  stroke: var(--draw-keepout);
   stroke-width: 2;
 }
 
 .corner-handle.keepout.active circle:not(.corner-handle-hit) {
-  fill: var(--danger);
+  fill: var(--draw-keepout);
 }
 
 .corner-handle text {
-  fill: var(--text);
+  fill: var(--draw-label);
   font-size: 13px;
   font-weight: 700;
   text-anchor: middle;
@@ -618,7 +782,7 @@ button.danger:hover {
 }
 
 .corner-handle.active text {
-  fill: #0a0a0a;
+  fill: #0a0a09;
 }
 
 /* ===== Output root ===== */

@@ -64,15 +64,19 @@
 
     <div class="main-layout">
       <aside class="sidebar">
+        <!-- One list, because there is one kind of thing on the wall. A
+             shape that holds black is a shape whose layer type is "fill", so
+             it lives here with everything else and takes part in the same
+             paint order. See SHAPES in mapper.js. -->
         <div class="sidebar-header">
-          <h2>Surfaces</h2>
-          <button id="btn-add-surface" type="button">+ Add surface</button>
+          <h2>Shapes</h2>
+          <button id="btn-add-shape" type="button">+ Add shape</button>
         </div>
-        <ul id="surface-list" class="surface-list"></ul>
+        <ul id="shape-list" class="surface-list"></ul>
 
         <div class="sidebar-section">
           <div class="sidebar-header">
-            <h2>Layer</h2>
+            <h2>Shape</h2>
           </div>
           <div id="layer-panel" class="layer-panel"></div>
         </div>
@@ -94,19 +98,6 @@
           <p id="media-folder-status" class="media-folder-status"></p>
           <p id="media-folder-failures" class="media-folder-failures" hidden></p>
           <p class="layer-hint">Layer sources are looked up inside this folder, by name &mdash; the mapping stores the name, never the folder. A name the folder does not have falls back to the served directory, so a mapping made elsewhere still opens.</p>
-        </div>
-
-        <!-- Keep-outs: a separate list from the surfaces above, because a
-             keep-out is a separate primitive - a polygon in output space that
-             holds black, with no layer, no z-order and no four-corner
-             constraint. See KEEP-OUTS in mapper.js. -->
-        <div class="sidebar-section">
-          <div class="sidebar-header">
-            <h2>Keep-outs</h2>
-            <button id="btn-add-keepout" type="button">+ Add keep-out</button>
-          </div>
-          <ul id="keepout-list" class="surface-list"></ul>
-          <div id="keepout-panel" class="layer-panel"></div>
         </div>
 
         <div class="sidebar-section">
@@ -160,9 +151,9 @@
                this element exists in the control role and nowhere else. -->
           <video id="preview-camera" class="preview-camera" autoplay muted playsinline hidden></video>
           <svg id="preview-svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid meet"></svg>
-          <!-- Countdown for "Suggest from my shadow", shown here as well as
-               on the wall: the performer reads it off the wall, but whoever
-               is still at the desk should see the same number. -->
+          <!-- Countdown for "Adopt boundaries", shown here as well as on the
+               wall: the performer reads it off the wall, but whoever is still
+               at the desk should see the same number. -->
           <div id="preview-countdown" class="preview-countdown" hidden></div>
         </div>
       </main>
@@ -171,16 +162,14 @@
 
   <!-- ============ OUTPUT ROLE (?output) ============ -->
   <div id="output-root" class="output-root" hidden>
-    <!-- Per-surface matrix3d-warped wrapper divs land here (see WARP / OUTPUT
-         RENDERING in mapper.js). Replaces the slice-1 SVG placeholder. -->
+    <!-- One root div per shape lands here, in list order, holding either a
+         matrix3d-warped wrapper or a full-frame fill SVG (see WARP / OUTPUT
+         RENDERING in mapper.js). Fill shapes live in this same container and
+         this same order: nothing paints above everything by a rule any more.
+         The whole container sits BEFORE #output-white on purpose - the white
+         plate has to stay a clean plate, or "Adopt boundaries" would be
+         tracing a shadow through a shape's own fill. -->
     <div id="output-surfaces" class="output-surfaces"></div>
-    <!-- Keep-outs: black polygons that paint above EVERY surface wrapper,
-         regardless of list order. A sibling after #output-surfaces, so paint
-         order alone puts them on top - no z-index, no interaction with the
-         surface reconciler. Deliberately BEFORE #output-white: the white
-         plate must stay a clean plate, or the shadow suggestion would be
-         tracing a shadow through its own mask. -->
-    <svg id="output-keepouts" class="output-keepouts" preserveAspectRatio="none"></svg>
     <!-- White-field helper: a full-frame white plate the control window can
          raise, so the projector's lit rectangle is visible while the camera
          backdrop's calibration corners are placed. -->

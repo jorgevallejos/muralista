@@ -58,7 +58,16 @@ const PREVIEW_H = 900;
 // v6 had no automatic half either: opening a v6 mapping in this build makes
 // its text stop inheriting the quad's stretch, which is the whole point of
 // the change and is not something migration should try to preserve.
-const PROJECT_VERSION = 7;
+// v8 (2026-08-23) REMOVED the top-level keepOuts array that v5 added, and gave
+// every shape an `outline` of its own: see SHAPES below. A keep-out becomes a
+// shape whose layer type is "fill", which is why the separate array has nothing
+// left to hold. v5's reasoning is still correct about the machinery and was
+// wrong about the model - four corners is what CONTENT needs, not what a shape
+// is - so the outline and the content frame are now two fields on one object
+// rather than two objects. Migration is written to preserve APPEARANCE, not
+// shape: an old keep-out painted above everything, so it arrives at the top of
+// the z-order and a v7 mapping opens looking exactly as it did.
+const PROJECT_VERSION = 8;
 
 function emptyProject() {
   return {
@@ -75,11 +84,11 @@ function emptyProject() {
     // normalized camera space, [TL, TR, BR, BL] like surface.corners.
     // null until calibrated.
     cameraQuad: null,
+    // Every shape on the wall, in paint order (later = on top). Including the
+    // ones that hold black: black is a fill, not a separate kind of thing.
+    // The key is still called `surfaces` because it is an address that older
+    // mappings are written against - same argument as STORAGE_KEY above.
     surfaces: [],
-    // Regions the projector holds dark. Black is a decision about the
-    // layout, so it is an object in the mapping rather than a black image on
-    // a surface. See KEEP-OUTS below.
-    keepOuts: [],
   };
 }
 
@@ -126,66 +135,131 @@ function migrateProject(obj) {
   if (typeof proj.cameraDeviceId !== "string") proj.cameraDeviceId = null;
   if (!isValidQuad(proj.cameraQuad)) proj.cameraQuad = null;
 
-  // v3: the sound-reactive layer is gone. v4: so is the beat layer. Copy
-  // each surface (and its layer) rather than mutating in place - the object
-  // handed to us may be a parsed import the caller still holds. A v2 layer
-  // that opted into mic reactivity simply loses it; a beat layer from v2/v3
-  // becomes a test pattern, which is the honest fallback - the surface stays
-  // on the wall and stays visible, it just stops pulsing.
-  proj.surfaces = (Array.isArray(proj.surfaces) ? proj.surfaces : []).map((surface) => {
-    if (!surface || typeof surface !== "object" || !surface.layer) return surface;
-    const layer = Object.assign({}, surface.layer);
-    delete layer.micReactivity;
-    delete layer.beatMode;
-    delete layer.bpm;
-    if (layer.type === "beat") layer.type = "pattern";
-    // v6, and v7's `aspect` with it: a text layer's own fields, defaulted and
-    // clamped here and nowhere else. An import is arbitrary JSON - a role of
-    // 42, a negative size or an aspect of 0 would otherwise reach the renderer
-    // and paint something inexplicable at a projector (an aspect of 0 in
-    // particular divides the layout box to nothing). A layer of any other type
-    // is left exactly as it is: no older project gains a field it never had.
-    if (layer.type === "text") Object.assign(layer, sanitizeTextLayer(layer));
-    return Object.assign({}, surface, { layer });
-  });
+  const shapes = (Array.isArray(proj.surfaces) ? proj.surfaces : [])
+    .map((surface) => migrateShape(surface))
+    .filter(Boolean);
 
-  // v5: keep-outs. A project that predates them simply carries none, which
-  // is exactly true of it. Rings are sanitized rather than trusted - an
-  // imported file is arbitrary JSON, and a ring under the 3-point floor (or
-  // carrying a non-finite coordinate) would paint as a degenerate polygon
-  // with no visible cause at a projector. Anything unusable is dropped here
-  // rather than half-repaired downstream: migrateProject is the single
+  // v8: the keep-out array is dissolved into the shape list. Every entry
+  // becomes a shape whose layer type is "fill", carrying its ring as the
+  // outline and its margin as a fill field. They go on the END of the list,
+  // and that placement is the whole of the appearance guarantee: a keep-out
+  // used to paint above every surface by a rule of its own, and list order IS
+  // paint order here (later = on top), so the end of the list is where "above
+  // everything" now lives. A v7 mapping opens looking exactly as it did, and
+  // from then on those shapes can be reordered like any other.
+  //
+  // Rings are sanitized rather than trusted, for the same reason they always
+  // were: an import is arbitrary JSON, and a ring under the 3-point floor or
+  // carrying a non-finite coordinate would paint as a degenerate polygon with
+  // no visible cause at a projector. migrateProject stays the single
   // enforcement point, on load AND on import.
-  proj.keepOuts = (Array.isArray(proj.keepOuts) ? proj.keepOuts : [])
+  (Array.isArray(proj.keepOuts) ? proj.keepOuts : [])
     .filter((k) => k && typeof k === "object" && isValidPointRing(k.points))
-    .map((k, i) => ({
-      id: typeof k.id === "string" && k.id ? k.id : genKeepOutId(),
-      name: typeof k.name === "string" && k.name.trim() ? k.name.trim() : `Keep-out ${i + 1}`,
-      points: k.points.map(([x, y]) => [clampCoord(x), clampCoord(y)]),
-      margin: clampMargin(k.margin),
-      visible: k.visible !== false,
-    }));
+    .forEach((k, i) => {
+      shapes.push({
+        id: typeof k.id === "string" && k.id ? k.id : genShapeId(),
+        // Kept verbatim. Renaming somebody's labels is not migration's job -
+        // "Keep-out 1" is what they called it and what they will look for.
+        name: typeof k.name === "string" && k.name.trim() ? k.name.trim() : `Fill ${i + 1}`,
+        // No content frame, and none invented: a fill shape needs none. One is
+        // materialised only if the type is ever changed to something that
+        // carries content (see setLayerType).
+        corners: null,
+        outline: k.points.map(([x, y]) => [clampCoord(x), clampCoord(y)]),
+        layer: {
+          type: "fill",
+          src: null,
+          opacity: 1,
+          color: FILL_LAYER_DEFAULTS.color,
+          margin: clampMargin(k.margin),
+        },
+        visible: k.visible !== false,
+      });
+    });
+  delete proj.keepOuts;
 
+  proj.surfaces = shapes;
   proj.version = PROJECT_VERSION;
   return proj;
 }
 
-function genSurfaceId() {
+// One shape, brought forward. Copies rather than mutating in place - the
+// object handed to us may be a parsed import the caller still holds. Returns
+// null for a shape with neither a usable outline nor a usable frame, which is
+// not a shape at all.
+//
+// v3: the sound-reactive layer is gone. v4: so is the beat layer. A v2 layer
+// that opted into mic reactivity simply loses it; a beat layer from v2/v3
+// becomes a test pattern, which is the honest fallback - the shape stays on
+// the wall and stays visible, it just stops pulsing.
+function migrateShape(surface) {
+  if (!surface || typeof surface !== "object") return null;
+
+  const layer = Object.assign({}, surface.layer || {});
+  delete layer.micReactivity;
+  delete layer.beatMode;
+  delete layer.bpm;
+  if (layer.type === "beat") layer.type = "pattern";
+  if (!SHAPE_TYPES.includes(layer.type)) layer.type = "pattern";
+  // v6, and v7's `aspect` with it: a text layer's own fields, defaulted and
+  // clamped here and nowhere else. An import is arbitrary JSON - a role of 42,
+  // a negative size or an aspect of 0 would otherwise reach the renderer and
+  // paint something inexplicable at a projector (an aspect of 0 in particular
+  // divides the layout box to nothing). v8 adds the same treatment for a fill
+  // layer's colour and margin. A layer of any other type is left exactly as it
+  // is: no older project gains a field it never had.
+  if (layer.type === "text") Object.assign(layer, sanitizeTextLayer(layer));
+  if (layer.type === "fill") Object.assign(layer, sanitizeFillLayer(layer));
+
+  const corners = isValidQuad(surface.corners)
+    ? surface.corners.map(([x, y]) => [clampCoord(x), clampCoord(y)])
+    : null;
+
+  // v8: the outline. A shape from v7 or earlier has none, and the only honest
+  // default is its own frame - "outline and frame are the same four points" is
+  // precisely what a plain quad meant before this existed, so a v7 surface
+  // opens behaving identically and clipping nothing.
+  const outline = isValidPointRing(surface.outline)
+    ? surface.outline.map(([x, y]) => [clampCoord(x), clampCoord(y)])
+    : corners
+      ? corners.map(([x, y]) => [x, y])
+      : null;
+  if (!outline) return null;
+
+  return {
+    id: typeof surface.id === "string" && surface.id ? surface.id : genShapeId(),
+    name: typeof surface.name === "string" && surface.name.trim() ? surface.name.trim() : "Shape",
+    corners,
+    outline,
+    layer,
+    visible: surface.visible !== false,
+  };
+}
+
+function genShapeId() {
   // Short unique-enough slug: timestamp base36 + a few random base36 chars
-  // (guards against two surfaces created in the same millisecond).
+  // (guards against two shapes created in the same millisecond). The "s-"
+  // prefix is unchanged from when this only ever made surfaces: every id in
+  // every saved mapping carries it, and a prefix is part of an address.
   return "s-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 }
 
-function defaultSurface(index) {
+// A new shape is a square, and its outline IS its frame - the same four points
+// in both fields. That is not a special case to be unpicked later: it is the
+// whole starting position of the model, and while it holds the two are edited
+// as one thing (see shapeOutlineIsFrame).
+function defaultShape(index) {
+  const corners = [
+    [0.35, 0.35],
+    [0.65, 0.35],
+    [0.65, 0.65],
+    [0.35, 0.65],
+  ];
   return {
-    id: genSurfaceId(),
-    name: `Surface ${index}`,
-    corners: [
-      [0.35, 0.35],
-      [0.65, 0.35],
-      [0.65, 0.65],
-      [0.35, 0.65],
-    ],
+    id: genShapeId(),
+    name: `Shape ${index}`,
+    corners,
+    outline: corners.map(([x, y]) => [x, y]),
     layer: { type: "pattern", src: null, opacity: 1 },
     visible: true,
   };
@@ -301,82 +375,177 @@ function sanitizeTextLayer(layer) {
 }
 
 // =========================================================================
-// KEEP-OUTS
+// SHAPES
 // =========================================================================
-// A keep-out is a region the projector holds dark. Muralista's design is
-// subtractive - the projector floods the whole background and the mapping is
-// a layout of that flood, INCLUDING which parts stay dark - so black has to
-// be an object in the mapping, not a black PNG parked on a surface.
+// THERE IS NO KEEP-OUT. There are shapes, and the only difference between one
+// shape and the next is what is inside it. That is the v8 model, and it came
+// from the hand holding the mouse: the tool used to have two primitives, and a
+// person at a wall has one.
 //
-// Its first job is the performer, and the driver is eye comfort rather than
-// composition: standing in the beam is physically unpleasant and nobody is
-// going to do it for a whole set.
+// A SHAPE IS AN OUTLINE, PLUS A FRAME WHEN IT CARRIES CONTENT.
 //
-// THE RULE THAT GOVERNS ALL OF THIS: trace the performer's SHADOW, never the
-// performer. The camera and the projector lens do not sit in the same place,
-// so they genuinely disagree about where a body is - measured in the studio
-// at roughly two thirds of a head width on the wall, with the camera as
-// close to the lens as it would physically go. The shadow has no such error
-// and cannot: it is by construction the exact set of projector pixels the
-// body blocks, because the projector drew it, and it lands on the wall plane
-// where the existing homography is exact. Also stated in README under
-// "Keep-outs and the shadow rule" and in the CAMERA BACKDROP section below.
+//   outline - N points, minimum 3, in normalized output space. Every shape has
+//             one, and it is edited identically on every shape.
+//   corners - four points, the CONTENT FRAME. Only a shape carrying video,
+//             image or text needs one, because four corners is what a
+//             homography needs to warp a square of content onto a quad. A
+//             seven-point polygon has no homography, and never needed one.
 //
-// A KEEP-OUT IS NOT A SURFACE, and the model here is deliberately not bent
-// around the surface one. Every surface is exactly four corners because four
-// corners is what a homography needs to warp content onto a quad. A keep-out
-// carries no content - it holds black - so it needs no warp, no homography
-// and no four-corner constraint. An irregular polygon is the CHEAP version
-// here, not the expensive one: it asks for less machinery, not more.
+// Content is WARPED BY THE FRAME and CLIPPED TO THE OUTLINE. A new shape
+// starts as a square whose outline and frame are the same four points, so it
+// clips nothing and behaves exactly as a v1.0.0 surface did; adding a point
+// moves the outline away from the frame and the clipping starts to bite.
+//
+// WHY THE SPLIT USED TO BE TWO OBJECTS, and why that was the wrong call. A
+// keep-out carries no content, so it needs no frame, so "not a surface" looked
+// like the cheap answer - and it was, for the machinery. It was the expensive
+// answer for the person: point editing behaved differently in two places, one
+// of the two lists sat outside the z-order by a rule, and the polygon nobody
+// could put a video in was sitting right there in the sidebar. Two concepts
+// went in, one comes out, and the one that survives is the one Jorge already
+// had in his head.
+//
+// BLACK IS A FILL. The performer mask is a shape whose layer type is "fill"
+// and whose colour is black. It takes part in the z-order like everything
+// else - no rule pins it on top any more - and everything a fill shape can do
+// is something every other shape can do too.
 
-const KEEPOUT_MIN_POINTS = 3;
+// Every layer type a shape can have. "fill" is v8's addition and is the one
+// type that needs no content frame at all.
+const SHAPE_TYPES = ["pattern", "video", "image", "text", "fill"];
 
-// How far outward the shape is grown, as a fraction of FRAME HEIGHT. Drawn
-// as a stroke rather than as a polygon offset, but the number means the
-// growth itself - see applyKeepOutMarginStroke().
-const KEEPOUT_MARGIN_MAX = 0.15;
+// Fewer than three points is not a polygon. A two-point "ring" would paint
+// nothing while still sitting in the list looking like a live shape.
+const SHAPE_MIN_POINTS = 3;
 
-// A ring of >= 3 normalized points, the shape keepOut.points uses. Unlike a
-// surface's corners there is no upper count constraint and no exact count:
-// nothing about holding black needs four points.
+// A ring of >= 3 normalized points, the shape shape.outline uses. Unlike the
+// content frame there is no upper count and no exact count: nothing about
+// bounding a region needs four points.
 function isValidPointRing(pts) {
   return (
     Array.isArray(pts) &&
-    pts.length >= KEEPOUT_MIN_POINTS &&
+    pts.length >= SHAPE_MIN_POINTS &&
     pts.every((p) => Array.isArray(p) && p.length === 2 && p.every((n) => typeof n === "number" && isFinite(n)))
   );
 }
 
+// The outline, defensively. The control window only ever holds migrated
+// projects, but the output window takes whatever the broadcast handed it and
+// isValidProject() checks only version + surfaces. A shape with no usable
+// outline but a usable frame falls back to the frame, which is what it meant
+// before outlines existed; one with neither is not drawable and returns null.
+function shapeOutline(shape) {
+  if (shape && isValidPointRing(shape.outline)) return shape.outline;
+  if (shape && isValidQuad(shape.corners)) return shape.corners;
+  return null;
+}
+
+// The content frame, or null. A fill shape legitimately has none.
+function shapeFrame(shape) {
+  return shape && isValidQuad(shape.corners) ? shape.corners : null;
+}
+
+function shapeLayer(shape) {
+  return (shape && shape.layer) || { type: "pattern", src: null, opacity: 1 };
+}
+
+function shapeType(shape) {
+  const type = shapeLayer(shape).type;
+  return SHAPE_TYPES.includes(type) ? type : "pattern";
+}
+
+function shapeCarriesContent(shape) {
+  return shapeType(shape) !== "fill";
+}
+
+// TRUE WHILE THE OUTLINE IS THE FRAME, and this is a geometric test rather
+// than a remembered flag on purpose. While it holds, the two are one thing:
+// dragging a corner writes both, the preview shows one set of handles, and
+// nothing is clipped. Adding a point breaks it; deleting that point back off
+// restores it, because the test asks the geometry rather than the history.
+//
+// Exact equality, not a tolerance, and it is exact by construction: while
+// linked, every edit writes the SAME computed value into both fields, and JSON
+// round-trips a double unchanged. A tolerance here would only invent a band in
+// which the two are "nearly" one thing, which is not a state this model has.
+function shapeOutlineIsFrame(shape) {
+  const outline = shape && shape.outline;
+  const frame = shapeFrame(shape);
+  if (!frame || !Array.isArray(outline) || outline.length !== 4) return false;
+  return outline.every((p, i) => p[0] === frame[i][0] && p[1] === frame[i][1]);
+}
+
+// The axis-aligned bounding quad of a ring, in surface.corners order
+// [TL, TR, BR, BL]. Used when a shape that never had a content frame is given
+// a type that needs one: the box the outline already occupies is the only
+// frame the tool can honestly propose, and it is the one that leaves the
+// content covering everything the outline will let through.
+function outlineBoundingQuad(points) {
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  const x0 = Math.min.apply(null, xs);
+  const x1 = Math.max.apply(null, xs);
+  const y0 = Math.min.apply(null, ys);
+  const y1 = Math.max.apply(null, ys);
+  return [
+    [x0, y0],
+    [x1, y0],
+    [x1, y1],
+    [x0, y1],
+  ];
+}
+
+// =========================================================================
+// FILL LAYER
+// =========================================================================
+// A shape that IS its colour. It needs no media folder, no Blob and no frame:
+// the outline is the content.
+//
+// Its first job is the performer, and the driver is eye comfort rather than
+// composition: standing in the beam is physically unpleasant and nobody is
+// going to do it for a whole set. Muralista's design is subtractive - the
+// projector floods the whole background and the mapping is a layout of that
+// flood, INCLUDING which parts stay dark - so black has to be an object in the
+// mapping, not a black PNG parked on a quad.
+//
+// THE RULE THAT GOVERNS DRAWING ONE AROUND A PERSON: trace the performer's
+// SHADOW, never the performer. The camera and the projector lens do not sit in
+// the same place, so they genuinely disagree about where a body is - measured
+// in the studio at roughly two thirds of a head width on the wall, with the
+// camera as close to the lens as it would physically go. The shadow has no
+// such error and cannot: it is by construction the exact set of projector
+// pixels the body blocks, because the projector drew it, and it lands on the
+// wall plane where the existing homography is exact. Also stated in README
+// under "Adopting boundaries, and the shadow rule" and in the CAMERA BACKDROP
+// section below.
+
+// How far outward a fill shape is grown, as a fraction of FRAME HEIGHT. Drawn
+// as a stroke rather than as a polygon offset, but the number means the growth
+// itself - see applyMarginStroke().
+const FILL_MARGIN_MAX = 0.15;
+
+const FILL_LAYER_DEFAULTS = {
+  color: "#000000",
+  margin: 0,
+};
+
 function clampMargin(v) {
   const n = Number(v);
   if (!isFinite(n)) return 0;
-  return Math.max(0, Math.min(KEEPOUT_MARGIN_MAX, n));
+  return Math.max(0, Math.min(FILL_MARGIN_MAX, n));
 }
 
-function genKeepOutId() {
-  // Same scheme as genSurfaceId, different prefix so an id says at a glance
-  // which list it belongs to.
-  return "k-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-}
-
-// A new keep-out arrives as a tall hexagon rather than a rectangle: the case
-// it exists for is a standing performer, and starting from a shape that
-// already leans that way means fewer points to push. Six points is "a
-// handful" - enough to be worth editing, few enough to read.
-function defaultKeepOut(index) {
+// The single shape authority for a fill layer's own fields, the exact
+// counterpart of sanitizeTextLayer: fully defaulted, clamped, never mutates
+// its argument. Called from migrateShape (the enforcement point on load AND on
+// import, where a colour of `javascript:` or a margin of -8 is possible) and
+// from setLayerType, so choosing the type writes the fields into the project
+// there and then rather than leaving the renderer to invent them every frame.
+function sanitizeFillLayer(layer) {
+  const src = layer && typeof layer === "object" ? layer : {};
   return {
-    id: genKeepOutId(),
-    name: `Keep-out ${index}`,
-    points: [
-      [0.44, 0.28],
-      [0.56, 0.28],
-      [0.59, 0.6],
-      [0.56, 0.9],
-      [0.44, 0.9],
-      [0.41, 0.6],
-    ],
-    margin: 0,
-    visible: true,
+    color: isHexColor(src.color) ? src.color : FILL_LAYER_DEFAULTS.color,
+    margin: clampMargin(src.margin),
   };
 }
 
@@ -384,24 +553,40 @@ function defaultKeepOut(index) {
 let project = emptyProject();
 
 // Control-local UI state — never persisted, never broadcast.
-let selectedSurfaceId = null;
+let selectedShapeId = null;
 
-// The selected keep-out, and which of its points is live for the Delete key
-// and the panel's delete button. Selection is EXCLUSIVE with
-// selectedSurfaceId: the preview shows draggable handles for one thing at a
-// time, and a second live set of handles at a projector is a misclick
-// waiting to happen. selectSurface()/selectKeepOutState() enforce it.
-let selectedKeepOutId = null;
+// WHAT IS LIVE INSIDE THE SELECTED SHAPE, and the two are mutually exclusive
+// because the preview shows one live handle at a time - a second one at a
+// projector is a misclick waiting to happen.
+//
+//   selectedPointIndex - an index into the shape's OUTLINE. Set by clicking a
+//                        point handle. Delete removes it; arrows nudge it.
+//   activeCornerIndex  - one of the CONTENT FRAME's 4 corners (0=TL, 1=TR,
+//                        2=BR, 3=BL), picked with the 1-4 keys, matching the
+//                        numbers baked into the test pattern.
+//
+// Both default to null on every fresh selection, so a click-select can be
+// followed straight by arrow-key coarse placement of the whole shape with no
+// extra keypress - precision is opt-in. 0 or Escape clears back to that.
 let selectedPointIndex = null;
-
-// Which of the selected surface's 4 corners (0=TL,1=TR,2=BR,3=BL) arrow-key
-// nudges apply to. Selected via the 1-4 keys. `null` means "whole surface"
-// mode (0 or Escape clears back to this): arrow keys translate all 4
-// corners together instead of nudging a single one. Control-local, never
-// persisted. Defaults to null on every fresh selection so a click-select
-// can be followed straight by arrow-key coarse placement, no extra keypress
-// needed - corner precision is opt-in via 1-4.
 let activeCornerIndex = null;
+
+function clearShapeSubselection() {
+  selectedPointIndex = null;
+  activeCornerIndex = null;
+}
+
+// The two halves of the exclusivity above, each used wherever one of them is
+// being set, so neither can be left live alongside the other.
+function setSelectedPointIndex(index) {
+  selectedPointIndex = index;
+  activeCornerIndex = null;
+}
+
+function setActiveCornerIndex(index) {
+  activeCornerIndex = index;
+  selectedPointIndex = null;
+}
 
 // Latest output-window size in real screen pixels, learned from the
 // 'outputSize' broadcast (see WARP/SYNC below) so arrow-key nudges can be
@@ -451,171 +636,113 @@ function svgPointerToNormalized(evt, svg) {
   return [(evt.clientX - rect.left) / rect.width, (evt.clientY - rect.top) / rect.height];
 }
 
-function getSelectedSurface() {
-  return project.surfaces.find((s) => s.id === selectedSurfaceId) || null;
+function getSelectedShape() {
+  return project.surfaces.find((s) => s.id === selectedShapeId) || null;
+}
+
+function findShape(id) {
+  return project.surfaces.find((s) => s.id === id) || null;
 }
 
 // --- Mutators (control-side only). Each one mutates `project` in place,
 // then the caller is responsible for persisting/broadcasting/rendering
 // via `commitProjectChange()`. ---
 
-function addSurface() {
-  const surface = defaultSurface(project.surfaces.length + 1);
-  project.surfaces.push(surface);
-  selectedSurfaceId = surface.id;
-  activeCornerIndex = null;
-  clearKeepOutSelection(); // selection is exclusive across the two lists
+function addShape() {
+  const shape = defaultShape(project.surfaces.length + 1);
+  project.surfaces.push(shape);
+  selectedShapeId = shape.id;
+  clearShapeSubselection();
   commitProjectChange();
 }
 
-function removeSurface(id) {
+function removeShape(id) {
   project.surfaces = project.surfaces.filter((s) => s.id !== id);
-  if (selectedSurfaceId === id) selectedSurfaceId = null;
+  if (selectedShapeId === id) {
+    selectedShapeId = null;
+    clearShapeSubselection();
+  }
   commitProjectChange();
 }
 
-function renameSurface(id, name) {
+function renameShape(id, name) {
   const trimmed = (name || "").trim();
   if (!trimmed) return;
-  const surface = project.surfaces.find((s) => s.id === id);
-  if (!surface) return;
-  surface.name = trimmed;
+  const shape = findShape(id);
+  if (!shape) return;
+  shape.name = trimmed;
   commitProjectChange();
 }
 
-function toggleSurfaceVisible(id) {
-  const surface = project.surfaces.find((s) => s.id === id);
-  if (!surface) return;
-  surface.visible = !surface.visible;
+function toggleShapeVisible(id) {
+  const shape = findShape(id);
+  if (!shape) return;
+  shape.visible = !shape.visible;
   commitProjectChange();
 }
 
 // --- Z-order (v2.2). project.surfaces array order IS render order IS
 // stacking order in both preview and output (later = on top) - these just
-// move a surface one slot within that same array. No-op at either end of
-// the list (buttons are also disabled there in the UI, but the mutator
-// stays defensive since it's reachable from the smoke-test harness too). ---
+// move a shape one slot within that same array. Since v8 that includes fill
+// shapes: black used to be pinned above everything by a rule, and now it
+// queues like everything else. No-op at either end of the list (buttons are
+// also disabled there in the UI, but the mutator stays defensive since it's
+// reachable from the smoke-test harness too). ---
 
-function moveSurfaceUp(id) {
+function moveShapeUp(id) {
   const idx = project.surfaces.findIndex((s) => s.id === id);
   if (idx <= 0) return;
-  const [surface] = project.surfaces.splice(idx, 1);
-  project.surfaces.splice(idx - 1, 0, surface);
+  const [shape] = project.surfaces.splice(idx, 1);
+  project.surfaces.splice(idx - 1, 0, shape);
   commitProjectChange();
 }
 
-function moveSurfaceDown(id) {
+function moveShapeDown(id) {
   const idx = project.surfaces.findIndex((s) => s.id === id);
   if (idx === -1 || idx >= project.surfaces.length - 1) return;
-  const [surface] = project.surfaces.splice(idx, 1);
-  project.surfaces.splice(idx + 1, 0, surface);
+  const [shape] = project.surfaces.splice(idx, 1);
+  project.surfaces.splice(idx + 1, 0, shape);
   commitProjectChange();
 }
 
 // --- Duplicate (v2.2): the one-gesture way to register an alpha overlay
-// exactly onto an existing (usually video) surface - same corners, same
-// layer, inserted immediately after the original so it renders on top of it
-// per the z-order rule above. Corners and layer are deep-copied so editing
-// the copy (e.g. switching its layer to an overlay .webm) never touches the
-// original. ---
+// exactly onto an existing (usually video) shape - same geometry, same layer,
+// inserted immediately after the original so it renders on top of it per the
+// z-order rule above. Outline, frame and layer are all deep-copied, so editing
+// the copy never touches the original. ---
 
-function duplicateSurface(id) {
+function duplicateShape(id) {
   const idx = project.surfaces.findIndex((s) => s.id === id);
   if (idx === -1) return;
   const original = project.surfaces[idx];
   const copy = {
-    id: genSurfaceId(),
+    id: genShapeId(),
     name: `${original.name} copy`,
-    corners: original.corners.map(([x, y]) => [x, y]),
+    corners: isValidQuad(original.corners) ? original.corners.map(([x, y]) => [x, y]) : null,
+    outline: original.outline.map(([x, y]) => [x, y]),
     layer: original.layer
       ? JSON.parse(JSON.stringify(original.layer))
       : { type: "pattern", src: null, opacity: 1 },
     visible: original.visible,
   };
   project.surfaces.splice(idx + 1, 0, copy);
-  selectedSurfaceId = copy.id;
-  activeCornerIndex = null;
-  clearKeepOutSelection();
+  selectedShapeId = copy.id;
+  clearShapeSubselection();
   commitProjectChange();
 }
 
-// --- Keep-out mutators. Same contract as the surface mutators above:
-// mutate `project` in place, then commitProjectChange() persists,
-// broadcasts and re-renders. Keep-outs live in their own top-level array,
-// so none of the surface machinery - z-order, duplicate, layers - reaches
-// them, which is the point. ---
+// --- Outline mutators. Every shape has an outline and every shape edits it
+// the same way, which is the whole point of v8: there is no second code path
+// here to behave differently from this one. ---
 
-function getSelectedKeepOut() {
-  return project.keepOuts.find((k) => k.id === selectedKeepOutId) || null;
-}
-
-// The two halves of exclusive selection (see selectedKeepOutId). Selecting a
-// keep-out drops any surface selection and vice versa; both also drop the
-// live point/corner index, since an index from the previous shape means
-// nothing against the new one.
-function clearKeepOutSelection() {
-  selectedKeepOutId = null;
-  selectedPointIndex = null;
-}
-
-function selectKeepOutState(id) {
-  selectedKeepOutId = id;
-  selectedPointIndex = null;
-  if (id != null) {
-    selectedSurfaceId = null;
-    activeCornerIndex = null;
-  }
-}
-
-function selectKeepOut(id) {
-  selectKeepOutState(id);
-  renderControl(); // selection is local UI state, no save/broadcast needed
-}
-
-function addKeepOut() {
-  const keepOut = defaultKeepOut(project.keepOuts.length + 1);
-  project.keepOuts.push(keepOut);
-  selectKeepOutState(keepOut.id);
-  commitProjectChange();
-}
-
-function removeKeepOut(id) {
-  project.keepOuts = project.keepOuts.filter((k) => k.id !== id);
-  if (selectedKeepOutId === id) clearKeepOutSelection();
-  commitProjectChange();
-}
-
-function renameKeepOut(id, name) {
-  const trimmed = (name || "").trim();
-  if (!trimmed) return;
-  const keepOut = project.keepOuts.find((k) => k.id === id);
-  if (!keepOut) return;
-  keepOut.name = trimmed;
-  commitProjectChange();
-}
-
-function toggleKeepOutVisible(id) {
-  const keepOut = project.keepOuts.find((k) => k.id === id);
-  if (!keepOut) return;
-  keepOut.visible = !keepOut.visible;
-  commitProjectChange();
-}
-
-function setKeepOutMargin(id, margin) {
-  const keepOut = project.keepOuts.find((k) => k.id === id);
-  if (!keepOut) return;
-  keepOut.margin = clampMargin(margin);
-  commitProjectChange();
-}
-
-// Replaces a keep-out's whole ring at once. Used by "Suggest from my
-// shadow", which hands back a traced contour rather than editing points one
-// at a time. Rejects anything that isn't a usable ring rather than leaving
-// the keep-out half-replaced.
-function setKeepOutPoints(id, points) {
-  const keepOut = project.keepOuts.find((k) => k.id === id);
-  if (!keepOut || !isValidPointRing(points)) return false;
-  keepOut.points = points.map(([x, y]) => [clampCoord(x), clampCoord(y)]);
+// Replaces a shape's whole outline at once. Used by "Adopt boundaries", which
+// hands back a traced contour rather than editing points one at a time.
+// NEVER touches the content frame: adopting the silhouette of a thing on stage
+// says where the shape ENDS, not how its content is warped.
+function setShapeOutline(id, points) {
+  const shape = findShape(id);
+  if (!shape || !isValidPointRing(points)) return false;
+  shape.outline = points.map(([x, y]) => [clampCoord(x), clampCoord(y)]);
   selectedPointIndex = null; // an index into the old ring means nothing now
   commitProjectChange();
   return true;
@@ -625,25 +752,28 @@ function setKeepOutPoints(id, points) {
 // index - which is what clicking an edge does. Inserting at the end of the
 // array instead would connect the new point to whichever points happen to
 // bookend the array, folding the polygon over itself.
-function insertKeepOutPoint(id, index, point) {
-  const keepOut = project.keepOuts.find((k) => k.id === id);
-  if (!keepOut) return;
-  keepOut.points.splice(index, 0, [clampCoord(point[0]), clampCoord(point[1])]);
-  selectedPointIndex = index;
+//
+// This is also the gesture that separates the outline from the frame: a shape
+// whose outline was its frame has five outline points afterwards and four
+// frame corners, so the content starts being clipped. That is the model
+// working, not a side effect of it.
+function insertShapePoint(id, index, point) {
+  const shape = findShape(id);
+  if (!shape) return;
+  shape.outline.splice(index, 0, [clampCoord(point[0]), clampCoord(point[1])]);
+  setSelectedPointIndex(index);
   commitProjectChange();
 }
 
-// The 3-point floor is a real constraint, not a UI nicety: fewer than three
-// points is not a polygon, and a two-point "ring" would paint nothing while
-// still sitting in the list looking like a live keep-out. The panel button
-// is disabled at the floor too, but this stays defensive - the Delete key
-// reaches here by another route.
-function deleteKeepOutPoint(id, index) {
-  const keepOut = project.keepOuts.find((k) => k.id === id);
-  if (!keepOut) return;
-  if (keepOut.points.length <= KEEPOUT_MIN_POINTS) return;
-  if (index == null || index < 0 || index >= keepOut.points.length) return;
-  keepOut.points.splice(index, 1);
+// The 3-point floor is a real constraint, not a UI nicety - see
+// SHAPE_MIN_POINTS. The panel button is disabled at the floor too, but this
+// stays defensive: the Delete key reaches here by another route.
+function deleteShapePoint(id, index) {
+  const shape = findShape(id);
+  if (!shape) return;
+  if (shape.outline.length <= SHAPE_MIN_POINTS) return;
+  if (index == null || index < 0 || index >= shape.outline.length) return;
+  shape.outline.splice(index, 1);
   selectedPointIndex = null;
   commitProjectChange();
 }
@@ -652,23 +782,32 @@ function deleteKeepOutPoint(id, index) {
 // every other control-side mutation. ---
 
 function setLayerType(id, type) {
-  const surface = project.surfaces.find((s) => s.id === id);
-  if (!surface) return;
-  surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
-  surface.layer.type = type;
-  // Choosing "text" writes the text fields into the project there and then,
-  // rather than leaving them implicit for the renderer to default on every
-  // frame - implicit fields are fields that never reach the exported venue
-  // file. Existing values are preserved by sanitizeTextLayer, so switching
-  // away to video and back does not lose what was typed.
-  if (type === "text") Object.assign(surface.layer, sanitizeTextLayer(surface.layer));
+  const shape = findShape(id);
+  if (!shape || !SHAPE_TYPES.includes(type)) return;
+  shape.layer = shape.layer || { type: "pattern", src: null, opacity: 1 };
+  shape.layer.type = type;
+  // Choosing a type with its own fields writes them into the project there and
+  // then, rather than leaving them implicit for the renderer to default on
+  // every frame - implicit fields are fields that never reach the exported
+  // venue file. Existing values are preserved by the sanitizers, so switching
+  // away and back does not lose what was typed or picked.
+  if (type === "text") Object.assign(shape.layer, sanitizeTextLayer(shape.layer));
+  if (type === "fill") Object.assign(shape.layer, sanitizeFillLayer(shape.layer));
+  // A type that carries content needs a frame to warp it onto, and a shape
+  // that has only ever been a fill has none. The outline's bounding box is the
+  // only frame the tool can honestly propose - see outlineBoundingQuad. A
+  // shape that already has a frame keeps it untouched, so fill and back is
+  // lossless the same way text and back is.
+  if (type !== "fill" && !shapeFrame(shape)) {
+    shape.corners = outlineBoundingQuad(shape.outline);
+  }
   commitProjectChange();
 }
 
 function setLayerField(id, field, value) {
-  const surface = project.surfaces.find((s) => s.id === id);
-  if (!surface || !surface.layer) return;
-  surface.layer[field] = value;
+  const shape = findShape(id);
+  if (!shape || !shape.layer) return;
+  shape.layer[field] = value;
   commitProjectChange();
 }
 
@@ -711,18 +850,16 @@ function loadBackdropPhotoFile(file) {
   reader.readAsDataURL(file);
 }
 
-function selectSurface(id) {
-  selectedSurfaceId = id;
-  activeCornerIndex = null;
-  clearKeepOutSelection();
+function selectShape(id) {
+  selectedShapeId = id;
+  clearShapeSubselection();
   renderControl(); // selection is local UI state, no save/broadcast needed
 }
 
 function replaceProject(newProject) {
   project = newProject;
-  selectedSurfaceId = null;
-  activeCornerIndex = null;
-  clearKeepOutSelection();
+  selectedShapeId = null;
+  clearShapeSubselection();
   commitProjectChange();
 }
 
@@ -831,8 +968,8 @@ function toggleWhiteField() {
 }
 
 // Control -> output: a big number on the wall itself, so the countdown for
-// "Suggest from my shadow" can be read from where the performer is standing
-// rather than from the laptop they just walked away from. `value` is the
+// "Adopt boundaries" can be read from where the performer is standing rather
+// than from the laptop they just walked away from. `value` is the
 // seconds remaining, or null to clear it. Nonce per project convention.
 function broadcastCountdown(value) {
   channel.postMessage({ kind: "countdown", value, nonce: Date.now() });
@@ -860,7 +997,7 @@ function handleControlMessage(event) {
     broadcastMedia();
     broadcastState();
     broadcastWhiteField(); // a reopened output must not come back with a stale plate
-    broadcastCountdown(suggestionCountdownValue); // nor with a stale countdown
+    broadcastCountdown(adoptCountdownValue); // nor with a stale countdown
     if (lastTransport) {
       // Bring a late joiner up to speed on playback too - without this, an
       // output opened after Play was already pressed sits frozen on its
@@ -1017,8 +1154,8 @@ function clearStoredFolderHandle() {
 // both sides or on neither.
 function referencedMediaNames() {
   const names = new Set();
-  (project.surfaces || []).forEach((surface) => {
-    const layer = surface && surface.layer;
+  (project.surfaces || []).forEach((shape) => {
+    const layer = shape && shape.layer;
     if (!layer || (layer.type !== "video" && layer.type !== "image")) return;
     if (typeof layer.src === "string" && layer.src) names.add(layer.src);
   });
@@ -1026,7 +1163,7 @@ function referencedMediaNames() {
 }
 
 function mediaNamesKey(names) {
-  return Array.from(names).sort().join(" ");
+  return Array.from(names).sort().join("\u0000");
 }
 
 // "clips/pig.mp4" -> walk getDirectoryHandle for every segment but the last.
@@ -1314,11 +1451,13 @@ const UNIT_SRC_CORNERS = [
   [0, UNIT_SIZE],
 ];
 
-// Returns a matrix3d() string mapping the UNIT_SIZE content box onto the
-// surface's normalized corners, scaled into window-pixel space (w,h) - or
-// null if the corners are currently degenerate (caller should skip render).
-function surfaceMatrix3d(surface, w, h) {
-  const dstCorners = surface.corners.map(([nx, ny]) => [nx * w, ny * h]);
+// Returns a matrix3d() string mapping the UNIT_SIZE content box onto a shape's
+// CONTENT FRAME (its four corners), scaled into window-pixel space (w,h) - or
+// null if the frame is missing or currently degenerate (caller should skip the
+// render). The outline plays no part here: it clips, it does not warp.
+function frameMatrix3d(frame, w, h) {
+  if (!frame) return null;
+  const dstCorners = frame.map(([nx, ny]) => [nx * w, ny * h]);
   const H = computeHomography(UNIT_SRC_CORNERS, dstCorners);
   return H ? homographyToMatrix3dString(H) : null;
 }
@@ -1328,15 +1467,13 @@ function surfaceMatrix3d(surface, w, h) {
 // =========================================================================
 
 function renderControl() {
-  renderSurfaceList();
-  renderKeepOutList();
+  renderShapeList();
   renderPreview();
   renderBackdrop();
   renderCamera();
   renderBackdropControls();
   renderMediaFolderControls();
   renderLayerPanel();
-  renderKeepOutPanel();
 }
 
 // The media folder's whole sidebar section: which buttons are live, what the
@@ -1387,47 +1524,54 @@ function renderMediaFolderControls() {
   }
 }
 
-function renderSurfaceList() {
-  const list = document.getElementById("surface-list");
+// ONE LIST, because there is one kind of thing in it. Row order is paint
+// order (later = on top), and since v8 that includes fill shapes - the rule
+// that used to pin black above everything is gone, and the ▲ / ▼ buttons work
+// on every row.
+function renderShapeList() {
+  const list = document.getElementById("shape-list");
   list.innerHTML = "";
 
   if (project.surfaces.length === 0) {
     const empty = document.createElement("li");
     empty.className = "surface-list-empty";
-    empty.textContent = "No surfaces yet. Add one to get started.";
+    empty.textContent = "No shapes yet. Add one to get started.";
     list.appendChild(empty);
     return;
   }
 
-  project.surfaces.forEach((surface, index) => {
+  project.surfaces.forEach((shape, index) => {
     const row = document.createElement("li");
     row.className = "surface-row";
-    if (surface.id === selectedSurfaceId) row.classList.add("selected");
-    if (!surface.visible) row.classList.add("hidden-surface");
+    if (shape.id === selectedShapeId) row.classList.add("selected");
+    if (!shape.visible) row.classList.add("hidden-surface");
 
-    row.addEventListener("click", () => selectSurface(surface.id));
+    row.addEventListener("click", () => selectShape(shape.id));
 
     const nameSpan = document.createElement("span");
     nameSpan.className = "surface-name";
-    nameSpan.textContent = surface.name;
+    // The outline's point count rides in the row: it is the one number that
+    // says whether a shape is still the square it started as or has been
+    // traced, and it is the same number on every row now.
+    nameSpan.textContent = `${shape.name} \u00b7 ${shape.outline.length}`;
     row.appendChild(nameSpan);
 
     const actions = document.createElement("div");
     actions.className = "surface-actions";
 
-    // Z-order: moves the surface within project.surfaces, which is the
+    // Z-order: moves the shape within project.surfaces, which is the
     // render/stacking order in both preview and output (later = on top).
     // Disabled at the ends of the list rather than hidden, so the row's
-    // button layout stays stable as surfaces reorder around it.
+    // button layout stays stable as shapes reorder around it.
     const upBtn = document.createElement("button");
     upBtn.type = "button";
     upBtn.className = "icon-btn";
     upBtn.title = "Move up the list (render earlier / further back)";
-    upBtn.textContent = "▲"; // ▲
+    upBtn.textContent = "▲";
     upBtn.disabled = index === 0;
     upBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      moveSurfaceUp(surface.id);
+      moveShapeUp(shape.id);
     });
     actions.appendChild(upBtn);
 
@@ -1435,134 +1579,59 @@ function renderSurfaceList() {
     downBtn.type = "button";
     downBtn.className = "icon-btn";
     downBtn.title = "Move down the list (render later / on top)";
-    downBtn.textContent = "▼"; // ▼
+    downBtn.textContent = "▼";
     downBtn.disabled = index === project.surfaces.length - 1;
     downBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      moveSurfaceDown(surface.id);
+      moveShapeDown(shape.id);
     });
     actions.appendChild(downBtn);
 
     const visBtn = document.createElement("button");
     visBtn.type = "button";
     visBtn.className = "icon-btn";
-    visBtn.title = surface.visible ? "Hide surface" : "Show surface";
-    visBtn.textContent = surface.visible ? "\u{1F441}" : "\u{1F648}"; // eye / eye-blocked-ish
+    visBtn.title = shape.visible ? "Hide shape" : "Show shape";
+    visBtn.textContent = shape.visible ? "\u{1F441}" : "\u{1F648}"; // eye / eye-blocked-ish
     visBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      toggleSurfaceVisible(surface.id);
+      toggleShapeVisible(shape.id);
     });
     actions.appendChild(visBtn);
 
     // Duplicate: the one-gesture way to register an overlay exactly onto an
-    // existing surface (same corners, same layer, dropped in right after the
-    // original so it renders on top - see duplicateSurface()).
+    // existing shape (same geometry, same layer, dropped in right after the
+    // original so it renders on top - see duplicateShape()).
     const dupBtn = document.createElement("button");
     dupBtn.type = "button";
     dupBtn.className = "icon-btn";
-    dupBtn.title = "Duplicate surface (same corners + layer, for exact registration)";
-    dupBtn.textContent = "⧉"; // ⧉
+    dupBtn.title = "Duplicate shape (same outline, frame and layer, for exact registration)";
+    dupBtn.textContent = "⧉";
     dupBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      duplicateSurface(surface.id);
+      duplicateShape(shape.id);
     });
     actions.appendChild(dupBtn);
 
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
     renameBtn.className = "icon-btn";
-    renameBtn.title = "Rename surface";
+    renameBtn.title = "Rename shape";
     renameBtn.textContent = "✏️"; // pencil
     renameBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const next = window.prompt("Rename surface", surface.name);
-      if (next !== null) renameSurface(surface.id, next);
+      const next = window.prompt("Rename shape", shape.name);
+      if (next !== null) renameShape(shape.id, next);
     });
     actions.appendChild(renameBtn);
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "icon-btn danger";
-    deleteBtn.title = "Delete surface";
-    deleteBtn.textContent = "\u{1F5D1}️"; // trash
-    deleteBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (window.confirm(`Delete "${surface.name}"?`)) removeSurface(surface.id);
-    });
-    actions.appendChild(deleteBtn);
-
-    row.appendChild(actions);
-    list.appendChild(row);
-  });
-}
-
-// Keep-outs get their own list, below the surfaces and separate from them.
-// They are a different primitive - no layer, no z-order, no four-corner
-// constraint - and folding them into one list would invite exactly the
-// "a keep-out is a kind of surface" reading the design rejects. The row
-// chrome is deliberately the same (.surface-row): it is the sidebar's row
-// idiom, and a second one would be noise.
-function renderKeepOutList() {
-  const list = document.getElementById("keepout-list");
-  list.innerHTML = "";
-
-  if (project.keepOuts.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "surface-list-empty";
-    empty.textContent = "No keep-outs. Add one to hold part of the wall dark.";
-    list.appendChild(empty);
-    return;
-  }
-
-  project.keepOuts.forEach((keepOut) => {
-    const row = document.createElement("li");
-    row.className = "surface-row";
-    if (keepOut.id === selectedKeepOutId) row.classList.add("selected");
-    if (!keepOut.visible) row.classList.add("hidden-surface");
-
-    row.addEventListener("click", () => selectKeepOut(keepOut.id));
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "surface-name";
-    // The point count rides in the row: it is the one number that says
-    // whether a keep-out has been traced or is still the starting hexagon.
-    nameSpan.textContent = `${keepOut.name} \u00b7 ${keepOut.points.length}`;
-    row.appendChild(nameSpan);
-
-    const actions = document.createElement("div");
-    actions.className = "surface-actions";
-
-    const visBtn = document.createElement("button");
-    visBtn.type = "button";
-    visBtn.className = "icon-btn";
-    visBtn.title = keepOut.visible ? "Hide keep-out" : "Show keep-out";
-    visBtn.textContent = keepOut.visible ? "\u{1F441}" : "\u{1F648}";
-    visBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleKeepOutVisible(keepOut.id);
-    });
-    actions.appendChild(visBtn);
-
-    const renameBtn = document.createElement("button");
-    renameBtn.type = "button";
-    renameBtn.className = "icon-btn";
-    renameBtn.title = "Rename keep-out";
-    renameBtn.textContent = "\u270F\uFE0F"; // pencil
-    renameBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const next = window.prompt("Rename keep-out", keepOut.name);
-      if (next !== null) renameKeepOut(keepOut.id, next);
-    });
-    actions.appendChild(renameBtn);
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "icon-btn danger";
-    deleteBtn.title = "Delete keep-out";
+    deleteBtn.title = "Delete shape";
     deleteBtn.textContent = "\u{1F5D1}\uFE0F"; // trash
     deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (window.confirm(`Delete "${keepOut.name}"?`)) removeKeepOut(keepOut.id);
+      if (window.confirm(`Delete "${shape.name}"?`)) removeShape(shape.id);
     });
     actions.appendChild(deleteBtn);
 
@@ -1576,74 +1645,114 @@ function renderPreview() {
   svg.innerHTML = "";
 
   // While the camera's calibration corners are being placed, the preview has
-  // exactly one job: the surface outlines would sit on top of the very edge
+  // exactly one job: the shape outlines would sit on top of the very edge
   // being looked for.
   if (calibratingCamera) {
     renderCameraCalibrationHandles(svg);
     return;
   }
 
-  project.surfaces
-    .filter((s) => s.visible)
-    .forEach((surface) => {
-      const points = surface.corners
-        .map(([x, y]) => `${x * PREVIEW_W},${y * PREVIEW_H}`)
-        .join(" ");
-      const poly = document.createElementNS(SVG_NS, "polygon");
-      poly.setAttribute("points", points);
-      poly.setAttribute("class", "preview-surface-outline");
-      if (surface.id === selectedSurfaceId) poly.classList.add("selected");
-      // Click-to-select + whole-surface drag in one gesture. Polygons are
-      // appended in list order, so paint order already makes a later surface
-      // sit on top of an earlier one - the browser's own hit-testing picks
-      // the topmost polygon under the pointer with no extra bookkeeping.
-      poly.addEventListener("pointerdown", (e) => startSurfaceDrag(e, svg, surface));
-      svg.appendChild(poly);
+  // One pass over one list, in list order. Polygons are appended in that
+  // order, so paint order already makes a later shape sit on top of an
+  // earlier one - including a fill shape, which since v8 queues like every
+  // other shape instead of being pinned above them. The browser's own
+  // hit-testing then picks the topmost polygon under the pointer with no
+  // extra bookkeeping.
+  project.surfaces.filter((shape) => shape.visible).forEach((shape) => renderShapePreview(svg, shape));
 
-      // Cheap authoring aid: badge the surface with its layer type near its
-      // centroid, rather than actually rendering media in the preview
-      // (explicitly out of scope for v1 - not worth it). A .webm image layer
-      // is badged as "overlay" rather than "image" - it's transport-synced
-      // content, not a static picture, and the badge should say so at a
-      // glance.
-      const layer = surface.layer;
-      const layerType = layer && layer.type;
-      if (layerType === "video" || layerType === "image" || layerType === "text") {
-        const isAlphaOverlay = layerType === "image" && /\.webm$/i.test((layer && layer.src) || "");
-        const [cx, cy] = surfaceCentroidNormalized(surface);
-        const badge = document.createElementNS(SVG_NS, "text");
-        badge.setAttribute("x", cx * PREVIEW_W);
-        badge.setAttribute("y", cy * PREVIEW_H);
-        badge.setAttribute("class", "preview-layer-badge");
-        // A text layer is badged with its ROLE, not with the word "text".
-        // At a glance the useful fact about a quad is that it is the lyric
-        // slot - "text" is something the layer panel already says.
-        badge.textContent =
-          layerType === "video"
-            ? "▶ video"
-            : layerType === "text"
-              ? `T ${sanitizeTextLayer(layer).role}`
-              : isAlphaOverlay
-                ? "▶ overlay"
-                : "\u{1F5BC} image";
-        svg.appendChild(badge);
-      }
-    });
-
-  // Draggable corner handles for the selected surface only. Non-selected
-  // surfaces stay plain outlines (drawn above).
-  const selected = getSelectedSurface();
-  if (selected) renderCornerHandles(svg, selected);
-
-  // Keep-outs go last, so they sit above every surface outline in the
-  // preview exactly as they sit above every surface wrapper on the output.
-  renderKeepOutsPreview(svg);
+  // Handles for the selected shape go last, so they sit above every shape's
+  // body rather than being buried under whatever paints after it.
+  const selected = getSelectedShape();
+  if (selected) renderShapeHandles(svg, selected);
 }
 
-function surfaceCentroidNormalized(surface) {
-  const xs = surface.corners.map((c) => c[0]);
-  const ys = surface.corners.map((c) => c[1]);
+function ringPointsAttr(points, w, h) {
+  return points.map(([x, y]) => `${x * w},${y * h}`).join(" ");
+}
+
+function ringCentroidNormalized(points) {
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
   return [xs.reduce((a, b) => a + b, 0) / xs.length, ys.reduce((a, b) => a + b, 0) / ys.length];
+}
+
+// One shape's body in the preview: the polygon you click to select it and
+// drag to move it, plus whatever says at a glance what is inside it.
+function renderShapePreview(svg, shape) {
+  const outline = shapeOutline(shape);
+  if (!outline) return;
+  const layer = shapeLayer(shape);
+  const type = shapeType(shape);
+  const selected = shape.id === selectedShapeId;
+  const points = ringPointsAttr(outline, PREVIEW_W, PREVIEW_H);
+
+  if (type === "fill") {
+    // Painted the way the output paints it - the fill colour, plus a stroke of
+    // the same colour carrying the margin - so what gets tuned on screen is
+    // what lands on the wall. The preview viewBox is 1600x900 inside a 16/9
+    // box, so its user units are square and PREVIEW_H is the right scale for a
+    // frame-height fraction.
+    const mask = document.createElementNS(SVG_NS, "polygon");
+    mask.setAttribute("points", points);
+    mask.setAttribute("class", "preview-fill-mask");
+    const fields = sanitizeFillLayer(layer);
+    mask.style.fill = fields.color;
+    mask.style.stroke = fields.color;
+    // Held under full strength here and nowhere else: the whole job of the
+    // preview is to show the wall you are drawing on, and an opaque black
+    // shape over a camera feed hides the thing being traced. `opacity` on the
+    // element (rather than fill-opacity) composites fill and stroke as one
+    // group, so the margin stroke does not double up over the fill and leave a
+    // visible seam at the shape's own outline.
+    mask.style.opacity = String(0.82 * (layer.opacity ?? 1));
+    applyMarginStroke(mask, fields.margin, PREVIEW_H);
+    mask.addEventListener("pointerdown", (e) => startShapeDrag(e, svg, shape));
+    svg.appendChild(mask);
+
+    // A separate outline on top carries the selection state. It has to be its
+    // own element: the mask's stroke is already spoken for by the margin, and
+    // an element has only one of those. Not a hit target - pointer-events:none
+    // in CSS - so the mask below keeps the gesture.
+    const edge = document.createElementNS(SVG_NS, "polygon");
+    edge.setAttribute("points", points);
+    edge.setAttribute("class", "preview-fill-outline" + (selected ? " selected" : ""));
+    svg.appendChild(edge);
+    return;
+  }
+
+  const poly = document.createElementNS(SVG_NS, "polygon");
+  poly.setAttribute("points", points);
+  poly.setAttribute("class", "preview-surface-outline");
+  if (selected) poly.classList.add("selected");
+  // Click-to-select + whole-shape drag in one gesture.
+  poly.addEventListener("pointerdown", (e) => startShapeDrag(e, svg, shape));
+  svg.appendChild(poly);
+
+  // Cheap authoring aid: badge the shape with its layer type near its
+  // centroid, rather than actually rendering media in the preview (explicitly
+  // out of scope for v1 - not worth it). A .webm image layer is badged as
+  // "overlay" rather than "image" - it's transport-synced content, not a
+  // static picture, and the badge should say so at a glance.
+  if (type === "video" || type === "image" || type === "text") {
+    const isAlphaOverlay = type === "image" && /\.webm$/i.test(layer.src || "");
+    const [cx, cy] = ringCentroidNormalized(outline);
+    const badge = document.createElementNS(SVG_NS, "text");
+    badge.setAttribute("x", cx * PREVIEW_W);
+    badge.setAttribute("y", cy * PREVIEW_H);
+    badge.setAttribute("class", "preview-layer-badge");
+    // A text layer is badged with its ROLE, not with the word "text". At a
+    // glance the useful fact about a quad is that it is the lyric slot -
+    // "text" is something the layer panel already says.
+    badge.textContent =
+      type === "video"
+        ? "▶ video"
+        : type === "text"
+          ? `T ${sanitizeTextLayer(layer).role}`
+          : isAlphaOverlay
+            ? "▶ overlay"
+            : "\u{1F5BC} image";
+    svg.appendChild(badge);
+  }
 }
 
 function renderBackdrop() {
@@ -1657,50 +1766,10 @@ function renderBackdrop() {
   }
 }
 
-function renderCornerHandles(svg, surface) {
-  surface.corners.forEach((corner, i) => {
-    const [nx, ny] = corner;
-    const cx = nx * PREVIEW_W;
-    const cy = ny * PREVIEW_H;
-
-    const group = document.createElementNS(SVG_NS, "g");
-    group.setAttribute("class", "corner-handle" + (i === activeCornerIndex ? " active" : ""));
-
-    // Larger invisible hit target behind the visible dot. Projector-session
-    // use is hurried and imprecise - pointer events bubble from either
-    // circle up to the group's single listener below, so this just widens
-    // what counts as "on the handle" without changing the drag logic.
-    // pointer-events:all (set in CSS) is required because the fill is
-    // transparent: SVG's default hit-testing (visiblePainted) only counts
-    // painted areas, so an unpainted circle would otherwise be a click-
-    // through hole even though it's present in the DOM.
-    const hitTarget = document.createElementNS(SVG_NS, "circle");
-    hitTarget.setAttribute("cx", cx);
-    hitTarget.setAttribute("cy", cy);
-    hitTarget.setAttribute("r", 18);
-    hitTarget.setAttribute("class", "corner-handle-hit");
-    group.appendChild(hitTarget);
-
-    const circle = document.createElementNS(SVG_NS, "circle");
-    circle.setAttribute("cx", cx);
-    circle.setAttribute("cy", cy);
-    circle.setAttribute("r", 10);
-    group.appendChild(circle);
-
-    const label = document.createElementNS(SVG_NS, "text");
-    label.setAttribute("x", cx);
-    label.setAttribute("y", cy);
-    label.textContent = String(i + 1);
-    group.appendChild(label);
-
-    group.addEventListener("pointerdown", (e) => startCornerDrag(e, svg, surface, i));
-    svg.appendChild(group);
-  });
-}
-
-// Pointer-drag plumbing shared by every preview gesture: whole-surface
-// drag, single-corner drag, and camera-calibration corner drag. The caller
-// supplies only applyMove(evt), which writes the new geometry into `project`.
+// Pointer-drag plumbing shared by every preview gesture: whole-shape drag,
+// frame-corner drag, outline-point drag, edge insert, and camera-calibration
+// corner drag. The caller supplies only applyMove(evt), which writes the new
+// geometry into `project`.
 //
 // THE DETAIL THAT MATTERS, and the v2.1 bug (found by hand 2026-08-22): the
 // move/up listeners must live on an element that OUTLIVES the gesture.
@@ -1788,57 +1857,32 @@ function releasePointerSafely(el, pointerId) {
   }
 }
 
-// Drag a single corner handle. Renders locally every pointermove for
-// immediate visual feedback (both in the preview and, throttled, on the
-// live output), but only saves+broadcasts at most every ~80ms plus once on
-// release - the same "render fast, commit throttled" split slice 1's
-// commitProjectChange() choke point was designed for.
-function startCornerDrag(e, svg, surface, cornerIndex) {
-  activeCornerIndex = cornerIndex;
-
-  beginPreviewDrag(e, svg, (evt) => {
-    const [nx, ny] = svgPointerToNormalized(evt, svg);
-    surface.corners[cornerIndex] = [clampCoord(nx), clampCoord(ny)];
-  });
-}
-
-// Drag a whole surface (pointerdown inside its polygon, not on a corner
-// handle): translate all 4 corners by the same delta, so the quad keeps its
-// shape. Also handles click-to-select - if the surface wasn't already
-// selected, selecting it and starting the drag happen in this one gesture
-// (matches sidebar-click selection: updates selectedSurfaceId, resets to
-// whole-surface nudge mode, re-renders sidebar/preview/layer panel). The
-// re-render that selection triggers is precisely what used to detach the
-// listeners; beginPreviewDrag puts them somewhere a re-render cannot reach.
-function startSurfaceDrag(e, svg, surface) {
-  if (selectedSurfaceId !== surface.id) {
-    selectedSurfaceId = surface.id;
-    activeCornerIndex = null;
-    renderControl(); // full re-render (sidebar highlight, layer panel, handles)
-  }
-
-  const originalCorners = surface.corners.map(([x, y]) => [x, y]);
-  const start = svgPointerToNormalized(e, svg);
-
-  beginPreviewDrag(e, svg, (evt) => {
-    const p = svgPointerToNormalized(evt, svg);
-    const rawDelta = [p[0] - start[0], p[1] - start[1]];
-    const [dx, dy] = clampTranslateDelta(originalCorners, rawDelta);
-    surface.corners = originalCorners.map(([x, y]) => [x + dx, y + dy]);
-  });
-}
-
 // =========================================================================
-// SUGGEST FROM MY SHADOW
+// ADOPT BOUNDARIES
 // =========================================================================
-// Raise a white plate, photograph the empty wall, count the performer into
-// place on the wall itself, photograph it again, and keep the region that
-// got DARKER. That region is the shadow, by construction - it is precisely
-// the set of projector pixels the body blocks - and the shadow, not the
-// body, is what a keep-out must be traced around. The camera and the lens do
-// not stand in the same place, so they disagree about where a body is; they
-// cannot disagree about where its shadow falls, because the shadow lands on
-// the wall plane, which is exactly where the existing calibration is exact.
+// Raise a white plate, photograph the empty wall, count the thing into place
+// on the wall itself, photograph it again, and keep the region that got
+// DARKER. Then trace that region and make it the shape's OUTLINE.
+//
+// AVAILABLE ON EVERY SHAPE, and that is v8's doing rather than a new feature:
+// on a fill shape this is the performer mask, and on a video shape it clips an
+// animation to the silhouette of a real object on the stage. It was only ever
+// a keep-out's gesture because a keep-out was the only thing with an outline.
+// It writes the outline and NEVER the content frame: adopting a silhouette
+// says where a shape ends, not how its content is warped.
+//
+// IT DETECTS A DIFFERENCE, so the thing must be ABSENT FROM ONE OF THE TWO
+// FRAMES. It finds a person who walks into the beam, or an object placed and
+// then removed. It cannot find a painting that hung on that wall the whole
+// time - there is nothing to difference against, and no threshold setting
+// changes that. Said out loud in the panel too, because it is the one thing
+// about this gesture that surprises people.
+//
+// AND THE SHADOW RULE IS UNCHANGED: for anything standing out from the wall,
+// trace the SHADOW, not the thing. The camera and the lens do not stand in the
+// same place, so they disagree about where a body is; they cannot disagree
+// about where its shadow falls, because the shadow lands on the wall plane,
+// which is exactly where the existing calibration is exact.
 //
 // ACCURACY IS EXPLICITLY NOT THE GOAL. A coarse blob roughly the right shape
 // is the CORRECT output here: the margin slider has to inflate it anyway (a
@@ -1874,10 +1918,10 @@ const SHADOW_TARGET_MAX_POINTS = 40;
 // settings for one gesture against one room's light, not geometry: putting
 // them in the venue file would ship a transient camera parameter inside the
 // artifact this tool exists to produce.
-let shadowThreshold = 22; // 0-255 luminance drop
-let shadowCountdownSeconds = 10;
-let suggestionRunning = false;
-let suggestionCountdownValue = null;
+let adoptThreshold = 22; // 0-255 luminance drop
+let adoptCountdownSeconds = 10;
+let adoptRunning = false;
+let adoptCountdownValue = null;
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -1885,11 +1929,11 @@ function delay(ms) {
 
 // Why the button is disabled, or null if it is not. Said out loud in the
 // panel rather than left as a dead control.
-function shadowSuggestionBlocker() {
+function adoptBoundariesBlocker() {
   if (!isCameraMode()) return "Set Backdrop \u2192 Source to Live camera first.";
   if (!isCameraEnabled()) return "Enable the camera first.";
   if (!isValidQuad(project.cameraQuad)) {
-    return "Calibrate the camera first. The suggestion maps your shadow into output space through that calibration, so without it there is nothing to map through.";
+    return "Calibrate the camera first. The capture maps what it traces into output space through that calibration, so without it there is nothing to map through.";
   }
   return null;
 }
@@ -2071,23 +2115,23 @@ function shadowRingFromFrames(frameA, frameB, threshold, H) {
   if (!blob) return null;
 
   const contour = traceBoundary(blob, w, h);
-  if (!contour || contour.length < KEEPOUT_MIN_POINTS) return null;
+  if (!contour || contour.length < SHAPE_MIN_POINTS) return null;
 
   const simplified = simplifyRingToRange(contour, SHADOW_TARGET_MIN_POINTS, SHADOW_TARGET_MAX_POINTS);
 
   // Camera space -> output space, through the EXISTING calibration. The
-  // stored points must be in output space, so the keep-out stays valid long
+  // stored points must be in output space, so the outline stays valid long
   // after the camera is unplugged.
   const ring = [];
   for (const [x, y] of simplified) {
     const p = applyHomography(H, [(x + 0.5) / w, (y + 0.5) / h]);
     if (p) ring.push(p);
   }
-  return ring.length >= KEEPOUT_MIN_POINTS ? ring : null;
+  return ring.length >= SHAPE_MIN_POINTS ? ring : null;
 }
 
-function setSuggestStatus(text) {
-  const el = document.getElementById("keepout-suggest-status");
+function setAdoptStatus(text) {
+  const el = document.getElementById("shape-adopt-status");
   if (el) el.textContent = text || "";
 }
 
@@ -2106,21 +2150,21 @@ function setPreviewCountdown(value) {
 }
 
 function showCountdown(value) {
-  suggestionCountdownValue = value;
+  adoptCountdownValue = value;
   broadcastCountdown(value);
   setPreviewCountdown(value);
 }
 
 // The sequence, and its order is the whole design. See the section comment.
-async function suggestKeepOutFromShadow(keepOutId) {
-  if (suggestionRunning) return;
-  const keepOut = project.keepOuts.find((k) => k.id === keepOutId);
-  if (!keepOut) return;
-  if (shadowSuggestionBlocker()) return;
+async function adoptShapeBoundaries(shapeId) {
+  if (adoptRunning) return;
+  const shape = findShape(shapeId);
+  if (!shape) return;
+  if (adoptBoundariesBlocker()) return;
 
   const H = computeHomography(project.cameraQuad, UNIT_SQUARE_CORNERS);
   if (!H) {
-    setSuggestStatus("The camera calibration is degenerate - recalibrate before suggesting.");
+    setAdoptStatus("The camera calibration is degenerate - recalibrate before capturing.");
     return;
   }
 
@@ -2128,7 +2172,7 @@ async function suggestKeepOutFromShadow(keepOutId) {
   // If the plate was already up, leave it up afterwards: this gesture should
   // give the output back exactly as it found it.
   const plateWasUp = whiteFieldOn;
-  suggestionRunning = true;
+  adoptRunning = true;
   renderControl();
 
   try {
@@ -2137,49 +2181,52 @@ async function suggestKeepOutFromShadow(keepOutId) {
       whiteFieldOn = true;
       broadcastWhiteField();
     }
-    setSuggestStatus("Lighting the wall\u2026");
+    setAdoptStatus("Lighting the wall\u2026");
     await delay(SHADOW_PLATE_SETTLE_MS);
 
-    // 2. Frame A: the empty wall. Taken BEFORE the countdown exists, so it
-    //    cannot contain one.
+    // 2. Frame A: the wall WITHOUT the thing. Taken BEFORE the countdown
+    //    exists, so it cannot contain one.
     const frameA = grabCameraFrameLuma(video);
     if (!frameA) {
-      setSuggestStatus("No camera frame to capture - is the feed running?");
+      setAdoptStatus("No camera frame to capture - is the feed running?");
       return;
     }
 
-    // 3. Count the performer into place, on the wall and at the desk.
-    for (let t = shadowCountdownSeconds; t > 0; t--) {
+    // 3. Count the thing into place, on the wall and at the desk.
+    for (let t = adoptCountdownSeconds; t > 0; t--) {
       showCountdown(t);
-      setSuggestStatus(`Step into the beam \u2014 ${t}\u2026`);
+      setAdoptStatus(`Get into the beam \u2014 ${t}\u2026`);
       await delay(1000);
     }
 
     // 4. Take the countdown off the output FIRST, then settle, then capture.
     showCountdown(null);
-    setSuggestStatus("Capturing\u2026");
+    setAdoptStatus("Capturing\u2026");
     await delay(SHADOW_CLEAR_SETTLE_MS);
     const frameB = grabCameraFrameLuma(video);
 
     // 5/6. Difference, blob, trace, simplify, and map into output space.
-    const ring = shadowRingFromFrames(frameA, frameB, shadowThreshold, H);
+    const ring = shadowRingFromFrames(frameA, frameB, adoptThreshold, H);
     if (!ring) {
-      setSuggestStatus(
-        "No shadow found. Lower the threshold, or check that you were standing in the beam and inside the camera's view."
+      setAdoptStatus(
+        "Nothing changed between the two frames. Lower the threshold, or check that the thing was in the beam, inside the camera's view, and absent from the first frame."
       );
       return;
     }
 
-    if (setKeepOutPoints(keepOutId, ring)) {
-      setSuggestStatus(
-        `Traced ${ring.length} points. Now raise the margin until the shape is comfortably bigger than you, and push any point that reads wrong.`
+    // The OUTLINE only. A shape's content frame is not this gesture's to
+    // touch: on a video shape the animation goes on being warped exactly as
+    // it was, and starts being clipped to what was just traced.
+    if (setShapeOutline(shapeId, ring)) {
+      setAdoptStatus(
+        `Traced ${ring.length} points into the outline. Push any point that reads wrong; on a fill shape, raise the margin until the shape is comfortably bigger than the thing.`
       );
     } else {
-      setSuggestStatus("The traced shape came out unusable - try again with a different threshold.");
+      setAdoptStatus("The traced shape came out unusable - try again with a different threshold.");
     }
   } catch (err) {
-    console.warn("Muralista: shadow suggestion failed.", err);
-    setSuggestStatus(`The suggestion failed: ${(err && err.message) || err}`);
+    console.warn("Muralista: adopting boundaries failed.", err);
+    setAdoptStatus(`The capture failed: ${(err && err.message) || err}`);
   } finally {
     // 7. Give the output back as we found it, whatever happened above.
     showCountdown(null);
@@ -2187,25 +2234,36 @@ async function suggestKeepOutFromShadow(keepOutId) {
       whiteFieldOn = false;
       broadcastWhiteField();
     }
-    suggestionRunning = false;
-    selectKeepOutState(keepOutId); // leave it selected and editable
-    const status = document.getElementById("keepout-suggest-status");
+    adoptRunning = false;
+    selectedShapeId = shapeId; // leave it selected and editable
+    const status = document.getElementById("shape-adopt-status");
     const carried = status ? status.textContent : "";
     renderControl();
-    setSuggestStatus(carried); // renderControl rebuilds the panel; keep the message
+    setAdoptStatus(carried); // renderControl rebuilds the panel; keep the message
   }
 }
 
 // =========================================================================
-// KEEP-OUT EDITING (preview)
+// SHAPE EDITING (preview)
 // =========================================================================
-// Three layers of hit target per selected keep-out, appended in this order
-// so SVG paint order does the disambiguating for free (later = on top):
+// Four layers of hit target per selected shape, appended in this order so SVG
+// paint order does the disambiguating for free (later = on top):
 //
-//   1. the filled body     -> select it, and drag the whole polygon
-//   2. one line per edge   -> insert a point there, and pull it out in the
-//                             same gesture
-//   3. one handle per point-> select that point, and drag it
+//   1. the filled body      -> select it, and drag the whole shape
+//   2. the content frame    -> shown only when the outline has left it, and
+//                              never a hit target: it is a read-out
+//   3. one line per edge    -> insert an outline point there, and pull it out
+//                              in the same gesture
+//   4. one handle per point -> select that point, and drag it
+//
+// ONE SET OF HANDLES AT A TIME, and that is what makes the linked case work.
+// While a shape's outline IS its content frame (shapeOutlineIsFrame) the two
+// are one thing, so the preview draws ONE set of handles - the numbered 1-4
+// corners, exactly as before v8 - and a drag writes both fields. The moment a
+// point is added the two are different things, and only then does the preview
+// show the outline's own handles alongside the frame's. Two live handle sets
+// sitting exactly on top of each other is a misclick at a projector, and this
+// is why there are never any.
 //
 // Every one of them goes through beginPreviewDrag(), for the reason spelled
 // out in full on that function: renderPreview() does svg.innerHTML = "" on
@@ -2223,14 +2281,17 @@ async function suggestKeepOutFromShadow(keepOutId) {
 // moves them apart by a fraction of that distance rather than by the margin:
 // the limb gets longer instead of thicker.
 //
-// Stroking the same polygon in the same black, with round joins and caps, is
+// Stroking the same polygon in the same colour, with round joins and caps, is
 // a TRUE dilation - every point on the outline grows outward by the same
 // amount, corners and thin limbs included - and it is one attribute instead
 // of a library.
 //
 // The rule it exists to implement: draw the shape generously larger than the
 // shadow, because a performer sways and an exact mask lets light onto the
-// face on every lean.
+// face on every lean. That is why the control belongs to FILL shapes and is
+// offered nowhere else: "cover generously" is the whole point of a fill, and
+// on a shape carrying content growing the outline only reveals more of a
+// picture the frame already governs.
 //
 // `scale` is the pixel height of the frame being drawn into, since margin is
 // a fraction of FRAME HEIGHT.
@@ -2246,84 +2307,73 @@ async function suggestKeepOutFromShadow(keepOutId) {
 //
 // Set as an inline style rather than a presentation attribute, because a
 // stylesheet rule would outrank an attribute and silently win.
-function applyKeepOutMarginStroke(polygon, margin, scale) {
+function applyMarginStroke(polygon, margin, scale) {
   const width = clampMargin(margin) * 2 * scale;
   polygon.style.strokeWidth = `${width}px`;
 }
 
-function keepOutPointsAttr(keepOut, w, h) {
-  return keepOut.points.map(([x, y]) => `${x * w},${y * h}`).join(" ");
+// Everything draggable on the selected shape. Called once, after every shape's
+// body has been painted, so no handle can end up buried under a shape that
+// paints later.
+function renderShapeHandles(svg, shape) {
+  if (!isValidPointRing(shape.outline)) return;
+  const frame = shapeFrame(shape);
+  const linked = shapeOutlineIsFrame(shape);
+
+  // The frame, when it is no longer the outline: a dashed quad showing what
+  // the content is actually warped onto. Read-only chrome - the numbered
+  // handles below are how it is moved.
+  if (frame && shapeCarriesContent(shape) && !linked) {
+    const outline = document.createElementNS(SVG_NS, "polygon");
+    outline.setAttribute("points", ringPointsAttr(frame, PREVIEW_W, PREVIEW_H));
+    outline.setAttribute("class", "preview-frame-outline");
+    svg.appendChild(outline);
+  }
+
+  renderShapeEdgeTargets(svg, shape);
+
+  // The linked case draws the frame's handles only, and their drag writes the
+  // outline too - see the section comment. Everything else draws the outline's
+  // own handles, plus the frame's when there is a frame to move.
+  if (!linked) renderOutlinePointHandles(svg, shape);
+  if (frame && shapeCarriesContent(shape)) renderFrameCornerHandles(svg, shape, linked);
 }
 
-function renderKeepOutsPreview(svg) {
-  project.keepOuts
-    .filter((k) => k.visible)
-    .forEach((keepOut) => {
-      const selected = keepOut.id === selectedKeepOutId;
-      const points = keepOutPointsAttr(keepOut, PREVIEW_W, PREVIEW_H);
-
-      // The mask is drawn the same way the output paints it - black fill
-      // plus a black round-joined stroke carrying the margin - so what gets
-      // tuned on screen is what lands on the wall. The preview viewBox is
-      // 1600x900 inside a 16/9 box, so its user units are square and
-      // PREVIEW_H is the right scale for a frame-height fraction.
-      const mask = document.createElementNS(SVG_NS, "polygon");
-      mask.setAttribute("points", points);
-      mask.setAttribute("class", "preview-keepout-mask");
-      applyKeepOutMarginStroke(mask, keepOut.margin, PREVIEW_H);
-      mask.addEventListener("pointerdown", (e) => startKeepOutDrag(e, svg, keepOut));
-      svg.appendChild(mask);
-
-      // A separate outline on top carries the selection state. It has to be
-      // its own element: the mask's stroke is already spoken for by the
-      // margin, and an element has only one of those. Not a hit target -
-      // pointer-events:none in CSS - so the mask below keeps the gesture.
-      const outline = document.createElementNS(SVG_NS, "polygon");
-      outline.setAttribute("points", points);
-      outline.setAttribute("class", "preview-keepout-outline" + (selected ? " selected" : ""));
-      svg.appendChild(outline);
-
-      if (selected) {
-        renderKeepOutEdgeTargets(svg, keepOut);
-        renderKeepOutPointHandles(svg, keepOut);
-      }
-    });
-}
-
-// One invisible thick line per edge. pointer-events:all (set in CSS) is
-// required for the same reason the corner handles' hit circle needs it: a
+// One invisible thick line per outline edge. pointer-events:all (set in CSS)
+// is required for the same reason the corner handles' hit circle needs it: a
 // transparent stroke is not "painted", and SVG's default visiblePainted
 // hit-testing would skip it.
-function renderKeepOutEdgeTargets(svg, keepOut) {
-  const n = keepOut.points.length;
+function renderShapeEdgeTargets(svg, shape) {
+  const points = shape.outline;
+  const n = points.length;
   for (let i = 0; i < n; i++) {
-    const [x1, y1] = keepOut.points[i];
-    const [x2, y2] = keepOut.points[(i + 1) % n];
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[(i + 1) % n];
 
     const line = document.createElementNS(SVG_NS, "line");
     line.setAttribute("x1", x1 * PREVIEW_W);
     line.setAttribute("y1", y1 * PREVIEW_H);
     line.setAttribute("x2", x2 * PREVIEW_W);
     line.setAttribute("y2", y2 * PREVIEW_H);
-    line.setAttribute("class", "keepout-edge-hit");
+    line.setAttribute("class", "shape-edge-hit");
     // Insert AFTER point i, i.e. at ring index i+1, so the new point lands
     // between the two it was clicked between. The last edge (i = n-1) wraps
     // to point 0, and index n is the correct insert position for it: it
     // still leaves the new point between point n-1 and point 0.
-    line.addEventListener("pointerdown", (e) => startKeepOutEdgeInsert(e, svg, keepOut, i + 1));
+    line.addEventListener("pointerdown", (e) => startShapeEdgeInsert(e, svg, shape, i + 1));
     svg.appendChild(line);
   }
 }
 
-// No number labels here, unlike the surface corner handles: a traced shadow
-// carries 20-40 points, and there are no 1-4 keys addressing them.
-function renderKeepOutPointHandles(svg, keepOut) {
-  keepOut.points.forEach(([nx, ny], i) => {
+// No number labels here, unlike the frame's corner handles: an adopted outline
+// carries 20-40 points, and there are no keys addressing them.
+function renderOutlinePointHandles(svg, shape) {
+  shape.outline.forEach(([nx, ny], i) => {
     const cx = nx * PREVIEW_W;
     const cy = ny * PREVIEW_H;
 
     const group = document.createElementNS(SVG_NS, "g");
-    group.setAttribute("class", "corner-handle keepout" + (i === selectedPointIndex ? " active" : ""));
+    group.setAttribute("class", "corner-handle outline-point" + (i === selectedPointIndex ? " active" : ""));
 
     const hitTarget = document.createElementNS(SVG_NS, "circle");
     hitTarget.setAttribute("cx", cx);
@@ -2338,43 +2388,125 @@ function renderKeepOutPointHandles(svg, keepOut) {
     circle.setAttribute("r", 8);
     group.appendChild(circle);
 
-    group.addEventListener("pointerdown", (e) => startKeepOutPointDrag(e, svg, keepOut, i));
+    group.addEventListener("pointerdown", (e) => startOutlinePointDrag(e, svg, shape, i));
     svg.appendChild(group);
   });
 }
 
-// Drag a whole keep-out: translate every point by the same delta, through
-// the same clampTranslateDelta the surfaces use, so the ring keeps its shape
-// at the overshoot boundary instead of collapsing point by point. Also
-// handles click-to-select in the same gesture, exactly like startSurfaceDrag
-// - and the re-render that selection triggers is precisely what used to
-// detach the listeners, which is why they go on the svg.
-function startKeepOutDrag(e, svg, keepOut) {
-  if (selectedKeepOutId !== keepOut.id) {
-    selectKeepOutState(keepOut.id);
-    renderControl(); // full re-render (sidebar highlight, panel, handles)
+// The content frame's four corners, numbered 1-4 to match both the nudge keys
+// and the numbers baked into the test pattern. `linked` says whether dragging
+// one also carries the outline point sitting under it.
+function renderFrameCornerHandles(svg, shape, linked) {
+  shape.corners.forEach((corner, i) => {
+    const [nx, ny] = corner;
+    const cx = nx * PREVIEW_W;
+    const cy = ny * PREVIEW_H;
+
+    const group = document.createElementNS(SVG_NS, "g");
+    group.setAttribute("class", "corner-handle" + (i === activeCornerIndex ? " active" : ""));
+
+    // Larger invisible hit target behind the visible dot. Projector-session
+    // use is hurried and imprecise - pointer events bubble from either
+    // circle up to the group's single listener below, so this just widens
+    // what counts as "on the handle" without changing the drag logic.
+    // pointer-events:all (set in CSS) is required because the fill is
+    // transparent: SVG's default hit-testing (visiblePainted) only counts
+    // painted areas, so an unpainted circle would otherwise be a click-
+    // through hole even though it's present in the DOM.
+    const hitTarget = document.createElementNS(SVG_NS, "circle");
+    hitTarget.setAttribute("cx", cx);
+    hitTarget.setAttribute("cy", cy);
+    hitTarget.setAttribute("r", 18);
+    hitTarget.setAttribute("class", "corner-handle-hit");
+    group.appendChild(hitTarget);
+
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("cx", cx);
+    circle.setAttribute("cy", cy);
+    circle.setAttribute("r", 10);
+    group.appendChild(circle);
+
+    const label = document.createElementNS(SVG_NS, "text");
+    label.setAttribute("x", cx);
+    label.setAttribute("y", cy);
+    label.textContent = String(i + 1);
+    group.appendChild(label);
+
+    group.addEventListener("pointerdown", (e) => startFrameCornerDrag(e, svg, shape, i, linked));
+    svg.appendChild(group);
+  });
+}
+
+// Drag a whole shape: translate the outline AND the content frame by the same
+// delta, so the shape keeps its geometry and its content stays registered on
+// it. The clamp is taken over both rings at once - clamping them separately
+// would let one stop at the overshoot boundary while the other kept going,
+// which is exactly how content slides off its own outline.
+//
+// Also handles click-to-select in the same gesture. The re-render that
+// selection triggers is precisely what used to detach the listeners;
+// beginPreviewDrag puts them somewhere a re-render cannot reach.
+function startShapeDrag(e, svg, shape) {
+  if (selectedShapeId !== shape.id) {
+    selectedShapeId = shape.id;
+    clearShapeSubselection();
+    renderControl(); // full re-render (sidebar highlight, layer panel, handles)
   }
 
-  const originalPoints = keepOut.points.map(([x, y]) => [x, y]);
+  const originalOutline = shape.outline.map(([x, y]) => [x, y]);
+  const frame = shapeFrame(shape);
+  const originalFrame = frame ? frame.map(([x, y]) => [x, y]) : null;
+  const clampAgainst = originalFrame ? originalOutline.concat(originalFrame) : originalOutline;
   const start = svgPointerToNormalized(e, svg);
 
   beginPreviewDrag(e, svg, (evt) => {
     const p = svgPointerToNormalized(evt, svg);
     const rawDelta = [p[0] - start[0], p[1] - start[1]];
-    const [dx, dy] = clampTranslateDelta(originalPoints, rawDelta);
-    keepOut.points = originalPoints.map(([x, y]) => [x + dx, y + dy]);
+    const [dx, dy] = clampTranslateDelta(clampAgainst, rawDelta);
+    // Both rings get the SAME delta applied to the SAME originals, so a shape
+    // whose outline was its frame still has one afterwards, to the bit.
+    shape.outline = originalOutline.map(([x, y]) => [x + dx, y + dy]);
+    if (originalFrame) shape.corners = originalFrame.map(([x, y]) => [x + dx, y + dy]);
   });
 }
 
-function startKeepOutPointDrag(e, svg, keepOut, index) {
-  if (selectedKeepOutId !== keepOut.id) selectKeepOutState(keepOut.id);
-  selectedPointIndex = index;
-  renderControl(); // the panel's delete button and the handle's highlight
+// Drag one corner of the content frame. Renders locally every pointermove for
+// immediate visual feedback (both in the preview and, throttled, on the live
+// output), but only saves+broadcasts at most every ~80ms plus once on release
+// - the same "render fast, commit throttled" split commitProjectChange() was
+// designed for.
+function startFrameCornerDrag(e, svg, shape, cornerIndex, linked) {
+  setActiveCornerIndex(cornerIndex);
 
   beginPreviewDrag(e, svg, (evt) => {
     const [nx, ny] = svgPointerToNormalized(evt, svg);
-    keepOut.points[index] = [clampCoord(nx), clampCoord(ny)];
+    const point = [clampCoord(nx), clampCoord(ny)];
+    shape.corners[cornerIndex] = point;
+    // While the outline IS the frame they are one thing, and one drag moves
+    // one point - not two that happen to be sitting on top of each other.
+    if (linked) shape.outline[cornerIndex] = [point[0], point[1]];
   });
+}
+
+// Drag one outline point. ONE function, reached from every shape type, which
+// is the whole of the fix for "overlapping points come apart on a surface but
+// not on a keep-out": there is no second implementation left to disagree.
+//
+// The listeners go on BEFORE the re-render, not after. beginPreviewDrag hosts
+// them on #preview-svg, which a re-render empties but never replaces, so
+// either order survives - but attaching first means the gesture is live before
+// anything can touch the DOM under it, which is the ordering the frame-corner
+// drag has always used and the one that has never gone wrong.
+function startOutlinePointDrag(e, svg, shape, index) {
+  if (selectedShapeId !== shape.id) selectedShapeId = shape.id;
+  setSelectedPointIndex(index);
+
+  beginPreviewDrag(e, svg, (evt) => {
+    const [nx, ny] = svgPointerToNormalized(evt, svg);
+    shape.outline[index] = [clampCoord(nx), clampCoord(ny)];
+  });
+
+  renderControl(); // the panel's point read-out and the handle's highlight
 }
 
 // Clicking an edge inserts a point there and immediately begins dragging it,
@@ -2382,16 +2514,16 @@ function startKeepOutPointDrag(e, svg, keepOut, index) {
 // insert commits first, and commitProjectChange() -> renderPreview() rebuilds
 // every child of #preview-svg - which is exactly why the drag listeners must
 // live on the svg and not on the line that was clicked. The closure below
-// holds the keepOut OBJECT, which the rebuild does not replace (the mutators
-// edit project.keepOuts in place), so the index stays valid across it.
-function startKeepOutEdgeInsert(e, svg, keepOut, index) {
+// holds the shape OBJECT, which the rebuild does not replace (the mutators
+// edit project.surfaces in place), so the index stays valid across it.
+function startShapeEdgeInsert(e, svg, shape, index) {
   const point = svgPointerToNormalized(e, svg);
-  if (selectedKeepOutId !== keepOut.id) selectKeepOutState(keepOut.id);
-  insertKeepOutPoint(keepOut.id, index, point);
+  if (selectedShapeId !== shape.id) selectedShapeId = shape.id;
+  insertShapePoint(shape.id, index, point);
 
   beginPreviewDrag(e, svg, (evt) => {
     const [nx, ny] = svgPointerToNormalized(evt, svg);
-    keepOut.points[index] = [clampCoord(nx), clampCoord(ny)];
+    shape.outline[index] = [clampCoord(nx), clampCoord(ny)];
   });
 }
 
@@ -2684,11 +2816,16 @@ function renderCameraCalibrationHandles(svg) {
 }
 
 // =========================================================================
-// LAYER PANEL (sidebar, selected surface's layer)
+// SHAPE PANEL (sidebar, selected shape)
 // =========================================================================
-// Rebuilds the panel's DOM only when its "key" (surface id + layer type)
-// changes - typing in the src field or dragging the opacity slider fires
-// commitProjectChange() on every keystroke/input, which would otherwise
+// Everything about the selected shape, in one panel, because there is one kind
+// of shape now. Top to bottom: what is inside it (the type and that type's own
+// fields), then how strongly it paints, then the outline every shape has, then
+// the capture that can replace that outline.
+//
+// Rebuilds the panel's DOM only when its "key" (shape id + layer type +
+// connected folder) changes - typing in the src field or dragging a slider
+// fires commitProjectChange() on every keystroke/input, which would otherwise
 // recreate the input mid-edit and lose focus/cursor position. Same-key
 // re-renders instead just refresh field values, skipping whichever field
 // currently has focus.
@@ -2697,34 +2834,43 @@ let layerPanelKey = null;
 
 function renderLayerPanel() {
   const container = document.getElementById("layer-panel");
-  const surface = getSelectedSurface();
+  const shape = getSelectedShape();
 
-  if (!surface) {
+  if (!shape) {
     layerPanelKey = null;
-    container.innerHTML = '<p class="layer-panel-empty">Select a surface to edit its layer.</p>';
+    container.innerHTML = '<p class="layer-panel-empty">Select a shape to edit it.</p>';
     return;
   }
 
-  surface.layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
-  const layer = surface.layer;
+  shape.layer = shape.layer || { type: "pattern", src: null, opacity: 1 };
+  const layer = shape.layer;
   // The connected folder is part of the key, not just of the values: it
   // changes the src field's LABEL and what "Pick file…" writes, and both of
   // those are built in buildLayerPanel. Without it, connecting a folder would
   // leave the panel still saying "relative to mapper/media/".
-  const key = `${surface.id}:${layer.type}:${mediaFolderState}:${mediaFolderLabel() || ""}`;
+  const key = `${shape.id}:${layer.type}:${mediaFolderState}:${mediaFolderLabel() || ""}`;
 
   if (key !== layerPanelKey) {
     layerPanelKey = key;
-    buildLayerPanel(container, surface, layer);
+    buildLayerPanel(container, shape, layer);
   } else {
-    updateLayerPanelValues(container, layer);
+    updateLayerPanelValues(container, shape, layer);
   }
 }
 
-function buildLayerPanel(container, surface, layer) {
+function panelDivider(container, title) {
+  const rule = document.createElement("div");
+  rule.className = "panel-divider";
+  rule.textContent = title || "";
+  container.appendChild(rule);
+}
+
+function buildLayerPanel(container, shape, layer) {
   container.innerHTML = "";
 
-  // Type selector.
+  // Type selector. "fill" sits in the same list as everything else on purpose:
+  // a shape that holds a colour is a shape with a type, not a second kind of
+  // object with a section of its own.
   const typeRow = document.createElement("div");
   typeRow.className = "layer-field";
   const typeLabel = document.createElement("label");
@@ -2732,91 +2878,26 @@ function buildLayerPanel(container, surface, layer) {
   typeLabel.setAttribute("for", "layer-type-select");
   const typeSelect = document.createElement("select");
   typeSelect.id = "layer-type-select";
-  ["pattern", "video", "image", "text"].forEach((t) => {
+  SHAPE_TYPES.forEach((t) => {
     const opt = document.createElement("option");
     opt.value = t;
     opt.textContent = t;
     typeSelect.appendChild(opt);
   });
-  typeSelect.value = layer.type;
-  typeSelect.addEventListener("change", () => setLayerType(surface.id, typeSelect.value));
+  typeSelect.value = shapeType(shape);
+  typeSelect.addEventListener("change", () => setLayerType(shape.id, typeSelect.value));
   typeRow.append(typeLabel, typeSelect);
   container.appendChild(typeRow);
 
-  // Video / image: src path field + file-pick convenience.
+  // A file is only a file for the two types that read one. Everything below is
+  // built INSIDE this branch, so "Pick file…" is not merely disabled on a
+  // pattern, a text or a fill layer - it is not there, and cannot be.
   if (layer.type === "video" || layer.type === "image") {
-    // With a folder connected, a name is looked up INSIDE it and the old label
-    // is simply false. The field itself is unchanged either way - it has always
-    // held a name, and that is exactly what still gets saved to the mapping.
-    const folderLabel = mediaFolderState === "granted" ? mediaFolderLabel() : null;
-
-    const srcRow = document.createElement("div");
-    srcRow.className = "layer-field";
-    const srcLabel = document.createElement("label");
-    srcLabel.textContent = folderLabel ? `Source (name inside ${folderLabel}/)` : "Source (relative to mapper/media/)";
-    srcLabel.setAttribute("for", "layer-src-input");
-    const srcInput = document.createElement("input");
-    srcInput.type = "text";
-    srcInput.id = "layer-src-input";
-    // "e.g." prefix matters: a bare filename placeholder reads as an actual
-    // prefilled value, and users assume the video is already linked.
-    srcInput.placeholder = folderLabel
-      ? layer.type === "video"
-        ? "e.g. cerdo.mp4"
-        : "e.g. character.png"
-      : layer.type === "video"
-        ? "e.g. media/cerdo.mp4"
-        : "e.g. media/character.png";
-    srcInput.value = layer.src || "";
-    // 'change' (blur/Enter), not 'input': the reconciling output render
-    // recreates the video/image element whenever layer.src changes, so
-    // committing on every keystroke would churn through a fetch for every
-    // partial path typed (e.g. "media/cer...") instead of just the final one.
-    srcInput.addEventListener("change", () => setLayerField(surface.id, "src", srcInput.value));
-    srcRow.append(srcLabel, srcInput);
-    container.appendChild(srcRow);
-
-    const fileRow = document.createElement("div");
-    fileRow.className = "layer-field";
-    const fileBtn = document.createElement("button");
-    fileBtn.type = "button";
-    fileBtn.textContent = "Pick file…";
-    const fileInput = document.createElement("input");
-    fileInput.type = "file";
-    fileInput.hidden = true;
-    fileInput.accept = layer.type === "video" ? "video/*" : "image/*,.webm";
-    fileBtn.addEventListener("click", () => fileInput.click());
-    fileInput.addEventListener("change", () => {
-      const file = fileInput.files && fileInput.files[0];
-      if (file) {
-        // An <input type=file> hands over a name and no path, so this has
-        // always been a convenience that fills in a guess. With a folder
-        // connected the right guess is the bare name - prefixing "media/"
-        // would send the lookup into a subfolder that probably is not there.
-        const guess = folderLabel ? file.name : `media/${file.name}`;
-        srcInput.value = guess;
-        setLayerField(surface.id, "src", guess);
-      }
-      fileInput.value = "";
-    });
-    const hint = document.createElement("p");
-    hint.className = "layer-hint";
-    hint.textContent = folderLabel
-      ? `Picking a file only fills in the name above - the file itself must live in ${folderLabel}/.`
-      : "Picking a file only fills in the path above - the file itself must already be copied into mapper/media/.";
-    fileRow.append(fileBtn, fileInput, hint);
-    container.appendChild(fileRow);
-
-    if (layer.type === "image") {
-      const webmHint = document.createElement("p");
-      webmHint.className = "layer-hint";
-      webmHint.textContent = "A .webm source (alpha transparency, Chrome-only) is a transport-synced overlay: it joins Play/Pause/Restart like a video layer instead of autoplaying on its own, so it starts with everything else.";
-      container.appendChild(webmHint);
-    }
-
+    buildMediaSourceControls(container, shape, layer);
   }
 
-  if (layer.type === "text") buildTextLayerControls(container, surface, layer);
+  if (layer.type === "text") buildTextLayerControls(container, shape, layer);
+  if (layer.type === "fill") buildFillLayerControls(container, shape, layer);
 
   // Opacity (all layer types).
   const opacityRow = document.createElement("div");
@@ -2837,10 +2918,263 @@ function buildLayerPanel(container, surface, layer) {
   opacityValue.textContent = Number(layer.opacity ?? 1).toFixed(2);
   opacityInput.addEventListener("input", () => {
     opacityValue.textContent = Number(opacityInput.value).toFixed(2);
-    setLayerField(surface.id, "opacity", Number(opacityInput.value));
+    setLayerField(shape.id, "opacity", Number(opacityInput.value));
   });
   opacityRow.append(opacityLabel, opacityInput, opacityValue);
   container.appendChild(opacityRow);
+
+  buildOutlineControls(container, shape);
+  buildAdoptBoundariesControls(container, shape);
+  updateLayerPanelValues(container, shape, layer);
+}
+
+// Video / image: src name field + file-pick convenience. Lifted out of
+// buildLayerPanel so the one call site above is the only thing that decides
+// whether a file is even a concept for this layer.
+function buildMediaSourceControls(container, shape, layer) {
+  // With a folder connected, a name is looked up INSIDE it and the old label
+  // is simply false. The field itself is unchanged either way - it has always
+  // held a name, and that is exactly what still gets saved to the mapping.
+  const folderLabel = mediaFolderState === "granted" ? mediaFolderLabel() : null;
+
+  const srcRow = document.createElement("div");
+  srcRow.className = "layer-field";
+  const srcLabel = document.createElement("label");
+  srcLabel.textContent = folderLabel ? `Source (name inside ${folderLabel}/)` : "Source (relative to mapper/media/)";
+  srcLabel.setAttribute("for", "layer-src-input");
+  const srcInput = document.createElement("input");
+  srcInput.type = "text";
+  srcInput.id = "layer-src-input";
+  // "e.g." prefix matters: a bare filename placeholder reads as an actual
+  // prefilled value, and users assume the video is already linked.
+  srcInput.placeholder = folderLabel
+    ? layer.type === "video"
+      ? "e.g. cerdo.mp4"
+      : "e.g. character.png"
+    : layer.type === "video"
+      ? "e.g. media/cerdo.mp4"
+      : "e.g. media/character.png";
+  srcInput.value = layer.src || "";
+  // 'change' (blur/Enter), not 'input': the reconciling output render
+  // recreates the video/image element whenever layer.src changes, so
+  // committing on every keystroke would churn through a fetch for every
+  // partial path typed (e.g. "media/cer...") instead of just the final one.
+  srcInput.addEventListener("change", () => setLayerField(shape.id, "src", srcInput.value));
+  srcRow.append(srcLabel, srcInput);
+  container.appendChild(srcRow);
+
+  const fileRow = document.createElement("div");
+  fileRow.className = "layer-field";
+  const fileBtn = document.createElement("button");
+  fileBtn.type = "button";
+  fileBtn.id = "layer-pick-file";
+  fileBtn.textContent = "Pick file…";
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.hidden = true;
+  fileInput.accept = layer.type === "video" ? "video/*" : "image/*,.webm";
+  fileBtn.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (file) {
+      // An <input type=file> hands over a name and no path, so this has
+      // always been a convenience that fills in a guess. With a folder
+      // connected the right guess is the bare name - prefixing "media/"
+      // would send the lookup into a subfolder that probably is not there.
+      const guess = folderLabel ? file.name : `media/${file.name}`;
+      srcInput.value = guess;
+      setLayerField(shape.id, "src", guess);
+    }
+    fileInput.value = "";
+  });
+  const hint = document.createElement("p");
+  hint.className = "layer-hint";
+  hint.textContent = folderLabel
+    ? `Picking a file only fills in the name above - the file itself must live in ${folderLabel}/.`
+    : "Picking a file only fills in the path above - the file itself must already be copied into mapper/media/.";
+  fileRow.append(fileBtn, fileInput, hint);
+  container.appendChild(fileRow);
+
+  if (layer.type === "image") {
+    const webmHint = document.createElement("p");
+    webmHint.className = "layer-hint";
+    webmHint.textContent = "A .webm source (alpha transparency, Chrome-only) is a transport-synced overlay: it joins Play/Pause/Restart like a video layer instead of autoplaying on its own, so it starts with everything else.";
+    container.appendChild(webmHint);
+  }
+}
+
+// The fill layer's own controls: a colour, and the margin that grows the shape
+// outward. The margin lives HERE and nowhere else - see applyMarginStroke for
+// why it belongs to fills and would only confuse on a shape carrying content.
+function buildFillLayerControls(container, shape, layer) {
+  const fields = sanitizeFillLayer(layer);
+
+  const colorRow = document.createElement("div");
+  colorRow.className = "layer-field";
+  const colorLabel = document.createElement("label");
+  colorLabel.textContent = "Colour";
+  colorLabel.setAttribute("for", "layer-fill-color-input");
+  const colorInput = document.createElement("input");
+  colorInput.type = "color";
+  colorInput.id = "layer-fill-color-input";
+  colorInput.value = fields.color;
+  colorInput.addEventListener("input", () => setLayerField(shape.id, "color", colorInput.value));
+  colorRow.append(colorLabel, colorInput);
+  container.appendChild(colorRow);
+
+  const colorHint = document.createElement("p");
+  colorHint.className = "layer-hint";
+  colorHint.textContent =
+    "Black is the default and the case this exists for: the projector floods the whole background, so holding part of it dark is a decision the mapping has to carry. It paints in list order like every other shape - move it up or down to put it behind or in front of one.";
+  container.appendChild(colorHint);
+
+  const marginRow = document.createElement("div");
+  marginRow.className = "layer-field";
+  const marginLabel = document.createElement("label");
+  marginLabel.textContent = "Margin";
+  marginLabel.setAttribute("for", "layer-fill-margin-input");
+  const marginInput = document.createElement("input");
+  marginInput.type = "range";
+  marginInput.id = "layer-fill-margin-input";
+  marginInput.min = "0";
+  marginInput.max = String(FILL_MARGIN_MAX);
+  marginInput.step = "0.005";
+  marginInput.value = String(fields.margin);
+  const marginValue = document.createElement("span");
+  marginValue.id = "layer-fill-margin-value";
+  marginValue.className = "layer-opacity-value";
+  marginValue.textContent = fields.margin.toFixed(3);
+  marginInput.addEventListener("input", () => {
+    marginValue.textContent = Number(marginInput.value).toFixed(3);
+    setLayerField(shape.id, "margin", Number(marginInput.value));
+  });
+  marginRow.append(marginLabel, marginInput, marginValue);
+  container.appendChild(marginRow);
+
+  const marginHint = document.createElement("p");
+  marginHint.className = "layer-hint";
+  marginHint.textContent =
+    "How far the shape grows outward, as a fraction of frame height. A true dilation - it thickens thin limbs rather than lengthening them. Draw generously larger than the shadow: a performer sways, and an exact mask lets light onto the face on every lean.";
+  container.appendChild(marginHint);
+}
+
+// The outline every shape has. Identical controls on every type, which is the
+// point of v8 - there is no second panel left to behave differently.
+function buildOutlineControls(container, shape) {
+  panelDivider(container, "Outline");
+
+  const pointRow = document.createElement("div");
+  pointRow.className = "layer-field";
+  const deletePointBtn = document.createElement("button");
+  deletePointBtn.type = "button";
+  deletePointBtn.id = "shape-delete-point";
+  deletePointBtn.textContent = "Delete point";
+  deletePointBtn.addEventListener("click", () => deleteShapePoint(shape.id, selectedPointIndex));
+  const pointCount = document.createElement("span");
+  pointCount.id = "shape-point-count";
+  pointCount.className = "layer-opacity-value";
+  pointRow.append(deletePointBtn, pointCount);
+  container.appendChild(pointRow);
+
+  const pointHint = document.createElement("p");
+  pointHint.className = "layer-hint";
+  pointHint.textContent =
+    "Click an edge in the preview to insert a point and pull it out. Click a point to select it, then Delete (or the button) to remove it. Three points is the floor.";
+  container.appendChild(pointHint);
+
+  // Said only where it is true. On a fill shape the outline IS the shape and
+  // there is nothing to explain; on a shape carrying content it is worth
+  // knowing that the four numbered corners and the outline are two different
+  // things the moment a fifth point exists.
+  const framed = document.createElement("p");
+  framed.id = "shape-frame-hint";
+  framed.className = "layer-hint";
+  container.appendChild(framed);
+}
+
+// "Adopt boundaries" and the two knobs it needs. Both knobs are control-local
+// (see adoptThreshold): they describe this room's light and how long it takes
+// to walk to the wall, not the venue's geometry, and a transient camera
+// setting has no business inside the artifact this tool exists to produce.
+function buildAdoptBoundariesControls(container, shape) {
+  panelDivider(container, "Adopt boundaries");
+
+  const row = document.createElement("div");
+  row.className = "layer-field";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "shape-adopt";
+  btn.textContent = "Adopt boundaries…";
+  btn.addEventListener("click", () => adoptShapeBoundaries(shape.id));
+  row.appendChild(btn);
+  container.appendChild(row);
+
+  const status = document.createElement("p");
+  status.id = "shape-adopt-status";
+  status.className = "adopt-status";
+  container.appendChild(status);
+
+  const hint = document.createElement("p");
+  hint.id = "shape-adopt-hint";
+  hint.className = "layer-hint";
+  container.appendChild(hint);
+
+  // The two facts that decide whether this gesture can work at all, said
+  // before it is pressed rather than after it comes back empty.
+  const rules = document.createElement("p");
+  rules.className = "layer-hint";
+  rules.textContent =
+    "It detects a DIFFERENCE between two photographs of the wall, so the thing has to be absent from one of them: it finds a person who walks in, or an object placed and removed, and cannot find a painting that was hanging there the whole time. And for anything standing out from the wall, trace the SHADOW, not the thing — the camera and the lens disagree about where a body is, and never about where its shadow falls.";
+  container.appendChild(rules);
+
+  const secsRow = document.createElement("div");
+  secsRow.className = "layer-field";
+  const secsLabel = document.createElement("label");
+  secsLabel.textContent = "Countdown (s)";
+  secsLabel.setAttribute("for", "shape-adopt-countdown-input");
+  const secsInput = document.createElement("input");
+  secsInput.type = "number";
+  secsInput.id = "shape-adopt-countdown-input";
+  secsInput.min = "3";
+  secsInput.max = "60";
+  secsInput.step = "1";
+  secsInput.value = String(adoptCountdownSeconds);
+  secsInput.addEventListener("change", () => {
+    const n = Math.round(Number(secsInput.value));
+    adoptCountdownSeconds = isFinite(n) ? Math.max(3, Math.min(60, n)) : 10;
+    secsInput.value = String(adoptCountdownSeconds);
+  });
+  secsRow.append(secsLabel, secsInput);
+  container.appendChild(secsRow);
+
+  const thrRow = document.createElement("div");
+  thrRow.className = "layer-field";
+  const thrLabel = document.createElement("label");
+  thrLabel.textContent = "Threshold";
+  thrLabel.setAttribute("for", "shape-adopt-threshold-input");
+  const thrInput = document.createElement("input");
+  thrInput.type = "range";
+  thrInput.id = "shape-adopt-threshold-input";
+  thrInput.min = "4";
+  thrInput.max = "120";
+  thrInput.step = "1";
+  thrInput.value = String(adoptThreshold);
+  const thrValue = document.createElement("span");
+  thrValue.id = "shape-adopt-threshold-value";
+  thrValue.className = "layer-opacity-value";
+  thrValue.textContent = String(adoptThreshold);
+  thrInput.addEventListener("input", () => {
+    adoptThreshold = Number(thrInput.value);
+    thrValue.textContent = String(adoptThreshold);
+  });
+  thrRow.append(thrLabel, thrInput, thrValue);
+  container.appendChild(thrRow);
+
+  const thrHint = document.createElement("p");
+  thrHint.className = "layer-hint";
+  thrHint.textContent =
+    "How much darker a pixel must get to count. One knob, not a clever guess: raise it if the trace catches the whole wall, lower it if it finds nothing. A coarse blob is the right answer here - on a fill shape the margin has to inflate it anyway.";
+  container.appendChild(thrHint);
 }
 
 // The text layer's own controls. Kept plain on purpose - the brutalist
@@ -2852,7 +3186,7 @@ function buildLayerPanel(container, surface, layer) {
 // eye. The same-key re-render path (updateTextLayerPanelValues) skips
 // whichever control has focus, so committing per keystroke does not clobber
 // an edit in progress.
-function buildTextLayerControls(container, surface, layer) {
+function buildTextLayerControls(container, shape, layer) {
   const fields = sanitizeTextLayer(layer);
 
   // Role: what this region IS, as opposed to what is currently in it. See
@@ -2871,7 +3205,7 @@ function buildTextLayerControls(container, surface, layer) {
     roleSelect.appendChild(opt);
   });
   roleSelect.value = fields.role;
-  roleSelect.addEventListener("change", () => setLayerField(surface.id, "role", roleSelect.value));
+  roleSelect.addEventListener("change", () => setLayerField(shape.id, "role", roleSelect.value));
   roleRow.append(roleLabel, roleSelect);
   container.appendChild(roleRow);
 
@@ -2892,7 +3226,7 @@ function buildTextLayerControls(container, surface, layer) {
   textInput.rows = 3;
   textInput.placeholder = "e.g. Y en el fondo de la copa\nse ahogó la tragedia";
   textInput.value = fields.text;
-  textInput.addEventListener("input", () => setLayerField(surface.id, "text", textInput.value));
+  textInput.addEventListener("input", () => setLayerField(shape.id, "text", textInput.value));
   textRow.append(textLabel, textInput);
   container.appendChild(textRow);
 
@@ -2923,7 +3257,7 @@ function buildTextLayerControls(container, surface, layer) {
   sizeValue.textContent = formatTextSize(fields.maxSize);
   sizeInput.addEventListener("input", () => {
     sizeValue.textContent = formatTextSize(Number(sizeInput.value));
-    setLayerField(surface.id, "maxSize", Number(sizeInput.value));
+    setLayerField(shape.id, "maxSize", Number(sizeInput.value));
   });
   sizeRow.append(sizeLabel, sizeInput, sizeValue);
   container.appendChild(sizeRow);
@@ -2958,7 +3292,7 @@ function buildTextLayerControls(container, surface, layer) {
   aspectValue.textContent = formatTextAspect(fields.aspect);
   aspectInput.addEventListener("input", () => {
     aspectValue.textContent = formatTextAspect(Number(aspectInput.value));
-    setLayerField(surface.id, "aspect", Number(aspectInput.value));
+    setLayerField(shape.id, "aspect", Number(aspectInput.value));
   });
   aspectRow.append(aspectLabel, aspectInput, aspectValue);
   container.appendChild(aspectRow);
@@ -2985,7 +3319,7 @@ function buildTextLayerControls(container, surface, layer) {
     alignSelect.appendChild(opt);
   });
   alignSelect.value = fields.align;
-  alignSelect.addEventListener("change", () => setLayerField(surface.id, "align", alignSelect.value));
+  alignSelect.addEventListener("change", () => setLayerField(shape.id, "align", alignSelect.value));
   alignRow.append(alignLabel, alignSelect);
   container.appendChild(alignRow);
 
@@ -2999,7 +3333,7 @@ function buildTextLayerControls(container, surface, layer) {
   colorInput.type = "color";
   colorInput.id = "layer-color-input";
   colorInput.value = fields.color;
-  colorInput.addEventListener("input", () => setLayerField(surface.id, "color", colorInput.value));
+  colorInput.addEventListener("input", () => setLayerField(shape.id, "color", colorInput.value));
   colorRow.append(colorLabel, colorInput);
   container.appendChild(colorRow);
 
@@ -3013,7 +3347,7 @@ function buildTextLayerControls(container, surface, layer) {
   const outlineLabel = document.createElement("label");
   outlineLabel.textContent = "Outline";
   outlineLabel.setAttribute("for", "layer-outline-input");
-  outlineInput.addEventListener("change", () => setLayerField(surface.id, "outline", outlineInput.checked));
+  outlineInput.addEventListener("change", () => setLayerField(shape.id, "outline", outlineInput.checked));
   outlineRow.append(outlineInput, outlineLabel);
   container.appendChild(outlineRow);
 
@@ -3036,7 +3370,7 @@ function buildTextLayerControls(container, surface, layer) {
   outlineWidthValue.textContent = fields.outlineWidth.toFixed(3);
   outlineWidthInput.addEventListener("input", () => {
     outlineWidthValue.textContent = Number(outlineWidthInput.value).toFixed(3);
-    setLayerField(surface.id, "outlineWidth", Number(outlineWidthInput.value));
+    setLayerField(shape.id, "outlineWidth", Number(outlineWidthInput.value));
   });
   outlineWidthRow.append(outlineWidthLabel, outlineWidthInput, outlineWidthValue);
   container.appendChild(outlineWidthRow);
@@ -3064,7 +3398,7 @@ function formatTextAspect(multiplier) {
 // Refreshes field values without rebuilding the DOM (see renderLayerPanel).
 // Skips whichever field is currently focused so an in-progress edit isn't
 // clobbered by the re-render its own commit triggered.
-function updateLayerPanelValues(container, layer) {
+function updateLayerPanelValues(container, shape, layer) {
   const active = document.activeElement;
 
   const typeSelect = container.querySelector("#layer-type-select");
@@ -3079,6 +3413,10 @@ function updateLayerPanelValues(container, layer) {
   if (opacityValue) opacityValue.textContent = Number(layer.opacity ?? 1).toFixed(2);
 
   if (layer.type === "text") updateTextLayerPanelValues(container, layer, active);
+  if (layer.type === "fill") updateFillLayerPanelValues(container, layer, active);
+
+  updateOutlinePanelValues(container, shape);
+  updateAdoptPanelValues(container, active);
 }
 
 // Same contract as above: refresh, never rebuild, and never touch the control
@@ -3129,219 +3467,84 @@ function updateTextLayerPanelValues(container, layer, active) {
   if (outlineWidthValue) outlineWidthValue.textContent = fields.outlineWidth.toFixed(3);
 }
 
-// =========================================================================
-// KEEP-OUT PANEL (sidebar, selected keep-out)
-// =========================================================================
-// Same rebuild-by-key discipline as the layer panel above, and for the same
-// reason: the margin slider fires commitProjectChange() on every input
-// event, and rebuilding the DOM under a slider mid-drag takes the focus off
-// it and strands the gesture halfway.
+function updateFillLayerPanelValues(container, layer, active) {
+  const fields = sanitizeFillLayer(layer);
 
-let keepOutPanelKey = null;
+  const colorInput = container.querySelector("#layer-fill-color-input");
+  if (colorInput && active !== colorInput) colorInput.value = fields.color;
 
-function renderKeepOutPanel() {
-  const container = document.getElementById("keepout-panel");
-  const keepOut = getSelectedKeepOut();
-
-  if (!keepOut) {
-    keepOutPanelKey = null;
-    container.innerHTML = '<p class="layer-panel-empty">Select a keep-out to edit it.</p>';
-    return;
-  }
-
-  if (keepOut.id !== keepOutPanelKey) {
-    keepOutPanelKey = keepOut.id;
-    buildKeepOutPanel(container, keepOut);
-  } else {
-    updateKeepOutPanelValues(container, keepOut);
-  }
+  const marginInput = container.querySelector("#layer-fill-margin-input");
+  if (marginInput && active !== marginInput) marginInput.value = String(fields.margin);
+  const marginValue = container.querySelector("#layer-fill-margin-value");
+  if (marginValue) marginValue.textContent = fields.margin.toFixed(3);
 }
 
-function buildKeepOutPanel(container, keepOut) {
-  container.innerHTML = "";
+function updateOutlinePanelValues(container, shape) {
+  const count = shape.outline.length;
 
-  const marginRow = document.createElement("div");
-  marginRow.className = "layer-field";
-  const marginLabel = document.createElement("label");
-  marginLabel.textContent = "Margin";
-  marginLabel.setAttribute("for", "keepout-margin-input");
-  const marginInput = document.createElement("input");
-  marginInput.type = "range";
-  marginInput.id = "keepout-margin-input";
-  marginInput.min = "0";
-  marginInput.max = String(KEEPOUT_MARGIN_MAX);
-  marginInput.step = "0.005";
-  marginInput.value = String(keepOut.margin ?? 0);
-  const marginValue = document.createElement("span");
-  marginValue.id = "keepout-margin-value";
-  marginValue.className = "layer-opacity-value";
-  marginValue.textContent = Number(keepOut.margin ?? 0).toFixed(3);
-  marginInput.addEventListener("input", () => {
-    marginValue.textContent = Number(marginInput.value).toFixed(3);
-    setKeepOutMargin(keepOut.id, Number(marginInput.value));
-  });
-  marginRow.append(marginLabel, marginInput, marginValue);
-  container.appendChild(marginRow);
-
-  const marginHint = document.createElement("p");
-  marginHint.className = "layer-hint";
-  marginHint.textContent =
-    "How far the shape grows outward, as a fraction of frame height. A true dilation - it thickens thin limbs rather than lengthening them. Draw generously larger than the shadow: a performer sways, and an exact mask lets light onto the face on every lean.";
-  container.appendChild(marginHint);
-
-  const pointRow = document.createElement("div");
-  pointRow.className = "layer-field";
-  const deletePointBtn = document.createElement("button");
-  deletePointBtn.type = "button";
-  deletePointBtn.id = "keepout-delete-point";
-  deletePointBtn.textContent = "Delete point";
-  deletePointBtn.addEventListener("click", () => deleteKeepOutPoint(keepOut.id, selectedPointIndex));
-  const pointCount = document.createElement("span");
-  pointCount.id = "keepout-point-count";
-  pointCount.className = "layer-opacity-value";
-  pointRow.append(deletePointBtn, pointCount);
-  container.appendChild(pointRow);
-
-  const pointHint = document.createElement("p");
-  pointHint.className = "layer-hint";
-  pointHint.textContent =
-    "Click an edge in the preview to insert a point and pull it out. Click a point to select it, then Delete (or the button) to remove it. Three points is the floor.";
-  container.appendChild(pointHint);
-
-  buildShadowSuggestControls(container, keepOut);
-  updateKeepOutPanelValues(container, keepOut);
-}
-
-// "Suggest from my shadow" and the two knobs it needs. Both knobs are
-// control-local (see shadowThreshold): they describe this room's light and
-// how long it takes to walk to the wall, not the venue's geometry.
-function buildShadowSuggestControls(container, keepOut) {
-  const rule = document.createElement("div");
-  rule.className = "keepout-suggest-divider";
-  container.appendChild(rule);
-
-  const row = document.createElement("div");
-  row.className = "layer-field";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.id = "keepout-suggest";
-  btn.textContent = "Suggest from my shadow";
-  btn.addEventListener("click", () => suggestKeepOutFromShadow(keepOut.id));
-  row.appendChild(btn);
-  container.appendChild(row);
-
-  const status = document.createElement("p");
-  status.id = "keepout-suggest-status";
-  status.className = "keepout-suggest-status";
-  container.appendChild(status);
-
-  const hint = document.createElement("p");
-  hint.id = "keepout-suggest-hint";
-  hint.className = "layer-hint";
-  container.appendChild(hint);
-
-  const secsRow = document.createElement("div");
-  secsRow.className = "layer-field";
-  const secsLabel = document.createElement("label");
-  secsLabel.textContent = "Countdown (s)";
-  secsLabel.setAttribute("for", "keepout-countdown-input");
-  const secsInput = document.createElement("input");
-  secsInput.type = "number";
-  secsInput.id = "keepout-countdown-input";
-  secsInput.min = "3";
-  secsInput.max = "60";
-  secsInput.step = "1";
-  secsInput.value = String(shadowCountdownSeconds);
-  secsInput.addEventListener("change", () => {
-    const n = Math.round(Number(secsInput.value));
-    shadowCountdownSeconds = isFinite(n) ? Math.max(3, Math.min(60, n)) : 10;
-    secsInput.value = String(shadowCountdownSeconds);
-  });
-  secsRow.append(secsLabel, secsInput);
-  container.appendChild(secsRow);
-
-  const thrRow = document.createElement("div");
-  thrRow.className = "layer-field";
-  const thrLabel = document.createElement("label");
-  thrLabel.textContent = "Threshold";
-  thrLabel.setAttribute("for", "keepout-threshold-input");
-  const thrInput = document.createElement("input");
-  thrInput.type = "range";
-  thrInput.id = "keepout-threshold-input";
-  thrInput.min = "4";
-  thrInput.max = "120";
-  thrInput.step = "1";
-  thrInput.value = String(shadowThreshold);
-  const thrValue = document.createElement("span");
-  thrValue.id = "keepout-threshold-value";
-  thrValue.className = "layer-opacity-value";
-  thrValue.textContent = String(shadowThreshold);
-  thrInput.addEventListener("input", () => {
-    shadowThreshold = Number(thrInput.value);
-    thrValue.textContent = String(shadowThreshold);
-  });
-  thrRow.append(thrLabel, thrInput, thrValue);
-  container.appendChild(thrRow);
-
-  const thrHint = document.createElement("p");
-  thrHint.className = "layer-hint";
-  thrHint.textContent =
-    "How much darker a pixel must get to count as shadow. One knob, not a clever guess: raise it if the trace catches the whole wall, lower it if it finds nothing. A coarse blob is the right answer here - the margin has to inflate it anyway.";
-  container.appendChild(thrHint);
-}
-
-// Refreshes values without rebuilding, skipping whichever field has focus so
-// an in-progress slider drag isn't clobbered by the commit it triggered.
-function updateKeepOutPanelValues(container, keepOut) {
-  const active = document.activeElement;
-
-  const marginInput = container.querySelector("#keepout-margin-input");
-  if (marginInput && active !== marginInput) marginInput.value = String(keepOut.margin ?? 0);
-  const marginValue = container.querySelector("#keepout-margin-value");
-  if (marginValue) marginValue.textContent = Number(keepOut.margin ?? 0).toFixed(3);
-
-  const count = keepOut.points.length;
-  const pointCount = container.querySelector("#keepout-point-count");
+  const pointCount = container.querySelector("#shape-point-count");
   if (pointCount) {
     pointCount.textContent =
       selectedPointIndex == null ? `${count} points` : `point ${selectedPointIndex + 1} of ${count}`;
   }
-  const deletePointBtn = container.querySelector("#keepout-delete-point");
-  if (deletePointBtn) deletePointBtn.disabled = selectedPointIndex == null || count <= KEEPOUT_MIN_POINTS;
 
-  // The suggestion needs a calibrated, running camera. Disabled with the
-  // reason said out loud, rather than left as a dead control.
-  const blocker = shadowSuggestionBlocker();
-  const suggestBtn = container.querySelector("#keepout-suggest");
-  if (suggestBtn) {
-    suggestBtn.disabled = !!blocker || suggestionRunning;
-    suggestBtn.textContent = suggestionRunning ? "Capturing\u2026" : "Suggest from my shadow";
+  const deletePointBtn = container.querySelector("#shape-delete-point");
+  if (deletePointBtn) deletePointBtn.disabled = selectedPointIndex == null || count <= SHAPE_MIN_POINTS;
+
+  const frameHint = container.querySelector("#shape-frame-hint");
+  if (frameHint) {
+    // Three states, and each of them is a different thing to know.
+    frameHint.textContent = !shapeCarriesContent(shape)
+      ? ""
+      : shapeOutlineIsFrame(shape)
+        ? "The outline is still the four corners the content is warped onto, so nothing is clipped and 1–4 move both at once. Add a point and they become two things."
+        : "The dashed quad is the content frame — four corners, because that is what a perspective warp needs. The content is warped onto it and clipped to this outline. Adopting boundaries replaces the outline and leaves the frame alone.";
   }
-  const suggestHint = container.querySelector("#keepout-suggest-hint");
-  if (suggestHint) {
-    suggestHint.textContent = blocker
+}
+
+function updateAdoptPanelValues(container, active) {
+  // The capture needs a calibrated, running camera. Disabled with the reason
+  // said out loud, rather than left as a dead control.
+  const blocker = adoptBoundariesBlocker();
+  const adoptBtn = container.querySelector("#shape-adopt");
+  if (adoptBtn) {
+    adoptBtn.disabled = !!blocker || adoptRunning;
+    adoptBtn.textContent = adoptRunning ? "Capturing…" : "Adopt boundaries…";
+  }
+  const adoptHint = container.querySelector("#shape-adopt-hint");
+  if (adoptHint) {
+    adoptHint.textContent = blocker
       ? blocker
-      : "Raises the white plate, photographs the empty wall, counts you into the beam, photographs it again, and keeps what got darker. That region IS your shadow - trace the shadow, never the body: the camera and the lens disagree about where you are, and cannot disagree about where your shadow falls.";
-    suggestHint.classList.toggle("blocked", !!blocker);
+      : "Raises the white plate, photographs the wall, counts you (or whatever is being traced) into the beam, photographs it again, and makes what got darker this shape's outline.";
+    adoptHint.classList.toggle("blocked", !!blocker);
   }
-  const thrInput = container.querySelector("#keepout-threshold-input");
-  if (thrInput && active !== thrInput) thrInput.value = String(shadowThreshold);
-  const thrValue = container.querySelector("#keepout-threshold-value");
-  if (thrValue) thrValue.textContent = String(shadowThreshold);
-  const secsInput = container.querySelector("#keepout-countdown-input");
-  if (secsInput && active !== secsInput) secsInput.value = String(shadowCountdownSeconds);
+  const thrInput = container.querySelector("#shape-adopt-threshold-input");
+  if (thrInput && active !== thrInput) thrInput.value = String(adoptThreshold);
+  const thrValue = container.querySelector("#shape-adopt-threshold-value");
+  if (thrValue) thrValue.textContent = String(adoptThreshold);
+  const secsInput = container.querySelector("#shape-adopt-countdown-input");
+  if (secsInput && active !== secsInput) secsInput.value = String(adoptCountdownSeconds);
 }
 
 // =========================================================================
 // CALIBRATION (arrow-key nudge)
 // =========================================================================
-// The critical live-calibration UX: select a surface, then arrow-key nudge
-// it in real output pixels while watching the projected result. With no
-// active corner (the default on selection, or after 0/Escape), arrows move
-// the WHOLE surface - fast coarse placement. Press 1-4 to pick a single
-// corner for fine precision nudging instead. Nudges are discrete (no
-// throttle needed) and route through the normal commitProjectChange() choke
-// point.
+// The critical live-calibration UX: select a shape, then arrow-key nudge it in
+// real output pixels while watching the projected result. Three levels, most
+// general first, and each one is opted into rather than defaulted to:
+//
+//   nothing live  -> arrows move the WHOLE shape, outline and frame together.
+//                    Fast coarse placement, and where every fresh selection
+//                    starts.
+//   1-4           -> one corner of the content frame. The numbers match the
+//                    ones baked into the test pattern.
+//   a point       -> the outline point last clicked in the preview. This is
+//                    new in v8 and is what "editable identically on every
+//                    shape" costs: an outline point is nudgeable for the same
+//                    reason a frame corner is.
+//
+// 0 or Escape drops back to whole-shape mode. Nudges are discrete (no throttle
+// needed) and route through the normal commitProjectChange() choke point.
 
 function isTextInputFocused() {
   const el = document.activeElement;
@@ -3357,27 +3560,43 @@ const NUDGE_ARROW_DELTAS = {
   ArrowRight: [1, 0],
 };
 
-function nudgeActiveCorner(dxPx, dyPx) {
-  const surface = getSelectedSurface();
-  if (!surface) return;
-  const [x, y] = surface.corners[activeCornerIndex];
-  surface.corners[activeCornerIndex] = [
+function nudgeFrameCorner(dxPx, dyPx) {
+  const shape = getSelectedShape();
+  if (!shape || !shapeFrame(shape)) return;
+  const linked = shapeOutlineIsFrame(shape);
+  const [x, y] = shape.corners[activeCornerIndex];
+  const point = [clampCoord(x + dxPx / outputSize.w), clampCoord(y + dyPx / outputSize.h)];
+  shape.corners[activeCornerIndex] = point;
+  // Same rule as the pointer drag: while the outline IS the frame, one nudge
+  // moves one point rather than leaving a copy of it behind.
+  if (linked) shape.outline[activeCornerIndex] = [point[0], point[1]];
+  commitProjectChange();
+}
+
+function nudgeOutlinePoint(dxPx, dyPx) {
+  const shape = getSelectedShape();
+  if (!shape || selectedPointIndex >= shape.outline.length) return;
+  const [x, y] = shape.outline[selectedPointIndex];
+  shape.outline[selectedPointIndex] = [
     clampCoord(x + dxPx / outputSize.w),
     clampCoord(y + dyPx / outputSize.h),
   ];
   commitProjectChange();
 }
 
-// Whole-surface counterpart to nudgeActiveCorner: translates all 4 corners
-// by the same output-pixel delta, using the same axis-wise clamp as
-// pointer-drag translation (clampTranslateDelta) so an arrow nudge can't
-// distort the quad at the overshoot boundary either.
-function nudgeWholeSurface(dxPx, dyPx) {
-  const surface = getSelectedSurface();
-  if (!surface) return;
+// Whole-shape counterpart: translates the outline AND the content frame by the
+// same output-pixel delta, using the same axis-wise clamp as pointer-drag
+// translation (clampTranslateDelta) taken over both rings at once, so an arrow
+// nudge cannot distort the shape or slide its content off its own outline at
+// the overshoot boundary either.
+function nudgeWholeShape(dxPx, dyPx) {
+  const shape = getSelectedShape();
+  if (!shape) return;
+  const frame = shapeFrame(shape);
   const rawDelta = [dxPx / outputSize.w, dyPx / outputSize.h];
-  const [dx, dy] = clampTranslateDelta(surface.corners, rawDelta);
-  surface.corners = surface.corners.map(([x, y]) => [x + dx, y + dy]);
+  const [dx, dy] = clampTranslateDelta(frame ? shape.outline.concat(frame) : shape.outline, rawDelta);
+  shape.outline = shape.outline.map(([x, y]) => [x + dx, y + dy]);
+  if (frame) shape.corners = frame.map(([x, y]) => [x + dx, y + dy]);
   commitProjectChange();
 }
 
@@ -3385,42 +3604,34 @@ function handleControlKeydown(e) {
   if (isTextInputFocused()) return;
 
   // Escape means "get me out of here" first, and only then "back to
-  // whole-surface nudging" (below) - during calibration there is no surface
+  // whole-shape nudging" (below) - during calibration there is no shape
   // selected to nudge anyway.
   if (calibratingCamera) {
     if (e.key === "Escape") toggleCameraCalibration();
     return; // the preview belongs to the camera quad; nudges have nothing to show
   }
 
-  // Keep-out keys. Selection is exclusive with surfaces (see
-  // selectedKeepOutId), so this block and the surface block below can never
-  // both be live, and the early return here is not stealing keys from a
-  // selected surface.
-  if (selectedKeepOutId) {
-    if (e.key === "Delete" || e.key === "Backspace") {
-      e.preventDefault(); // Backspace still means "back" in some setups
-      deleteKeepOutPoint(selectedKeepOutId, selectedPointIndex);
-      return;
-    }
-    if (e.key === "Escape") {
-      selectedPointIndex = null; // deselect the point, keep the keep-out
-      renderControl();
-      return;
-    }
-    return; // arrows and 1-4 belong to surface calibration
+  const shape = getSelectedShape();
+  if (!shape) return;
+
+  if (e.key === "Delete" || e.key === "Backspace") {
+    e.preventDefault(); // Backspace still means "back" in some setups
+    deleteShapePoint(shape.id, selectedPointIndex);
+    return;
   }
 
-  if (!selectedSurfaceId) return;
-
-  if (e.key >= "1" && e.key <= "4") {
-    activeCornerIndex = Number(e.key) - 1;
-    renderPreview();
+  // 1-4 address the content frame's corners, and a fill shape has no frame -
+  // so on one, these keys do nothing rather than selecting a corner that is
+  // not there.
+  if (e.key >= "1" && e.key <= "4" && shapeFrame(shape) && shapeCarriesContent(shape)) {
+    setActiveCornerIndex(Number(e.key) - 1);
+    renderControl(); // the panel's point read-out follows the selection too
     return;
   }
 
   if (e.key === "0" || e.key === "Escape") {
-    activeCornerIndex = null; // back to whole-surface nudge mode
-    renderPreview();
+    clearShapeSubselection(); // back to whole-shape nudge mode
+    renderControl();
     return;
   }
 
@@ -3428,10 +3639,12 @@ function handleControlKeydown(e) {
   if (delta) {
     e.preventDefault(); // don't let arrows scroll the page
     const step = e.shiftKey ? 1 : 5; // output px; shift = fine
-    if (activeCornerIndex == null) {
-      nudgeWholeSurface(delta[0] * step, delta[1] * step);
+    if (selectedPointIndex != null) {
+      nudgeOutlinePoint(delta[0] * step, delta[1] * step);
+    } else if (activeCornerIndex != null) {
+      nudgeFrameCorner(delta[0] * step, delta[1] * step);
     } else {
-      nudgeActiveCorner(delta[0] * step, delta[1] * step);
+      nudgeWholeShape(delta[0] * step, delta[1] * step);
     }
   }
 }
@@ -3470,8 +3683,7 @@ function importProjectFromFile(file) {
 }
 
 function wireControlEvents() {
-  document.getElementById("btn-add-surface").addEventListener("click", addSurface);
-  document.getElementById("btn-add-keepout").addEventListener("click", addKeepOut);
+  document.getElementById("btn-add-shape").addEventListener("click", addShape);
 
   document.getElementById("btn-open-output").addEventListener("click", () => {
     // Hand the output window THIS window's build token (see the bootstrap in
@@ -3559,160 +3771,241 @@ function initControl() {
 // =========================================================================
 // OUTPUT RENDERING
 // =========================================================================
-// Per visible surface: a fixed 1000x1000 wrapper div, warped onto the
-// surface's corners (in current window pixels) via matrix3d - see the WARP
-// section above for the homography math. Re-renders on every received
-// state and on window resize (wired in initOutput()).
+// One root div per visible shape, in list order, and what goes inside it
+// depends on what the shape carries:
+//
+//   content -> a fixed 1000x1000 wrapper div, warped onto the shape's CONTENT
+//              FRAME (in current window pixels) via matrix3d - see the WARP
+//              section above for the homography math. The root carries a
+//              clip-path built from the OUTLINE, in output pixels, whenever
+//              the outline has left the frame.
+//   fill    -> a full-frame SVG holding one polygon: the outline, painted in
+//              the layer's colour, with the margin as a round-joined stroke.
+//
+// Re-renders on every received state and on window resize (wired in
+// initOutput()).
+//
+// WHY THE CLIP LIVES ON AN UNTRANSFORMED PARENT. clip-path resolves in the
+// element's own coordinate space, so putting it on the warped wrapper would
+// mean mapping every outline point backwards through the inverse homography
+// into unit-square space. The root is full-frame and untransformed, so output
+// pixels ARE its coordinate space and the outline goes on as it is stored,
+// with no second homography to keep in step with the first.
+//
+// AND WHY IT IS ONLY SET WHEN THE OUTLINE HAS LEFT THE FRAME. A clip laid
+// exactly along a quad's own edge would shave its antialiasing; a shape that
+// clips nothing must paint exactly the pixels v1.0.0 painted, so it is given
+// no clip at all rather than one that ought to be a no-op.
 
-// Reconciliation map: surfaceId -> { wrapper, layerType, layerSrc, contentEl }.
+// Reconciliation map: shapeId -> { root, wrapper, layerType, layerSrc,
+// textKey, contentEl, clipKey }.
 // renderOutput() runs on every received state AND on every window resize
 // (arrow-key nudges commit a state broadcast per keystroke). Without this
 // map, the old "container.innerHTML = ''; rebuild everything" approach would
 // tear down and recreate every <video> on every single nudge or resize -
 // restarting playback constantly, which is exactly wrong for calibrating
-// WHILE video plays. Now: the wrapper transform + layer opacity update every
-// render: the underlying video/image/canvas element only gets recreated when
-// its surface's layer.type or layer.src actually changes.
-const outputSurfaceElements = new Map();
+// WHILE video plays. Now: the wrapper transform, the clip and the layer
+// opacity update every render; the underlying video/image/canvas element only
+// gets recreated when its shape's layer.type or layer.src actually changes.
+const outputShapeElements = new Map();
 
 function renderOutput() {
   const container = document.getElementById("output-surfaces");
   const w = window.innerWidth;
   const h = window.innerHeight;
 
-  const visibleSurfaces = project.surfaces.filter((s) => s.visible);
-  const visibleIds = new Set(visibleSurfaces.map((s) => s.id));
+  const visibleShapes = project.surfaces.filter((s) => s.visible);
+  const visibleIds = new Set(visibleShapes.map((s) => s.id));
 
-  // Drop entries for surfaces that were removed or hidden since the last
+  // Drop entries for shapes that were removed or hidden since the last
   // render (also stops/pauses their media - see teardownLayerContent).
-  for (const [id, entry] of outputSurfaceElements) {
-    if (!visibleIds.has(id)) {
-      teardownLayerContent(entry);
-      entry.wrapper.remove();
-      outputSurfaceElements.delete(id);
-    }
+  for (const [id, entry] of outputShapeElements) {
+    if (!visibleIds.has(id)) dropOutputShape(id, entry);
   }
 
-  visibleSurfaces.forEach((surface) => renderOutputSurface(container, surface, w, h));
+  visibleShapes.forEach((shape) => renderOutputShape(container, shape, w, h));
 
-  reconcileOutputSurfaceOrder(container, visibleSurfaces);
-  renderKeepOutsOutput(w, h);
+  reconcileOutputShapeOrder(container, visibleShapes);
 }
 
-// Keep-outs paint ABOVE every surface wrapper, always, regardless of the
-// order of either list - black is the decision that wins. #output-keepouts
-// is a sibling of #output-surfaces that comes after it in the document, so
-// this needs no z-index bookkeeping and never touches the surface
-// reconciler. It sits BELOW #output-white on purpose: "Show white" has to
-// give a genuinely clean plate, and a keep-out painted on top of it would
-// occlude the very shadow the suggestion below is trying to trace.
-//
-// Drawn in real output pixels rather than in normalized space, because the
-// margin stroke has to be ROUND: a viewBox stretched over a non-square frame
-// would scale x and y differently and turn every round join into an ellipse.
-// Rebuilt wholesale each time (unlike the surfaces, which reconcile to keep
-// video playing) - these are a handful of polygons with no media in them and
-// nothing to preserve across a render.
-function renderKeepOutsOutput(w, h) {
-  const svg = document.getElementById("output-keepouts");
-  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  svg.innerHTML = "";
-
-  // Defensive read: the output takes whatever the broadcast handed it, and
-  // isValidProject() only checks version + surfaces.
-  const keepOuts = Array.isArray(project.keepOuts) ? project.keepOuts : [];
-
-  keepOuts
-    .filter((k) => k && k.visible && isValidPointRing(k.points))
-    .forEach((keepOut) => {
-      const poly = document.createElementNS(SVG_NS, "polygon");
-      poly.setAttribute("points", keepOutPointsAttr(keepOut, w, h));
-      poly.setAttribute("class", "output-keepout");
-      applyKeepOutMarginStroke(poly, keepOut.margin, h);
-      svg.appendChild(poly);
-    });
+function dropOutputShape(id, entry) {
+  teardownLayerContent(entry);
+  entry.root.remove();
+  outputShapeElements.delete(id);
 }
 
-// Surface list order = render order = stacking order (later = on top, see
-// project-context v2 direction), so #output-surfaces' DOM child order must
-// track project.surfaces order - otherwise a z-order move (moveSurfaceUp/
-// Down) changes the data but the wrapper divs stay in their old paint order
-// on the actual output. renderOutputSurface() above only appends a wrapper
-// the FIRST time a surface is seen; on every later render it reuses the
-// existing element in place, so without this step a reorder would be
-// invisible on the wall.
+// Shape list order = render order = stacking order (later = on top), so
+// #output-surfaces' DOM child order must track project.surfaces order -
+// otherwise a z-order move (moveShapeUp/Down) changes the data but the roots
+// stay in their old paint order on the actual output. renderOutputShape()
+// only appends a root the FIRST time a shape is seen; on every later render it
+// reuses the existing element in place, so without this step a reorder would
+// be invisible on the wall.
 //
 // appendChild on an element already in the document just moves it (cheap,
 // idempotent) - but re-parenting a <video> element directly DOES interrupt
 // playback in Chrome (moving a media element triggers a load reset). Here we
-// only ever move the per-surface WRAPPER div, never the <video>/<img>/canvas
-// itself - the video stays put inside its wrapper, only the wrapper's
+// only ever move the per-shape ROOT div, never the <video>/<img>/canvas itself
+// - the video stays put inside its wrapper inside its root, only the root's
 // position among its siblings changes, so this does not reset playback.
 // Still: only touch the DOM when the order actually drifted from what's
 // wanted (checked below) - calibration nudges and resizes call renderOutput()
 // on every commit/frame and must NOT reorder anything when nothing moved.
-function reconcileOutputSurfaceOrder(container, visibleSurfaces) {
-  const wanted = visibleSurfaces
-    .map((s) => outputSurfaceElements.get(s.id))
+function reconcileOutputShapeOrder(container, visibleShapes) {
+  const wanted = visibleShapes
+    .map((s) => outputShapeElements.get(s.id))
     .filter(Boolean)
-    .map((entry) => entry.wrapper);
+    .map((entry) => entry.root);
 
   const current = Array.from(container.children);
   const alreadyInOrder =
     wanted.length === current.length && wanted.every((el, i) => el === current[i]);
   if (alreadyInOrder) return;
 
-  wanted.forEach((wrapper) => container.appendChild(wrapper));
+  wanted.forEach((root) => container.appendChild(root));
 }
 
-function renderOutputSurface(container, surface, w, h) {
-  const transform = surfaceMatrix3d(surface, w, h);
-  const existing = outputSurfaceElements.get(surface.id);
-
-  if (!transform) {
-    // Degenerate corners (e.g. collinear) - skip rather than throw, and tear
-    // down any element that existed from before the corners went degenerate.
-    if (existing) {
-      teardownLayerContent(existing);
-      existing.wrapper.remove();
-      outputSurfaceElements.delete(surface.id);
-    }
-    return;
-  }
-
-  let entry = existing;
+function ensureOutputShapeRoot(container, shape) {
+  let entry = outputShapeElements.get(shape.id);
   if (!entry) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "surface-wrapper";
-    wrapper.dataset.surfaceId = surface.id;
-    wrapper.style.width = `${UNIT_SIZE}px`;
-    wrapper.style.height = `${UNIT_SIZE}px`;
-    container.appendChild(wrapper);
+    const root = document.createElement("div");
+    root.className = "shape-root";
+    root.dataset.shapeId = shape.id;
+    container.appendChild(root);
     entry = {
-      wrapper,
+      root,
+      wrapper: null,
       layerType: null,
       layerSrc: null,
       textKey: null,
       contentEl: null,
+      clipKey: null,
     };
-    outputSurfaceElements.set(surface.id, entry);
+    outputShapeElements.set(shape.id, entry);
+  }
+  return entry;
+}
+
+// Empties a root back to nothing, for a shape whose type changed across the
+// fill / content divide - the two put fundamentally different elements inside
+// it, and nothing in one is reusable by the other.
+function resetOutputShapeRoot(entry) {
+  teardownLayerContent(entry);
+  entry.root.innerHTML = "";
+  entry.root.style.clipPath = "";
+  entry.wrapper = null;
+  entry.contentEl = null;
+  entry.layerType = null;
+  entry.layerSrc = null;
+  entry.textKey = null;
+  entry.clipKey = null;
+}
+
+function renderOutputShape(container, shape, w, h) {
+  if (shapeType(shape) === "fill") renderOutputFill(container, shape, w, h);
+  else renderOutputContent(container, shape, w, h);
+}
+
+// A fill shape: its outline, in its colour, grown by its margin.
+//
+// Drawn in real output pixels rather than in normalized space, because the
+// margin stroke has to be ROUND: a viewBox stretched over a non-square frame
+// would scale x and y differently and turn every round join into an ellipse.
+// The polygon is re-dressed rather than rebuilt on each render - it is one
+// element with no media in it, and rebuilding would churn for nothing.
+function renderOutputFill(container, shape, w, h) {
+  const outline = shapeOutline(shape);
+  const existing = outputShapeElements.get(shape.id);
+  if (!outline) {
+    if (existing) dropOutputShape(shape.id, existing);
+    return;
+  }
+
+  const entry = ensureOutputShapeRoot(container, shape);
+  if (entry.layerType !== "fill") {
+    resetOutputShapeRoot(entry);
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "output-fill-svg");
+    svg.setAttribute("preserveAspectRatio", "none");
+    const poly = document.createElementNS(SVG_NS, "polygon");
+    poly.setAttribute("class", "output-fill");
+    svg.appendChild(poly);
+    entry.root.appendChild(svg);
+    entry.contentEl = svg;
+    entry.layerType = "fill";
+  }
+
+  const layer = shapeLayer(shape);
+  const fields = sanitizeFillLayer(layer);
+  const svg = entry.contentEl;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.style.opacity = String(layer.opacity ?? 1);
+
+  const poly = svg.firstElementChild;
+  poly.setAttribute("points", ringPointsAttr(outline, w, h));
+  // Fill and stroke are the same colour: the stroke IS the dilation, not an
+  // edge, so a second colour there would draw a halo nobody asked for.
+  poly.style.fill = fields.color;
+  poly.style.stroke = fields.color;
+  applyMarginStroke(poly, fields.margin, h);
+}
+
+function renderOutputContent(container, shape, w, h) {
+  const transform = frameMatrix3d(shapeFrame(shape), w, h);
+  const existing = outputShapeElements.get(shape.id);
+
+  if (!transform) {
+    // No frame, or degenerate corners (e.g. collinear) - skip rather than
+    // throw, and tear down any element that existed from before.
+    if (existing) dropOutputShape(shape.id, existing);
+    return;
+  }
+
+  const entry = ensureOutputShapeRoot(container, shape);
+  if (!entry.wrapper) {
+    resetOutputShapeRoot(entry); // may have been holding a fill's SVG
+    const wrapper = document.createElement("div");
+    wrapper.className = "surface-wrapper";
+    wrapper.style.width = `${UNIT_SIZE}px`;
+    wrapper.style.height = `${UNIT_SIZE}px`;
+    entry.root.appendChild(wrapper);
+    entry.wrapper = wrapper;
   }
 
   entry.wrapper.style.transform = transform;
-  renderLayer(surface, entry, w, h);
+  applyOutlineClip(entry, shape, w, h);
+  renderLayer(shape, entry, w, h);
 }
 
-// Renders (or reconciles) the content that lives inside a surface's warped
+// The outline, as a clip on the untransformed root - see the section comment
+// for why it goes there and not on the warped wrapper. Keyed so the string is
+// only rebuilt when the geometry it describes actually moved: renderOutput()
+// runs on every nudge, and a clip-path assignment is a style invalidation.
+function applyOutlineClip(entry, shape, w, h) {
+  const outline = shapeOutline(shape);
+  // A shape whose outline is still its frame clips nothing, and is given no
+  // clip at all rather than one along its own edge - see the section comment.
+  const clipKey = !outline || shapeOutlineIsFrame(shape) ? "" : `${w}x${h}:${JSON.stringify(outline)}`;
+  if (entry.clipKey === clipKey) return;
+  entry.clipKey = clipKey;
+  entry.root.style.clipPath = clipKey
+    ? `polygon(${outline.map(([x, y]) => `${x * w}px ${y * h}px`).join(", ")})`
+    : "";
+}
+
+// Renders (or reconciles) the content that lives inside a shape's warped
 // wrapper. Only recreates the content element when layer.type or layer.src
 // changed since the last render; otherwise just refreshes cheap properties
-// (opacity) on the existing element so playback state survives.
+// (opacity) on the existing element so playback state survives. Never reached
+// for a fill shape - that has no wrapper and no content element; see
+// renderOutputFill.
 //
 // `w`/`h` are the output frame in real pixels, and they are here for exactly
 // one reason: the text layer's aspect correction needs real lengths, not
 // normalized ones. Video and image layers do not read them and go on filling
 // their quads exactly as they always have - the stretch is theirs to keep.
-function renderLayer(surface, entry, w, h) {
-  const layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
+function renderLayer(shape, entry, w, h) {
+  const layer = shape.layer || { type: "pattern", src: null, opacity: 1 };
   // Reconcile against the URL actually mounted, not the name in the project.
   // The name can stay put while the URL underneath it changes - a media folder
   // arriving, being reconnected, or being cleared all re-point an unchanged
@@ -3725,7 +4018,7 @@ function renderLayer(surface, entry, w, h) {
   if (typeChanged || srcChanged) {
     teardownLayerContent(entry); // pause/stop+detach whatever was there before
     entry.wrapper.innerHTML = "";
-    entry.contentEl = createLayerElement(surface, layer, nextUrl);
+    entry.contentEl = createLayerElement(shape, layer, nextUrl);
     entry.wrapper.appendChild(entry.contentEl);
     entry.layerType = layer.type;
     entry.layerSrc = nextUrl;
@@ -3741,7 +4034,7 @@ function renderLayer(surface, entry, w, h) {
   // rebuild it, for the same reason a video is not rebuilt on a nudge: churn
   // at a projector is the thing this reconciler exists to avoid.
   if (layer.type === "text" && entry.contentEl) {
-    const boxWidth = textLayoutBoxWidth(surface, sanitizeTextLayer(layer), w, h);
+    const boxWidth = textLayoutBoxWidth(shape, sanitizeTextLayer(layer), w, h);
     const nextTextKey = textLayerKey(layer, boxWidth);
     if (entry.textKey !== nextTextKey) {
       applyTextLayer(entry.contentEl, layer, boxWidth);
@@ -3759,17 +4052,17 @@ function renderLayer(surface, entry, w, h) {
 // Everything that reasons ABOUT the source - the .webm overlay test, the
 // failure note - keeps reading layer.src, because a blob URL has no filename
 // and no extension and means nothing to a person reading the wall.
-function createLayerElement(surface, layer, url) {
+function createLayerElement(shape, layer, url) {
   switch (layer.type) {
     case "video":
-      return createVideoLayerElement(layer, surface, url);
+      return createVideoLayerElement(layer, shape, url);
     case "image":
-      return createImageLayerElement(layer, surface, url);
+      return createImageLayerElement(layer, shape, url);
     case "text":
-      return createTextLayerElement(layer, surface);
+      return createTextLayerElement(layer, shape);
     case "pattern":
     default:
-      return renderPatternLayer(surface);
+      return renderPatternLayer(shape);
   }
 }
 
@@ -3798,7 +4091,7 @@ function teardownLayerContent(entry) {
 // media has no source or fails to load. Black-on-black failures are
 // undebuggable mid-calibration at a projector - failures must be VISIBLE on
 // the output itself.
-function wrapMediaWithFailureNote(mediaEl, surface, layer, kindLabel) {
+function wrapMediaWithFailureNote(mediaEl, shape, layer, kindLabel) {
   const box = document.createElement("div");
   box.className = "layer-box";
 
@@ -3807,11 +4100,11 @@ function wrapMediaWithFailureNote(mediaEl, surface, layer, kindLabel) {
   note.hidden = true;
 
   if (!layer.src) {
-    note.textContent = `${surface.name}\nno ${kindLabel} source set`;
+    note.textContent = `${shape.name}\nno ${kindLabel} source set`;
     note.hidden = false;
   } else {
     mediaEl.addEventListener("error", () => {
-      note.textContent = `${surface.name}\n${kindLabel} failed to load:\n${layer.src}`;
+      note.textContent = `${shape.name}\n${kindLabel} failed to load:\n${layer.src}`;
       note.hidden = false;
     });
   }
@@ -3825,7 +4118,7 @@ function wrapMediaWithFailureNote(mediaEl, surface, layer, kindLabel) {
 // =========================================================================
 // Shared clock per the kickoff decision: every video layer on the output
 // responds to the same global transport command, not an independent one per
-// surface. registeredVideoEls tracks every <video> currently mounted for a
+// shape. registeredVideoEls tracks every <video> currently mounted for a
 // 'video' layer AND for an alpha-webm 'image' layer (v2.2 - see
 // createImageLayerElement) so a transport command can apply to all of them
 // at once.
@@ -3867,7 +4160,7 @@ function applyTransportAction(action) {
 // the entire reason the control window does the reading: a permission dialog
 // on the projector, mid-setup, in front of a room, is not acceptable.
 //
-// src name -> { token, url }. Keyed by NAME, not by surface: two surfaces
+// src name -> { token, url }. Keyed by NAME, not by shape: two surfaces
 // pointing at the same clip share one object URL, which is also why revocation
 // lives here and not in teardownLayerContent - tearing down one of them must
 // not pull the URL out from under the other.
@@ -3919,7 +4212,7 @@ function resolveMediaUrl(src) {
 // LAYER ELEMENT FACTORIES (video / image / pattern)
 // =========================================================================
 
-function createVideoLayerElement(layer, surface, url) {
+function createVideoLayerElement(layer, shape, url) {
   const video = document.createElement("video");
   video.className = "layer-video";
   video.src = url || "";
@@ -3928,13 +4221,13 @@ function createVideoLayerElement(layer, surface, url) {
   video.loop = true; // sensible live default for a spike (no scripted stop point)
   video.preload = "auto";
   registeredVideoEls.add(video);
-  // A surface switched to 'video' (or added) while transport is already
+  // A shape switched to 'video' (or added) while transport is already
   // playing should join the shared clock rather than sit on its first frame.
   if (transportPlaying) playVideoQuietly(video);
-  return wrapMediaWithFailureNote(video, surface, layer, "video");
+  return wrapMediaWithFailureNote(video, shape, layer, "video");
 }
 
-function createImageLayerElement(layer, surface, url) {
+function createImageLayerElement(layer, shape, url) {
   // The overlay test reads the NAME. A blob URL carries no extension, so
   // testing `url` here would silently demote every alpha-webm overlay to a
   // still <img> the moment a media folder was connected.
@@ -3958,13 +4251,13 @@ function createImageLayerElement(layer, surface, url) {
     video.preload = "auto";
     registeredVideoEls.add(video);
     if (transportPlaying) playVideoQuietly(video);
-    return wrapMediaWithFailureNote(video, surface, layer, "video");
+    return wrapMediaWithFailureNote(video, shape, layer, "video");
   }
   const img = document.createElement("img");
   img.className = "layer-image";
   img.src = src;
   img.alt = "";
-  return wrapMediaWithFailureNote(img, surface, layer, "image");
+  return wrapMediaWithFailureNote(img, shape, layer, "image");
 }
 
 // =========================================================================
@@ -3982,7 +4275,7 @@ function createImageLayerElement(layer, surface, url) {
 // the thing sized.
 //
 // Deliberate, and NOT an oversight: the suite's "contrast is a budget" rule
-// does not apply here. A lyric surface is read from the back of a dark room,
+// does not apply here. A lyric shape is read from the back of a dark room,
 // through a projector, over moving video. Legibility wins outright - hence a
 // transparent background (so a video layer underneath shows through, which
 // is the overlay case v1 actually needs), a dark stroke painted BEHIND the
@@ -4013,7 +4306,7 @@ const TEXT_FIT_ITERATIONS = 14; // binary search over the size range; ~0.05px re
 // =========================================================================
 // TEXT ASPECT (why text alone does not inherit the quad's stretch)
 // =========================================================================
-// Every surface draws into a fixed UNIT_SIZE square that matrix3d maps onto
+// Every shape draws into a fixed UNIT_SIZE square that matrix3d maps onto
 // four corners, so a quad wider than it is tall fattens whatever is in it.
 // For video and images that stretch is deliberate and stays - a stretched pig
 // is a style. For text it is a defect: a wide strip fattens the glyphs and a
@@ -4050,7 +4343,7 @@ const TEXT_WIDTH_FACTOR_MIN = 0.05;
 const TEXT_WIDTH_FACTOR_MAX = 20;
 
 // Length of one quad edge IN REAL OUTPUT PIXELS. This conversion is the whole
-// trap: surface.corners are normalized 0-1 over an output frame that is NOT
+// trap: shape.corners are normalized 0-1 over an output frame that is NOT
 // square (1280x800 on the studio rig), so a ratio taken straight from
 // normalized coordinates is wrong by the frame's own aspect - and wrong by a
 // factor of 1.6 looks almost right, which is worse than looking broken.
@@ -4096,8 +4389,12 @@ function quadStretch(corners, frameW, frameH) {
 // The counter-scale is then derived from the ROUNDED width (see
 // applyTextLayer), so the box still lands exactly on the unit square and the
 // containment argument survives the rounding intact.
-function textLayoutBoxWidth(surface, fields, frameW, frameH) {
-  const raw = quadStretch(surface.corners, frameW, frameH) / fields.aspect;
+function textLayoutBoxWidth(shape, fields, frameW, frameH) {
+  // The CONTENT FRAME, not the outline: the stretch being corrected is the one
+  // the warp introduces, and the warp only ever sees four corners. Clipping the
+  // shape to a narrower outline does not stretch a glyph.
+  const frame = shapeFrame(shape);
+  const raw = (frame ? quadStretch(frame, frameW, frameH) : 1) / fields.aspect;
   const k = !isFinite(raw) || raw <= 0
     ? 1
     : Math.min(TEXT_WIDTH_FACTOR_MAX, Math.max(TEXT_WIDTH_FACTOR_MIN, raw));
@@ -4111,7 +4408,7 @@ function textLayoutInsetX(boxWidth) {
   return Math.round(TEXT_INSET * boxWidth);
 }
 
-function createTextLayerElement(layer, surface) {
+function createTextLayerElement(layer, shape) {
   const box = document.createElement("div");
   box.className = "layer-box";
 
@@ -4128,11 +4425,11 @@ function createTextLayerElement(layer, surface) {
 
   // Same contract as the media layers: a layer with nothing in it says so ON
   // THE OUTPUT. An empty text layer is otherwise perfectly invisible, and an
-  // invisible surface at a projector sends you debugging the warp.
+  // invisible shape at a projector sends you debugging the warp.
   const note = document.createElement("div");
   note.className = "layer-note";
   note.hidden = true;
-  note.textContent = `${surface.name}\nno text set`;
+  note.textContent = `${shape.name}\nno text set`;
 
   box.append(text, note);
   // Deliberately NOT dressed or fitted here. The fit measures clientWidth,
@@ -4276,17 +4573,17 @@ function textLayerKey(layer, boxWidth) {
 }
 
 // 1000x1000 canvas: numbered grid + brighter center crosshair + the
-// surface's name + numbered corner markers 1-4 matching the nudge keys and
-// surface.corners order [TL, TR, BR, BL]. Each surface gets a distinct hue
+// shape's name + numbered corner markers 1-4 matching the nudge keys and
+// shape.corners order [TL, TR, BR, BL]. Each shape gets a distinct hue
 // (derived from its id) so multiple surfaces read as distinguishable
 // patches of color/pattern on the wall.
-function renderPatternLayer(surface) {
+function renderPatternLayer(shape) {
   const canvas = document.createElement("canvas");
   canvas.width = UNIT_SIZE;
   canvas.height = UNIT_SIZE;
   canvas.className = "pattern-canvas";
   const ctx = canvas.getContext("2d");
-  const hue = surfaceHue(surface);
+  const hue = shapeHue(shape);
 
   ctx.fillStyle = `hsl(${hue}, 55%, 12%)`;
   ctx.fillRect(0, 0, UNIT_SIZE, UNIT_SIZE);
@@ -4328,10 +4625,10 @@ function renderPatternLayer(surface) {
   ctx.font = "bold 64px -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(surface.name, mid, mid + cell * 1.6);
+  ctx.fillText(shape.name, mid, mid + cell * 1.6);
 
   // Numbered corner markers 1-4, matching both the nudge keys and
-  // surface.corners order [TL, TR, BR, BL].
+  // shape.corners order [TL, TR, BR, BL].
   const markerInset = 70;
   const markerPositions = [
     [markerInset, markerInset],
@@ -4356,13 +4653,13 @@ function renderPatternLayer(surface) {
   return canvas;
 }
 
-function surfaceHue(surface) {
-  // Deterministic hue derived from the surface id (simple string hash) so
+function shapeHue(shape) {
+  // Deterministic hue derived from the shape id (simple string hash) so
   // colors stay stable across re-renders instead of flickering, and
   // distinct surfaces reliably land on distinct hues.
   let hash = 0;
-  for (let i = 0; i < surface.id.length; i++) {
-    hash = (hash * 31 + surface.id.charCodeAt(i)) | 0;
+  for (let i = 0; i < shape.id.length; i++) {
+    hash = (hash * 31 + shape.id.charCodeAt(i)) | 0;
   }
   return Math.abs(hash) % 360;
 }
@@ -4370,7 +4667,7 @@ function surfaceHue(surface) {
 // =========================================================================
 // IDENTIFY (output overlay)
 // =========================================================================
-// In response to a broadcast 'identify', overlay each visible surface's
+// In response to a broadcast 'identify', overlay each visible shape's
 // name + id at its centroid in plain screen space (unwarped - this is a
 // readability aid, not part of the projected content) for ~2s.
 
@@ -4385,16 +4682,20 @@ function showIdentifyOverlay() {
 
   project.surfaces
     .filter((s) => s.visible)
-    .forEach((surface) => {
-      const points = surface.corners.map(([nx, ny]) => [nx * w, ny * h]);
-      const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
-      const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
+    .forEach((shape) => {
+      // The OUTLINE's centroid, so a fill shape gets a label too and a clipped
+      // shape gets its label where the shape actually is.
+      const outline = shapeOutline(shape);
+      if (!outline) return;
+      const [nx, ny] = ringCentroidNormalized(outline);
+      const cx = nx * w;
+      const cy = ny * h;
 
       const label = document.createElement("div");
       label.className = "identify-label";
       label.style.left = `${cx}px`;
       label.style.top = `${cy}px`;
-      label.textContent = `${surface.name}\n${surface.id}`;
+      label.textContent = `${shape.name}\n${shape.id}`;
       container.appendChild(label);
     });
 

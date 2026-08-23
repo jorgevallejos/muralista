@@ -169,6 +169,29 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23: `v1.0.0` tagged.** Four PRs, all squash-merged; umbrella pointer `7bc46f7` at the
+  tag; repo stays private and the website gate stays shut. **#9 — text stops inheriting the quad's
+  stretch (schema v7).** Containment stayed structural: the layout box is widened by the quad's
+  stretch and counter-scaled back onto the unit square, a bijection, so "fits the box" still means
+  "fits the quad" with nothing to maintain. Measured at 1280×800, glyph proportions in a 9.6:1 strip,
+  a 0.26:1 column and a square all came out **1.1187 against the font's natural 1.1187** — before,
+  those spanned 65.86 to 1.83, a 36× spread. **The frame-aspect trap was real and was measured**:
+  naive normalized coordinates give a consistent 60%-too-wide result that *looks almost right*. Also
+  found in its own first cut: `scrollWidth` is an integer while the inset was fractional, so the
+  width test failed by a fraction of a pixel at every size and wide keystoned quads painted 8px text
+  with 862px going spare — silent and plausible, the family of bug this repo keeps meeting. **#10 —
+  the restyle**, taken from `pregonero/src/control.css` by value rather than from memory. Two
+  deliberate departures: no EB Garamond (that is Pregonero's *projection* screen; neither control
+  window loads a webfont), and **the drawing layer is exempt from the contrast budget** — quad
+  outlines, handles and keep-outs sit over a live camera feed of an arbitrary wall, so they keep
+  high-contrast values on separate `--draw-*` tokens outside the ramp. The projector is *provably*
+  untouched: a computed-style fingerprint of `html`, `body` and the whole `#output-root` subtree
+  hashes identically before and after, and the first attempt failed that check because inherited
+  `color`/`font-family` leaked through `body`. **#11 — full README pass**, with the worst-case lyric
+  rescued as text before its PNG was deleted; two of its four lines were pure white on transparent
+  and invisible on render, recovered via the alpha channel and verified at 81/152 characters against
+  this file's own figures. **#12 — hint token fix and stretch-versus-shear honesty.** The four
+  faked stand-ins (`keepout-black.png`, `lyric-01`, `lyric-02`, `lyric-worstcase`) are deleted.
 - **2026-08-23: the text layer.** PR #8, squash-merged as `7e0d66b`; umbrella `86249d7`. **Schema
   v6.** Size is stored as a fraction of the shape's height, and the architecture did most of the
   work: every surface already draws into a fixed 1000×1000 box that `matrix3d` maps onto four
@@ -955,11 +978,18 @@ points onto them by hand. What is next-version is anything smarter than that.
    permission round trip is hand-untested; see the studio checklist.
 4. ~~**Text layer.**~~ **done 2026-08-23** (`7e0d66b`, schema v6). Legibility still judged only on a
    monitor.
-5. **Text adapts to the shape** — see "Text inherits the stretch" below. Added to v1 on 2026-08-23.
-6. **Wall check on lyric legibility**, once the text layer is complete.
-7. **Brutalist restyle**, control window only, using Pregonero's stylesheet as the reference (that
-   repo is cloned locally).
-8. **Tag `v1.0.0`**, repo private, website gate shut.
+5. ~~**Text adapts to the shape**~~ **done** (PR #9, schema v7).
+6. **Wall check on lyric legibility** — still owed, and the one acceptance criterion this layer has
+   never had.
+7. ~~**Brutalist restyle**~~ **done** (PR #10).
+8. ~~**Tag `v1.0.0`**~~ **done 2026-08-23.** Repo private, website gate shut.
+
+**Owed by Jorge, by hand, now that v1 is out:** lyric legibility at a wall (the 81-character worst
+case, a wide strip and a tall column, low light, from the back — proportions are now arithmetically
+right, whether it *reads* is unanswered); setting **Letter width** by eye at a real angled wall,
+since the slider exists precisely for what no formula reaches and has only met synthetic quads; the
+media-folder round trip once more; and authoring something for the alpha-WebM overlay, whose layer
+type works and has no content.
 
 ### Text inherits the stretch, and it is the same decision as the video
 
@@ -1102,34 +1132,12 @@ A named surface costs nothing today and is the hook everything above hangs on if
 studio-only. What this buys is knowing which seam to cut when a second room or a second song forces
 the question, and that the seam is **named regions**, not a bigger file.
 
-### The integration contract (Jorge, 2026-08-23) — settled before the design session
+### The integration contract — moved
 
-Pregonero is an **Electron app** (Electron 41, Vite, React, TypeScript), which is Chromium with Node
-attached. So it *could* host Muralista's page in a `BrowserWindow`, serve it over localhost to get a
-secure context for the File System Access API, place the output window on the projector display by
-itself, and shell out to Bombista's CLI from the main process. That is packaging, and it removes the
-terminal, the `python3 -m http.server` step and the drag-the-window-to-the-second-display dance.
-
-**None of that may change the contract, which Jorge states as: Muralista still writes a file and
-Pregonero still reads it.** Four rules keep it honest:
-
-- **The handoff carries no data, only the fact that a file changed.** The moment a signal carries the
-  mapping itself, there are two tools sharing state and the file has stopped being the truth.
-- **The mechanism is Pregonero watching the file, not a protocol.** Muralista saves; Pregonero
-  notices and re-reads. Nothing to keep in sync, and it works whether Muralista runs inside
-  Pregonero's window, in a plain Chrome tab, or on another machine with the folder synced. Bombista
-  gets the same treatment and never learns Pregonero exists — the right relationship for a CLI.
-  Muralista already knows how to write into a folder the user chose, so the plumbing exists.
-- **"Pass control back" is courtesy, not architecture.** A *Done* button that closes Muralista and
-  brings Pregonero forward is convenience; the reload already happened because the file changed. And
-  **Muralista must stay fully usable without it** — if the bridge is absent, the button is absent and
-  you export as today. A tool that only works inside another tool is the coupling in a costume.
-- **Re-reading on change is right before doors and wrong mid-song** (decided by Jorge). Pregonero
-  must not reload the world under itself while performing: either auto-reload only when not in a
-  show, or surface "reload available" and let the operator choose.
-
-The slide to watch for is from *Pregonero launches Muralista* to *they share state at runtime*, which
-is exactly the shape the desk-tool cut rejected.
+Lives in **`projects/tramoya-integration/project-context.md`**, which owns it: the contract is a fact
+about three tools and would go stale inside any one of them. Short form: the preparing tools write
+files, Pregonero reads them, the handoff carries no data, Pregonero watches files rather than
+speaking a protocol, and re-reading on change is right before doors and wrong mid-song.
 
 ### The media model
 

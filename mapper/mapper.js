@@ -42,8 +42,11 @@ const PREVIEW_H = 900;
 // is NOT the "v1" in STORAGE_KEY - that suffix is part of an address and
 // never changes (see the guard comment on STORAGE_KEY above). Older
 // projects stay readable: migrateProject() fills in what they predate and
-// drops what they outlived.
-const PROJECT_VERSION = 4;
+// drops what they outlived. v5 (2026-08-23) ADDED the top-level keepOuts
+// array: regions the projector holds dark. It is a sibling of surfaces, not
+// a member of it - a keep-out carries no content, so it needs no homography
+// and is not bound to four corners. See KEEP-OUTS below.
+const PROJECT_VERSION = 5;
 
 function emptyProject() {
   return {
@@ -61,6 +64,10 @@ function emptyProject() {
     // null until calibrated.
     cameraQuad: null,
     surfaces: [],
+    // Regions the projector holds dark. Black is a decision about the
+    // layout, so it is an object in the mapping rather than a black image on
+    // a surface. See KEEP-OUTS below.
+    keepOuts: [],
   };
 }
 
@@ -123,6 +130,23 @@ function migrateProject(obj) {
     return Object.assign({}, surface, { layer });
   });
 
+  // v5: keep-outs. A project that predates them simply carries none, which
+  // is exactly true of it. Rings are sanitized rather than trusted - an
+  // imported file is arbitrary JSON, and a ring under the 3-point floor (or
+  // carrying a non-finite coordinate) would paint as a degenerate polygon
+  // with no visible cause at a projector. Anything unusable is dropped here
+  // rather than half-repaired downstream: migrateProject is the single
+  // enforcement point, on load AND on import.
+  proj.keepOuts = (Array.isArray(proj.keepOuts) ? proj.keepOuts : [])
+    .filter((k) => k && typeof k === "object" && isValidPointRing(k.points))
+    .map((k, i) => ({
+      id: typeof k.id === "string" && k.id ? k.id : genKeepOutId(),
+      name: typeof k.name === "string" && k.name.trim() ? k.name.trim() : `Keep-out ${i + 1}`,
+      points: k.points.map(([x, y]) => [clampCoord(x), clampCoord(y)]),
+      margin: clampMargin(k.margin),
+      visible: k.visible !== false,
+    }));
+
   proj.version = PROJECT_VERSION;
   return proj;
 }
@@ -148,11 +172,98 @@ function defaultSurface(index) {
   };
 }
 
+// =========================================================================
+// KEEP-OUTS
+// =========================================================================
+// A keep-out is a region the projector holds dark. Muralista's design is
+// subtractive - the projector floods the whole background and the mapping is
+// a layout of that flood, INCLUDING which parts stay dark - so black has to
+// be an object in the mapping, not a black PNG parked on a surface.
+//
+// Its first job is the performer, and the driver is eye comfort rather than
+// composition: standing in the beam is physically unpleasant and nobody is
+// going to do it for a whole set.
+//
+// THE RULE THAT GOVERNS ALL OF THIS: trace the performer's SHADOW, never the
+// performer. The camera and the projector lens do not sit in the same place,
+// so they genuinely disagree about where a body is - measured in the studio
+// at roughly two thirds of a head width on the wall, with the camera as
+// close to the lens as it would physically go. The shadow has no such error
+// and cannot: it is by construction the exact set of projector pixels the
+// body blocks, because the projector drew it, and it lands on the wall plane
+// where the existing homography is exact. Also stated in README under
+// "Keep-outs and the shadow rule" and in the CAMERA BACKDROP section below.
+//
+// A KEEP-OUT IS NOT A SURFACE, and the model here is deliberately not bent
+// around the surface one. Every surface is exactly four corners because four
+// corners is what a homography needs to warp content onto a quad. A keep-out
+// carries no content - it holds black - so it needs no warp, no homography
+// and no four-corner constraint. An irregular polygon is the CHEAP version
+// here, not the expensive one: it asks for less machinery, not more.
+
+const KEEPOUT_MIN_POINTS = 3;
+
+// Margin is a fraction of FRAME HEIGHT, rendered as a stroke rather than as
+// a polygon offset - see applyKeepOutMarginStroke().
+const KEEPOUT_MARGIN_MAX = 0.15;
+
+// A ring of >= 3 normalized points, the shape keepOut.points uses. Unlike a
+// surface's corners there is no upper count constraint and no exact count:
+// nothing about holding black needs four points.
+function isValidPointRing(pts) {
+  return (
+    Array.isArray(pts) &&
+    pts.length >= KEEPOUT_MIN_POINTS &&
+    pts.every((p) => Array.isArray(p) && p.length === 2 && p.every((n) => typeof n === "number" && isFinite(n)))
+  );
+}
+
+function clampMargin(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return 0;
+  return Math.max(0, Math.min(KEEPOUT_MARGIN_MAX, n));
+}
+
+function genKeepOutId() {
+  // Same scheme as genSurfaceId, different prefix so an id says at a glance
+  // which list it belongs to.
+  return "k-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+}
+
+// A new keep-out arrives as a tall hexagon rather than a rectangle: the case
+// it exists for is a standing performer, and starting from a shape that
+// already leans that way means fewer points to push. Six points is "a
+// handful" - enough to be worth editing, few enough to read.
+function defaultKeepOut(index) {
+  return {
+    id: genKeepOutId(),
+    name: `Keep-out ${index}`,
+    points: [
+      [0.44, 0.28],
+      [0.56, 0.28],
+      [0.59, 0.6],
+      [0.56, 0.9],
+      [0.44, 0.9],
+      [0.41, 0.6],
+    ],
+    margin: 0,
+    visible: true,
+  };
+}
+
 // The project state, live in memory. Populated below once the role is known.
 let project = emptyProject();
 
 // Control-local UI state — never persisted, never broadcast.
 let selectedSurfaceId = null;
+
+// The selected keep-out, and which of its points is live for the Delete key
+// and the panel's delete button. Selection is EXCLUSIVE with
+// selectedSurfaceId: the preview shows draggable handles for one thing at a
+// time, and a second live set of handles at a projector is a misclick
+// waiting to happen. selectSurface()/selectKeepOutState() enforce it.
+let selectedKeepOutId = null;
+let selectedPointIndex = null;
 
 // Which of the selected surface's 4 corners (0=TL,1=TR,2=BR,3=BL) arrow-key
 // nudges apply to. Selected via the 1-4 keys. `null` means "whole surface"
@@ -224,6 +335,7 @@ function addSurface() {
   project.surfaces.push(surface);
   selectedSurfaceId = surface.id;
   activeCornerIndex = null;
+  clearKeepOutSelection(); // selection is exclusive across the two lists
   commitProjectChange();
 }
 
@@ -294,6 +406,116 @@ function duplicateSurface(id) {
   project.surfaces.splice(idx + 1, 0, copy);
   selectedSurfaceId = copy.id;
   activeCornerIndex = null;
+  clearKeepOutSelection();
+  commitProjectChange();
+}
+
+// --- Keep-out mutators. Same contract as the surface mutators above:
+// mutate `project` in place, then commitProjectChange() persists,
+// broadcasts and re-renders. Keep-outs live in their own top-level array,
+// so none of the surface machinery - z-order, duplicate, layers - reaches
+// them, which is the point. ---
+
+function getSelectedKeepOut() {
+  return project.keepOuts.find((k) => k.id === selectedKeepOutId) || null;
+}
+
+// The two halves of exclusive selection (see selectedKeepOutId). Selecting a
+// keep-out drops any surface selection and vice versa; both also drop the
+// live point/corner index, since an index from the previous shape means
+// nothing against the new one.
+function clearKeepOutSelection() {
+  selectedKeepOutId = null;
+  selectedPointIndex = null;
+}
+
+function selectKeepOutState(id) {
+  selectedKeepOutId = id;
+  selectedPointIndex = null;
+  if (id != null) {
+    selectedSurfaceId = null;
+    activeCornerIndex = null;
+  }
+}
+
+function selectKeepOut(id) {
+  selectKeepOutState(id);
+  renderControl(); // selection is local UI state, no save/broadcast needed
+}
+
+function addKeepOut() {
+  const keepOut = defaultKeepOut(project.keepOuts.length + 1);
+  project.keepOuts.push(keepOut);
+  selectKeepOutState(keepOut.id);
+  commitProjectChange();
+}
+
+function removeKeepOut(id) {
+  project.keepOuts = project.keepOuts.filter((k) => k.id !== id);
+  if (selectedKeepOutId === id) clearKeepOutSelection();
+  commitProjectChange();
+}
+
+function renameKeepOut(id, name) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return;
+  const keepOut = project.keepOuts.find((k) => k.id === id);
+  if (!keepOut) return;
+  keepOut.name = trimmed;
+  commitProjectChange();
+}
+
+function toggleKeepOutVisible(id) {
+  const keepOut = project.keepOuts.find((k) => k.id === id);
+  if (!keepOut) return;
+  keepOut.visible = !keepOut.visible;
+  commitProjectChange();
+}
+
+function setKeepOutMargin(id, margin) {
+  const keepOut = project.keepOuts.find((k) => k.id === id);
+  if (!keepOut) return;
+  keepOut.margin = clampMargin(margin);
+  commitProjectChange();
+}
+
+// Replaces a keep-out's whole ring at once. Used by "Suggest from my
+// shadow", which hands back a traced contour rather than editing points one
+// at a time. Rejects anything that isn't a usable ring rather than leaving
+// the keep-out half-replaced.
+function setKeepOutPoints(id, points) {
+  const keepOut = project.keepOuts.find((k) => k.id === id);
+  if (!keepOut || !isValidPointRing(points)) return false;
+  keepOut.points = points.map(([x, y]) => [clampCoord(x), clampCoord(y)]);
+  selectedPointIndex = null; // an index into the old ring means nothing now
+  commitProjectChange();
+  return true;
+}
+
+// Insert a point INTO the ring at `index` - i.e. between points index-1 and
+// index - which is what clicking an edge does. Inserting at the end of the
+// array instead would connect the new point to whichever points happen to
+// bookend the array, folding the polygon over itself.
+function insertKeepOutPoint(id, index, point) {
+  const keepOut = project.keepOuts.find((k) => k.id === id);
+  if (!keepOut) return;
+  keepOut.points.splice(index, 0, [clampCoord(point[0]), clampCoord(point[1])]);
+  selectedPointIndex = index;
+  commitProjectChange();
+}
+
+// The 3-point floor is a real constraint, not a UI nicety: fewer than three
+// points is not a polygon, and a two-point "ring" would paint nothing while
+// still sitting in the list looking like a live keep-out. The panel button
+// is disabled at the floor too, but this stays defensive - the Delete key
+// reaches here by another route.
+function deleteKeepOutPoint(id, index) {
+  const keepOut = project.keepOuts.find((k) => k.id === id);
+  if (!keepOut) return;
+  if (keepOut.points.length <= KEEPOUT_MIN_POINTS) return;
+  if (index == null || index < 0 || index >= keepOut.points.length) return;
+  keepOut.points.splice(index, 1);
+  selectedPointIndex = null;
   commitProjectChange();
 }
 
@@ -357,6 +579,7 @@ function loadBackdropPhotoFile(file) {
 function selectSurface(id) {
   selectedSurfaceId = id;
   activeCornerIndex = null;
+  clearKeepOutSelection();
   renderControl(); // selection is local UI state, no save/broadcast needed
 }
 
@@ -364,6 +587,7 @@ function replaceProject(newProject) {
   project = newProject;
   selectedSurfaceId = null;
   activeCornerIndex = null;
+  clearKeepOutSelection();
   commitProjectChange();
 }
 
@@ -587,11 +811,13 @@ function surfaceMatrix3d(surface, w, h) {
 
 function renderControl() {
   renderSurfaceList();
+  renderKeepOutList();
   renderPreview();
   renderBackdrop();
   renderCamera();
   renderBackdropControls();
   renderLayerPanel();
+  renderKeepOutPanel();
 }
 
 function renderSurfaceList() {
@@ -703,6 +929,81 @@ function renderSurfaceList() {
   });
 }
 
+// Keep-outs get their own list, below the surfaces and separate from them.
+// They are a different primitive - no layer, no z-order, no four-corner
+// constraint - and folding them into one list would invite exactly the
+// "a keep-out is a kind of surface" reading the design rejects. The row
+// chrome is deliberately the same (.surface-row): it is the sidebar's row
+// idiom, and a second one would be noise.
+function renderKeepOutList() {
+  const list = document.getElementById("keepout-list");
+  list.innerHTML = "";
+
+  if (project.keepOuts.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "surface-list-empty";
+    empty.textContent = "No keep-outs. Add one to hold part of the wall dark.";
+    list.appendChild(empty);
+    return;
+  }
+
+  project.keepOuts.forEach((keepOut) => {
+    const row = document.createElement("li");
+    row.className = "surface-row";
+    if (keepOut.id === selectedKeepOutId) row.classList.add("selected");
+    if (!keepOut.visible) row.classList.add("hidden-surface");
+
+    row.addEventListener("click", () => selectKeepOut(keepOut.id));
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "surface-name";
+    // The point count rides in the row: it is the one number that says
+    // whether a keep-out has been traced or is still the starting hexagon.
+    nameSpan.textContent = `${keepOut.name} \u00b7 ${keepOut.points.length}`;
+    row.appendChild(nameSpan);
+
+    const actions = document.createElement("div");
+    actions.className = "surface-actions";
+
+    const visBtn = document.createElement("button");
+    visBtn.type = "button";
+    visBtn.className = "icon-btn";
+    visBtn.title = keepOut.visible ? "Hide keep-out" : "Show keep-out";
+    visBtn.textContent = keepOut.visible ? "\u{1F441}" : "\u{1F648}";
+    visBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleKeepOutVisible(keepOut.id);
+    });
+    actions.appendChild(visBtn);
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "icon-btn";
+    renameBtn.title = "Rename keep-out";
+    renameBtn.textContent = "\u270F\uFE0F"; // pencil
+    renameBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const next = window.prompt("Rename keep-out", keepOut.name);
+      if (next !== null) renameKeepOut(keepOut.id, next);
+    });
+    actions.appendChild(renameBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "icon-btn danger";
+    deleteBtn.title = "Delete keep-out";
+    deleteBtn.textContent = "\u{1F5D1}\uFE0F"; // trash
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (window.confirm(`Delete "${keepOut.name}"?`)) removeKeepOut(keepOut.id);
+    });
+    actions.appendChild(deleteBtn);
+
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+}
+
 function renderPreview() {
   const svg = document.getElementById("preview-svg");
   svg.innerHTML = "";
@@ -756,6 +1057,10 @@ function renderPreview() {
   // surfaces stay plain outlines (drawn above).
   const selected = getSelectedSurface();
   if (selected) renderCornerHandles(svg, selected);
+
+  // Keep-outs go last, so they sit above every surface outline in the
+  // preview exactly as they sit above every surface wrapper on the output.
+  renderKeepOutsPreview(svg);
 }
 
 function surfaceCentroidNormalized(surface) {
@@ -943,6 +1248,196 @@ function startSurfaceDrag(e, svg, surface) {
     const rawDelta = [p[0] - start[0], p[1] - start[1]];
     const [dx, dy] = clampTranslateDelta(originalCorners, rawDelta);
     surface.corners = originalCorners.map(([x, y]) => [x + dx, y + dy]);
+  });
+}
+
+// =========================================================================
+// KEEP-OUT EDITING (preview)
+// =========================================================================
+// Three layers of hit target per selected keep-out, appended in this order
+// so SVG paint order does the disambiguating for free (later = on top):
+//
+//   1. the filled body     -> select it, and drag the whole polygon
+//   2. one line per edge   -> insert a point there, and pull it out in the
+//                             same gesture
+//   3. one handle per point-> select that point, and drag it
+//
+// Every one of them goes through beginPreviewDrag(), for the reason spelled
+// out in full on that function: renderPreview() does svg.innerHTML = "" on
+// every pointermove, so a listener attached to any of these elements is
+// destroyed by the first move it handles. #preview-svg is emptied but never
+// replaced, so it is the one safe host. This is the v2.1 drag bug and this
+// repo has paid for it twice.
+
+// THE MARGIN IS A STROKE, NOT GEOMETRY.
+//
+// A polygon offset would need a geometry library, and the obvious cheap
+// substitute - scaling the ring outward from its centroid - is wrong exactly
+// where it matters. A thin spur (an arm, a mic stand, a leg) has its two
+// sides close together but both far from the centroid, so a centroid scale
+// moves them apart by a fraction of that distance rather than by the margin:
+// the limb gets longer instead of thicker.
+//
+// Stroking the same polygon in the same black, with round joins and caps, is
+// a TRUE dilation - every point on the outline grows outward by the same
+// amount, corners and thin limbs included - and it is one attribute instead
+// of a library.
+//
+// The rule it exists to implement: draw the shape generously larger than the
+// shadow, because a performer sways and an exact mask lets light onto the
+// face on every lean.
+//
+// `scale` is the pixel height of the frame being drawn into, since margin is
+// a fraction of FRAME HEIGHT. One consequence worth knowing: SVG centres a
+// stroke on its path, so the shape grows outward by HALF the stroke width.
+// Set as an inline style rather than a presentation attribute, because a
+// stylesheet rule would outrank an attribute and silently win.
+function applyKeepOutMarginStroke(polygon, margin, scale) {
+  const width = clampMargin(margin) * scale;
+  polygon.style.strokeWidth = `${width}px`;
+}
+
+function keepOutPointsAttr(keepOut, w, h) {
+  return keepOut.points.map(([x, y]) => `${x * w},${y * h}`).join(" ");
+}
+
+function renderKeepOutsPreview(svg) {
+  project.keepOuts
+    .filter((k) => k.visible)
+    .forEach((keepOut) => {
+      const selected = keepOut.id === selectedKeepOutId;
+      const points = keepOutPointsAttr(keepOut, PREVIEW_W, PREVIEW_H);
+
+      // The mask is drawn the same way the output paints it - black fill
+      // plus a black round-joined stroke of the margin's width - so what
+      // gets tuned on screen is what lands on the wall. The preview viewBox
+      // is 1600x900 inside a 16/9 box, so its user units are square and
+      // PREVIEW_H is the right scale for a frame-height fraction.
+      const mask = document.createElementNS(SVG_NS, "polygon");
+      mask.setAttribute("points", points);
+      mask.setAttribute("class", "preview-keepout-mask");
+      applyKeepOutMarginStroke(mask, keepOut.margin, PREVIEW_H);
+      mask.addEventListener("pointerdown", (e) => startKeepOutDrag(e, svg, keepOut));
+      svg.appendChild(mask);
+
+      // A separate outline on top carries the selection state. It has to be
+      // its own element: the mask's stroke is already spoken for by the
+      // margin, and an element has only one of those. Not a hit target -
+      // pointer-events:none in CSS - so the mask below keeps the gesture.
+      const outline = document.createElementNS(SVG_NS, "polygon");
+      outline.setAttribute("points", points);
+      outline.setAttribute("class", "preview-keepout-outline" + (selected ? " selected" : ""));
+      svg.appendChild(outline);
+
+      if (selected) {
+        renderKeepOutEdgeTargets(svg, keepOut);
+        renderKeepOutPointHandles(svg, keepOut);
+      }
+    });
+}
+
+// One invisible thick line per edge. pointer-events:all (set in CSS) is
+// required for the same reason the corner handles' hit circle needs it: a
+// transparent stroke is not "painted", and SVG's default visiblePainted
+// hit-testing would skip it.
+function renderKeepOutEdgeTargets(svg, keepOut) {
+  const n = keepOut.points.length;
+  for (let i = 0; i < n; i++) {
+    const [x1, y1] = keepOut.points[i];
+    const [x2, y2] = keepOut.points[(i + 1) % n];
+
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", x1 * PREVIEW_W);
+    line.setAttribute("y1", y1 * PREVIEW_H);
+    line.setAttribute("x2", x2 * PREVIEW_W);
+    line.setAttribute("y2", y2 * PREVIEW_H);
+    line.setAttribute("class", "keepout-edge-hit");
+    // Insert AFTER point i, i.e. at ring index i+1, so the new point lands
+    // between the two it was clicked between. The last edge (i = n-1) wraps
+    // to point 0, and index n is the correct insert position for it: it
+    // still leaves the new point between point n-1 and point 0.
+    line.addEventListener("pointerdown", (e) => startKeepOutEdgeInsert(e, svg, keepOut, i + 1));
+    svg.appendChild(line);
+  }
+}
+
+// No number labels here, unlike the surface corner handles: a traced shadow
+// carries 20-40 points, and there are no 1-4 keys addressing them.
+function renderKeepOutPointHandles(svg, keepOut) {
+  keepOut.points.forEach(([nx, ny], i) => {
+    const cx = nx * PREVIEW_W;
+    const cy = ny * PREVIEW_H;
+
+    const group = document.createElementNS(SVG_NS, "g");
+    group.setAttribute("class", "corner-handle keepout" + (i === selectedPointIndex ? " active" : ""));
+
+    const hitTarget = document.createElementNS(SVG_NS, "circle");
+    hitTarget.setAttribute("cx", cx);
+    hitTarget.setAttribute("cy", cy);
+    hitTarget.setAttribute("r", 15);
+    hitTarget.setAttribute("class", "corner-handle-hit");
+    group.appendChild(hitTarget);
+
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("cx", cx);
+    circle.setAttribute("cy", cy);
+    circle.setAttribute("r", 8);
+    group.appendChild(circle);
+
+    group.addEventListener("pointerdown", (e) => startKeepOutPointDrag(e, svg, keepOut, i));
+    svg.appendChild(group);
+  });
+}
+
+// Drag a whole keep-out: translate every point by the same delta, through
+// the same clampTranslateDelta the surfaces use, so the ring keeps its shape
+// at the overshoot boundary instead of collapsing point by point. Also
+// handles click-to-select in the same gesture, exactly like startSurfaceDrag
+// - and the re-render that selection triggers is precisely what used to
+// detach the listeners, which is why they go on the svg.
+function startKeepOutDrag(e, svg, keepOut) {
+  if (selectedKeepOutId !== keepOut.id) {
+    selectKeepOutState(keepOut.id);
+    renderControl(); // full re-render (sidebar highlight, panel, handles)
+  }
+
+  const originalPoints = keepOut.points.map(([x, y]) => [x, y]);
+  const start = svgPointerToNormalized(e, svg);
+
+  beginPreviewDrag(e, svg, (evt) => {
+    const p = svgPointerToNormalized(evt, svg);
+    const rawDelta = [p[0] - start[0], p[1] - start[1]];
+    const [dx, dy] = clampTranslateDelta(originalPoints, rawDelta);
+    keepOut.points = originalPoints.map(([x, y]) => [x + dx, y + dy]);
+  });
+}
+
+function startKeepOutPointDrag(e, svg, keepOut, index) {
+  if (selectedKeepOutId !== keepOut.id) selectKeepOutState(keepOut.id);
+  selectedPointIndex = index;
+  renderControl(); // the panel's delete button and the handle's highlight
+
+  beginPreviewDrag(e, svg, (evt) => {
+    const [nx, ny] = svgPointerToNormalized(evt, svg);
+    keepOut.points[index] = [clampCoord(nx), clampCoord(ny)];
+  });
+}
+
+// Clicking an edge inserts a point there and immediately begins dragging it,
+// so "add a point and pull it out" is one gesture rather than three. The
+// insert commits first, and commitProjectChange() -> renderPreview() rebuilds
+// every child of #preview-svg - which is exactly why the drag listeners must
+// live on the svg and not on the line that was clicked. The closure below
+// holds the keepOut OBJECT, which the rebuild does not replace (the mutators
+// edit project.keepOuts in place), so the index stays valid across it.
+function startKeepOutEdgeInsert(e, svg, keepOut, index) {
+  const point = svgPointerToNormalized(e, svg);
+  if (selectedKeepOutId !== keepOut.id) selectKeepOutState(keepOut.id);
+  insertKeepOutPoint(keepOut.id, index, point);
+
+  beginPreviewDrag(e, svg, (evt) => {
+    const [nx, ny] = svgPointerToNormalized(evt, svg);
+    keepOut.points[index] = [clampCoord(nx), clampCoord(ny)];
   });
 }
 
@@ -1390,6 +1885,108 @@ function updateLayerPanelValues(container, layer) {
 }
 
 // =========================================================================
+// KEEP-OUT PANEL (sidebar, selected keep-out)
+// =========================================================================
+// Same rebuild-by-key discipline as the layer panel above, and for the same
+// reason: the margin slider fires commitProjectChange() on every input
+// event, and rebuilding the DOM under a slider mid-drag takes the focus off
+// it and strands the gesture halfway.
+
+let keepOutPanelKey = null;
+
+function renderKeepOutPanel() {
+  const container = document.getElementById("keepout-panel");
+  const keepOut = getSelectedKeepOut();
+
+  if (!keepOut) {
+    keepOutPanelKey = null;
+    container.innerHTML = '<p class="layer-panel-empty">Select a keep-out to edit it.</p>';
+    return;
+  }
+
+  if (keepOut.id !== keepOutPanelKey) {
+    keepOutPanelKey = keepOut.id;
+    buildKeepOutPanel(container, keepOut);
+  } else {
+    updateKeepOutPanelValues(container, keepOut);
+  }
+}
+
+function buildKeepOutPanel(container, keepOut) {
+  container.innerHTML = "";
+
+  const marginRow = document.createElement("div");
+  marginRow.className = "layer-field";
+  const marginLabel = document.createElement("label");
+  marginLabel.textContent = "Margin";
+  marginLabel.setAttribute("for", "keepout-margin-input");
+  const marginInput = document.createElement("input");
+  marginInput.type = "range";
+  marginInput.id = "keepout-margin-input";
+  marginInput.min = "0";
+  marginInput.max = String(KEEPOUT_MARGIN_MAX);
+  marginInput.step = "0.005";
+  marginInput.value = String(keepOut.margin ?? 0);
+  const marginValue = document.createElement("span");
+  marginValue.id = "keepout-margin-value";
+  marginValue.className = "layer-opacity-value";
+  marginValue.textContent = Number(keepOut.margin ?? 0).toFixed(3);
+  marginInput.addEventListener("input", () => {
+    marginValue.textContent = Number(marginInput.value).toFixed(3);
+    setKeepOutMargin(keepOut.id, Number(marginInput.value));
+  });
+  marginRow.append(marginLabel, marginInput, marginValue);
+  container.appendChild(marginRow);
+
+  const marginHint = document.createElement("p");
+  marginHint.className = "layer-hint";
+  marginHint.textContent =
+    "Fraction of frame height, painted as a round-joined stroke on the same shape - a true dilation, thin limbs included. Draw generously larger than the shadow: a performer sways, and an exact mask lets light onto the face on every lean.";
+  container.appendChild(marginHint);
+
+  const pointRow = document.createElement("div");
+  pointRow.className = "layer-field";
+  const deletePointBtn = document.createElement("button");
+  deletePointBtn.type = "button";
+  deletePointBtn.id = "keepout-delete-point";
+  deletePointBtn.textContent = "Delete point";
+  deletePointBtn.addEventListener("click", () => deleteKeepOutPoint(keepOut.id, selectedPointIndex));
+  const pointCount = document.createElement("span");
+  pointCount.id = "keepout-point-count";
+  pointCount.className = "layer-opacity-value";
+  pointRow.append(deletePointBtn, pointCount);
+  container.appendChild(pointRow);
+
+  const pointHint = document.createElement("p");
+  pointHint.className = "layer-hint";
+  pointHint.textContent =
+    "Click an edge in the preview to insert a point and pull it out. Click a point to select it, then Delete (or the button) to remove it. Three points is the floor.";
+  container.appendChild(pointHint);
+
+  updateKeepOutPanelValues(container, keepOut);
+}
+
+// Refreshes values without rebuilding, skipping whichever field has focus so
+// an in-progress slider drag isn't clobbered by the commit it triggered.
+function updateKeepOutPanelValues(container, keepOut) {
+  const active = document.activeElement;
+
+  const marginInput = container.querySelector("#keepout-margin-input");
+  if (marginInput && active !== marginInput) marginInput.value = String(keepOut.margin ?? 0);
+  const marginValue = container.querySelector("#keepout-margin-value");
+  if (marginValue) marginValue.textContent = Number(keepOut.margin ?? 0).toFixed(3);
+
+  const count = keepOut.points.length;
+  const pointCount = container.querySelector("#keepout-point-count");
+  if (pointCount) {
+    pointCount.textContent =
+      selectedPointIndex == null ? `${count} points` : `point ${selectedPointIndex + 1} of ${count}`;
+  }
+  const deletePointBtn = container.querySelector("#keepout-delete-point");
+  if (deletePointBtn) deletePointBtn.disabled = selectedPointIndex == null || count <= KEEPOUT_MIN_POINTS;
+}
+
+// =========================================================================
 // CALIBRATION (arrow-key nudge)
 // =========================================================================
 // The critical live-calibration UX: select a surface, then arrow-key nudge
@@ -1447,6 +2044,24 @@ function handleControlKeydown(e) {
   if (calibratingCamera) {
     if (e.key === "Escape") toggleCameraCalibration();
     return; // the preview belongs to the camera quad; nudges have nothing to show
+  }
+
+  // Keep-out keys. Selection is exclusive with surfaces (see
+  // selectedKeepOutId), so this block and the surface block below can never
+  // both be live, and the early return here is not stealing keys from a
+  // selected surface.
+  if (selectedKeepOutId) {
+    if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault(); // Backspace still means "back" in some setups
+      deleteKeepOutPoint(selectedKeepOutId, selectedPointIndex);
+      return;
+    }
+    if (e.key === "Escape") {
+      selectedPointIndex = null; // deselect the point, keep the keep-out
+      renderControl();
+      return;
+    }
+    return; // arrows and 1-4 belong to surface calibration
   }
 
   if (!selectedSurfaceId) return;
@@ -1510,6 +2125,7 @@ function importProjectFromFile(file) {
 
 function wireControlEvents() {
   document.getElementById("btn-add-surface").addEventListener("click", addSurface);
+  document.getElementById("btn-add-keepout").addEventListener("click", addKeepOut);
 
   document.getElementById("btn-open-output").addEventListener("click", () => {
     // Hand the output window THIS window's build token (see the bootstrap in
@@ -1622,6 +2238,41 @@ function renderOutput() {
   visibleSurfaces.forEach((surface) => renderOutputSurface(container, surface, w, h));
 
   reconcileOutputSurfaceOrder(container, visibleSurfaces);
+  renderKeepOutsOutput(w, h);
+}
+
+// Keep-outs paint ABOVE every surface wrapper, always, regardless of the
+// order of either list - black is the decision that wins. #output-keepouts
+// is a sibling of #output-surfaces that comes after it in the document, so
+// this needs no z-index bookkeeping and never touches the surface
+// reconciler. It sits BELOW #output-white on purpose: "Show white" has to
+// give a genuinely clean plate, and a keep-out painted on top of it would
+// occlude the very shadow the suggestion below is trying to trace.
+//
+// Drawn in real output pixels rather than in normalized space, because the
+// margin stroke has to be ROUND: a viewBox stretched over a non-square frame
+// would scale x and y differently and turn every round join into an ellipse.
+// Rebuilt wholesale each time (unlike the surfaces, which reconcile to keep
+// video playing) - these are a handful of polygons with no media in them and
+// nothing to preserve across a render.
+function renderKeepOutsOutput(w, h) {
+  const svg = document.getElementById("output-keepouts");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.innerHTML = "";
+
+  // Defensive read: the output takes whatever the broadcast handed it, and
+  // isValidProject() only checks version + surfaces.
+  const keepOuts = Array.isArray(project.keepOuts) ? project.keepOuts : [];
+
+  keepOuts
+    .filter((k) => k && k.visible && isValidPointRing(k.points))
+    .forEach((keepOut) => {
+      const poly = document.createElementNS(SVG_NS, "polygon");
+      poly.setAttribute("points", keepOutPointsAttr(keepOut, w, h));
+      poly.setAttribute("class", "output-keepout");
+      applyKeepOutMarginStroke(poly, keepOut.margin, h);
+      svg.appendChild(poly);
+    });
 }
 
 // Surface list order = render order = stacking order (later = on top, see

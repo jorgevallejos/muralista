@@ -418,6 +418,55 @@ button.danger:hover {
   pointer-events: none;
 }
 
+/* ===== Keep-outs (preview) =====
+
+   Two polygons per keep-out, for one reason: the mask's stroke is spoken for
+   by the margin (see applyKeepOutMarginStroke in mapper.js) and an element
+   has only one stroke, so selection state needs an element of its own.
+
+   The mask is painted exactly as the output paints it - black fill, black
+   round-joined stroke - so the margin is tuned against what actually lands on
+   the wall. `opacity` on the element (rather than fill-opacity) composites
+   fill and stroke as one group, so the stroke does not double up over the
+   fill and leave a visible seam at the shape's own outline. */
+.preview-keepout-mask {
+  fill: #000;
+  stroke: #000;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.82;
+  cursor: move;
+  touch-action: none; /* stop the browser hijacking the drag as scroll/zoom */
+}
+
+/* Selection outline. Never a hit target: the mask underneath owns the
+   gesture, and an outline stealing pointerdown would make the polygon's own
+   edge un-draggable. */
+.preview-keepout-outline {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 2;
+  stroke-dasharray: 8 6;
+  pointer-events: none;
+}
+
+.preview-keepout-outline.selected {
+  stroke-width: 3;
+  stroke-dasharray: none;
+}
+
+/* Invisible thick line over each edge of the SELECTED keep-out: clicking one
+   inserts a point there. pointer-events:all for the same reason
+   .corner-handle-hit needs it - a transparent stroke is not "painted", and
+   SVG's default visiblePainted hit-testing would skip it entirely. */
+.keepout-edge-hit {
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: all;
+  cursor: copy;
+  touch-action: none;
+}
+
 /* ===== Corner handles (calibration drag) ===== */
 
 .corner-handle {
@@ -454,6 +503,18 @@ button.danger:hover {
 
 .corner-handle.camera circle:not(.corner-handle-hit) {
   stroke: #f0a53a;
+}
+
+/* Keep-out point handles: the same handle idiom as the surface corners, in
+   the keep-out's own colour, and smaller - a traced shadow carries 20-40 of
+   them and full-size dots would be a solid ring of chrome. */
+.corner-handle.keepout circle:not(.corner-handle-hit) {
+  stroke: var(--danger);
+  stroke-width: 2;
+}
+
+.corner-handle.keepout.active circle:not(.corner-handle-hit) {
+  fill: var(--danger);
 }
 
 .corner-handle text {
@@ -553,6 +614,28 @@ body.role-output {
   font-weight: 700;
   line-height: 1.5;
   word-break: break-all;
+}
+
+/* Keep-outs: above every surface wrapper, below the white plate. Full-frame
+   overlay, never a hit target - the output window takes no input but F and
+   double-click, and those belong to the document. The viewBox is set in real
+   output pixels on every render (see renderKeepOutsOutput), with
+   preserveAspectRatio="none" so one output pixel is one user unit on both
+   axes and the margin's round joins stay round. */
+.output-keepouts {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.output-keepout {
+  fill: #000;
+  stroke: #000;
+  stroke-linejoin: round;
+  stroke-linecap: round;
 }
 
 /* White-field helper: above the surfaces, below nothing. Covers rather than

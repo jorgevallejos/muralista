@@ -7,6 +7,10 @@
  *   http://localhost:8123/mapper.html          -> control window
  *   http://localhost:8123/mapper.html?output    -> output window (projector)
  *
+ * Both URLs may carry a `v=<build token>` parameter; mapper.html's bootstrap
+ * uses it to cache-bust this file and mapper.css, and the control window passes
+ * its own token to the output window so both always run the same build.
+ *
  * Sections: STATE, SYNC, WARP, CONTROL UI, OUTPUT RENDERING, ROLE / INIT.
  */
 
@@ -1583,7 +1587,12 @@ function wireControlEvents() {
   document.getElementById("btn-add-surface").addEventListener("click", addSurface);
 
   document.getElementById("btn-open-output").addEventListener("click", () => {
-    const win = window.open("mapper.html?output", "mapper-output");
+    // Hand the output window THIS window's build token (see the bootstrap in
+    // mapper.html) so the two documents load the same mapper.js and mapper.css
+    // by construction. Reloading the control window mints a fresh token, and
+    // the next click re-navigates the named output window onto it.
+    const url = "mapper.html?output&v=" + encodeURIComponent(window.MURALISTA_BUILD);
+    const win = window.open(url, "mapper-output");
     if (win) {
       // If the named window already exists (possibly behind other windows or
       // on another display), window.open only re-navigates it - bring it

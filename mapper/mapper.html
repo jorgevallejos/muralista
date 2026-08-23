@@ -4,7 +4,43 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Muralista</title>
-  <link rel="stylesheet" href="mapper.css">
+  <!-- ============ BUILD TOKEN BOOTSTRAP ============
+       `python3 -m http.server` sends no cache headers, so Chrome is free to keep
+       serving an old mapper.js forever. Control and output are separate documents
+       with separate caches, so reloading one does nothing for the other - and a
+       stale output window fails silently: it still renders surfaces and still
+       understands the old message kinds, it just ignores anything new. It presents
+       as "the feature does nothing", which sends you debugging the wrong file.
+
+       So the subresources are injected here with a per-session `?v=` token instead
+       of being hard-linked: a cache-busted mapper.html URL does NOT bust a plain
+       <link>/<script> href, which is exactly how the stale mapper.js survived last
+       time. The token comes from the URL if present, otherwise it is minted now.
+       "Open output window" passes the control window's own token through, so both
+       windows run the same build by construction, not merely by luck. -->
+  <script>
+    (function () {
+      var v = new URLSearchParams(window.location.search).get("v") || String(Date.now());
+      window.MURALISTA_BUILD = v;
+
+      var css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "mapper.css?v=" + encodeURIComponent(v);
+      document.head.appendChild(css);
+
+      // mapper.js runs at top level against an already-parsed DOM - it used to
+      // sit at the end of <body>. A script element created in JS is async no
+      // matter what, and `defer` does not apply to it (defer is honoured only on
+      // parser-inserted scripts), so injecting it from <head> would race the
+      // parser and sometimes run before the DOM exists. Holding the injection
+      // until DOMContentLoaded reproduces the old end-of-body guarantee exactly.
+      document.addEventListener("DOMContentLoaded", function () {
+        var js = document.createElement("script");
+        js.src = "mapper.js?v=" + encodeURIComponent(v);
+        document.body.appendChild(js);
+      });
+    })();
+  </script>
 </head>
 <body>
 
@@ -111,6 +147,6 @@
     <div id="output-identify" class="output-identify"></div>
   </div>
 
-  <script src="mapper.js"></script>
+  <!-- mapper.js is injected by the build-token bootstrap in <head>. -->
 </body>
 </html>

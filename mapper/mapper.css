@@ -449,11 +449,14 @@ button.danger:hover {
   align-self: flex-end;
 }
 
+/* Pregonero's .control-setup-hint takes --text-muted, not the dimmer step:
+   a hint is instructional text somebody reads at a desk, in a dark room, and
+   the dimmer ramp is for things meant to be available rather than read. */
 .layer-hint {
   margin: 0 16px 12px;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 .layer-field .layer-hint {

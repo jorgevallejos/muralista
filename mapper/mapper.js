@@ -1964,8 +1964,15 @@ function releasePointerSafely(el, pointerId) {
 // on a fill shape this is the performer mask, and on a video shape it clips an
 // animation to the silhouette of a real object on the stage. It was only ever
 // a keep-out's gesture because a keep-out was the only thing with an outline.
-// It writes the outline and NEVER the content frame: adopting a silhouette
-// says where a shape ends, not how its content is warped.
+//
+// IT WRITES THE OUTLINE, and what the content does about that is the count
+// rule's business rather than this function's (see shapeFrame). Which lands in
+// the right place on both of the cases that turn up at a wall: a silhouette
+// comes back with more than four points, so the content stays warped where it
+// was and starts being clipped by the shape; a flat rectangular thing - a
+// placed box, a panel - comes back as a quad, and a quad is precisely
+// something content can be warped ONTO, so it is. Adopt the boundaries of a
+// box on a video shape and the video lands on the box.
 //
 // IT DETECTS A DIFFERENCE, so the thing must be ABSENT FROM ONE OF THE TWO
 // FRAMES. It finds a person who walks into the beam, or an object placed and
@@ -2007,8 +2014,18 @@ const SHADOW_CLEAR_SETTLE_MS = 300;
 // Anything smaller than this fraction of the frame is noise, not a person.
 const SHADOW_MIN_BLOB_FRACTION = 0.002;
 
-const SHADOW_TARGET_MIN_POINTS = 20;
-const SHADOW_TARGET_MAX_POINTS = 40;
+// A HANDFUL OF POINTS, NOT A TRACING. Thirty points around a real silhouette
+// came back jagged - every wrinkle of a jacket and every gap under an arm
+// faithfully recorded - and jagged is the wrong answer here twice over. It is
+// not what the shape is FOR: the margin slider has to inflate it anyway, and a
+// mask has to be generously bigger than the thing, so detail at the outline is
+// detail that gets swallowed. And it is not editable: a dozen points can be
+// pushed by hand at a wall, thirty cannot.
+//
+// Simple and generous is the goal, and the convex hull below is what delivers
+// it - see shadowRingFromFrames.
+const SHADOW_TARGET_MIN_POINTS = 8;
+const SHADOW_TARGET_MAX_POINTS = 14;
 
 // Control-local, never persisted and never broadcast. These are capture
 // settings for one gesture against one room's light, not geometry: putting
@@ -2098,46 +2115,66 @@ function largestBlob(mask, w, h) {
   return out;
 }
 
-// Moore-neighbour boundary tracing: walk the outside of the blob, always
-// resuming the clockwise search from where we came in, so the walk hugs the
-// border rather than cutting across the shape.
-function traceBoundary(mask, w, h) {
-  const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && mask[y * w + x] === 1;
-
-  let sx = -1, sy = -1;
-  for (let i = 0; i < mask.length && sx < 0; i++) {
-    if (mask[i]) { sx = i % w; sy = (i / w) | 0; }
-  }
-  if (sx < 0) return null;
-
-  // Clockwise 8-neighbourhood.
-  const D = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
-
-  const contour = [];
-  let px = sx, py = sy;
-  // Enter from the west: (sx,sy) is the first set pixel in row-major order,
-  // so the pixel to its left is guaranteed background.
-  let backtrack = 4;
-  const maxSteps = 8 * w * h;
-
-  for (let step = 0; step < maxSteps; step++) {
-    contour.push([px, py]);
-    let moved = false;
-    for (let k = 1; k <= 8; k++) {
-      const d = (backtrack + k) % 8;
-      const nx = px + D[d][0], ny = py + D[d][1];
-      if (at(nx, ny)) {
-        backtrack = (d + 4) % 8; // now pointing back at the pixel we left
-        px = nx;
-        py = ny;
-        moved = true;
-        break;
+// THE CONVEX HULL OF THE BLOB, and the hull is the whole of the simplification
+// rather than a step in it.
+//
+// What was here before walked the blob's boundary pixel by pixel (Moore
+// neighbours) and then thinned the result. That is a faithful tracing, and
+// faithful is exactly wrong for this: it keeps every concavity - the gap
+// between an arm and a body, the notch under a chin - and a mask is supposed
+// to COVER those, not follow them into their corners. Hulling removes concave
+// noise by construction, with no threshold and nothing to tune, and it can
+// only ever make the shape bigger, which is the direction a mask is allowed to
+// be wrong in.
+//
+// It also lands close to the coffin-ish shape sketched in the design session,
+// which is what a standing person's shadow actually is once you stop
+// pretending to trace fingers.
+//
+// ONE PASS PER ROW is all the input the hull needs. Any pixel strictly between
+// the leftmost and rightmost set pixel of its own row lies on the segment
+// joining them, so it is inside the hull and cannot be a vertex of it.
+// Discarding those turns tens of thousands of candidate points into at most
+// two per row, exactly, with no approximation anywhere.
+function blobExtremePoints(mask, w, h) {
+  const pts = [];
+  for (let y = 0; y < h; y++) {
+    let lo = -1, hi = -1;
+    for (let x = 0; x < w; x++) {
+      if (mask[y * w + x]) {
+        if (lo < 0) lo = x;
+        hi = x;
       }
     }
-    if (!moved) break; // a single isolated pixel
-    if (px === sx && py === sy) break;
+    if (lo < 0) continue;
+    pts.push([lo, y]);
+    if (hi !== lo) pts.push([hi, y]);
   }
-  return contour;
+  return pts;
+}
+
+// Andrew's monotone chain. Returns the hull in clockwise order for a
+// y-downward raster - which is the same winding the rest of this file uses for
+// a ring, so the result drops straight into shape.outline.
+function convexHull(points) {
+  if (points.length < 3) return points.slice();
+  const pts = points.slice().sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]));
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+
+  const half = (source) => {
+    const out = [];
+    for (const p of source) {
+      // <= 0 drops collinear points too: three points in a line make a vertex
+      // that is not a corner, and every one of them costs a handle at the wall.
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop();
+      out.push(p);
+    }
+    out.pop(); // the shared endpoint, contributed by the other half
+    return out;
+  };
+
+  const hull = half(pts).concat(half(pts.slice().reverse()));
+  return hull.length >= 3 ? hull : points.slice();
 }
 
 // Ramer-Douglas-Peucker on an open polyline. The contour is a closed ring
@@ -2167,7 +2204,7 @@ function rdp(points, eps) {
   return [points[0], points[points.length - 1]];
 }
 
-// Binary-searches RDP's tolerance for a ring in the 20-40 point range. A
+// Binary-searches RDP's tolerance for a ring in the target point range. A
 // fixed epsilon cannot do this: the right tolerance depends on how big the
 // person came out in frame, which is a property of the room. If the contour
 // is too short to reach the minimum, the tightest result is the honest
@@ -2210,10 +2247,13 @@ function shadowRingFromFrames(frameA, frameB, threshold, H) {
   const blob = largestBlob(mask, w, h);
   if (!blob) return null;
 
-  const contour = traceBoundary(blob, w, h);
-  if (!contour || contour.length < SHAPE_MIN_POINTS) return null;
+  // Hull first, thin second. RDP only ever removes points, and removing a
+  // vertex from a convex polygon leaves a convex polygon, so what comes out of
+  // here is still convex and still covers the blob's own extremes.
+  const hull = convexHull(blobExtremePoints(blob, w, h));
+  if (!hull || hull.length < SHAPE_MIN_POINTS) return null;
 
-  const simplified = simplifyRingToRange(contour, SHADOW_TARGET_MIN_POINTS, SHADOW_TARGET_MAX_POINTS);
+  const simplified = simplifyRingToRange(hull, SHADOW_TARGET_MIN_POINTS, SHADOW_TARGET_MAX_POINTS);
 
   // Camera space -> output space, through the EXISTING calibration. The
   // stored points must be in output space, so the outline stays valid long

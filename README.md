@@ -34,7 +34,7 @@ cd mapper/
 python3 -m http.server 8123
 ```
 
-**If you edit the code, hard-reload** (`Cmd-Shift-R`). `python3 -m http.server` sends no cache headers, so Chrome will happily keep serving the `mapper.js` it already has — a plain reload can leave you testing the old build while reading the new source. This costs half an hour the first time it happens.
+`python3 -m http.server` sends no cache headers, so a plain reload used to leave you testing the `mapper.js` Chrome already had while reading the new source. That is handled in the code now: `mapper.html` injects its subresources with a per-session `?v=` token, and **Open output window** passes the control window's token through, so both windows always run the same build. A normal reload is enough.
 
 Open `http://localhost:8123/mapper.html`. That is the **control** window — the performer UI, with the surface list, the calibration handles and the layer panel. Click **Open output window**, drag the new window onto the projector's display, and press `F` to fullscreen it. That second window is the projector image and nothing else; the two stay in sync over a `BroadcastChannel`.
 

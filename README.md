@@ -16,8 +16,9 @@ The counterpart to that: **Muralista maps, but it does not perform.** Working ou
 
 - **Built and verified at a real projector** (2026-07-02): corner-pin warp sits flush on a physical box, an animation plays across several surfaces at once, alpha compositing works at the wall.
 - **Never played a room.** It has been driven at a wall in a studio, never during a show with an audience in front of it. This is why Muralista is deliberately **not** promoted on [changopepper.com/tramoya](https://changopepper.com/tramoya) — the suite's rule is that everything on that page has done real work, and this has not yet.
+- **Keep-outs landed 2026-08-23**, with the shadow suggestion. Verified in real headed Chrome against painted geometry and decoded pixels — but **the suggestion has never been run against a real wall.** Its optical loop (a camera actually seeing the projected plate, the countdown clearing off the wall, a real body's shadow under real auto-exposure) was driven with a synthetic camera feed, because it is the one part that a desk cannot stand in for. Treat the first venue run as the real test of it; the shape it hands back is meant to be coarse either way.
 - **Direct manipulation is now verified by hand** (2026-08-22). It landed in July and was only ever checked headlessly, and it did not in fact work: a drag moved a quad by one mouse-move and then froze, and pressing an unselected quad did not move it at all. Fixed, and confirmed in Chrome with a real mouse against painted output. **Transport-synced overlays are still hand-untested.**
-- **The desk-tool shape described above is the direction, not the current build.** Today Muralista still renders live: it has a transport, because v1 was designed as a tool that runs during the show. That decision was reversed on 2026-08-20. The sound-reactive half was removed on 2026-08-22 and preserved at the tag `mic-reactivity-archive`: a tool that maps a wall before a show cannot also be the thing listening to the room during it. The beat layer that removal left standing went too (2026-08-23) — with mic mode gone it was a circle pulsing at a fixed BPM, and nothing about drawing shapes on a wall needs one. **What Muralista renders today is video and image layers on warped surfaces**, plus the test pattern you align against. The behaviours that left survive as direction — they become properties declared in the venue mapping and executed by [Pregonero](https://github.com/jorgevallejos/pregonero) — but nothing has moved across yet, and Pregonero cannot read a venue mapping today.
+- **The desk-tool shape described above is the direction, not the current build.** Today Muralista still renders live: it has a transport, because v1 was designed as a tool that runs during the show. That decision was reversed on 2026-08-20. The sound-reactive half was removed on 2026-08-22 and preserved at the tag `mic-reactivity-archive`: a tool that maps a wall before a show cannot also be the thing listening to the room during it. The beat layer that removal left standing went too (2026-08-23) — with mic mode gone it was a circle pulsing at a fixed BPM, and nothing about drawing shapes on a wall needs one. **What Muralista renders today is video and image layers on warped surfaces, plus keep-out polygons it holds dark**, plus the test pattern you align against. The behaviours that left survive as direction — they become properties declared in the venue mapping and executed by [Pregonero](https://github.com/jorgevallejos/pregonero) — but nothing has moved across yet, and Pregonero cannot read a venue mapping today.
 
 No test suite. This is a spike, run with spike discipline, and it graduates to tests and a PR flow when it earns them.
 
@@ -98,9 +99,35 @@ You have an alpha WebM of a character that should appear over the animation, in 
 
 That copies the surface with identical corners, drops it immediately after the original so it paints on top, and selects it. Change the copy's source to the overlay and you are done. Stacking order is the list order; **▲ / ▼** move a surface back and forward through it.
 
-### 7. Export the room
+### 7. Hold part of the wall dark
 
-**Export** writes the mapping to a JSON file. That file is this room — the surfaces, their corners, their layers, their order.
+Muralista's design is subtractive. The projector floods the whole background, and the mapping is a layout of that flood — **including which parts stay dark**. Black is a decision, so it is an object: a **keep-out**, listed in its own section of the sidebar, below the surfaces.
+
+A keep-out is not a surface, and it is worth knowing why the tool treats them as different things. Every surface is exactly four corners because four corners is what a perspective warp needs. A keep-out carries no content — it holds black — so it needs no warp and is not bound to four corners. It is an irregular polygon, and that is the *cheap* version here, not the expensive one.
+
+Add one and it arrives as a tall hexagon. Drag the whole shape to move it, drag a point to reshape it, **click an edge to insert a point and pull it out** in one gesture, and select a point and press Delete to remove it. Three points is the floor. Keep-outs paint above every surface, always, whatever order either list is in.
+
+**The margin slider inflates the whole outline outward**, and it is the one control that turns the rule below into a number. It is drawn as a round-joined stroke on the same shape rather than as a recomputed outline, which makes it a true dilation: a thin limb gets *thicker*, not longer. (SVG centres a stroke on its path, so the shape grows outward by half the width the slider sets.)
+
+#### Suggest from my shadow
+
+With the camera calibrated, press **Suggest from my shadow** and the tool does the tracing:
+
+1. It raises the white plate, and waits for the wall and the camera's exposure to settle.
+2. It photographs the empty wall.
+3. It counts you into place — **on the wall itself**, in numbers big enough to read from inside the beam, and in the control window too.
+4. At zero it takes the countdown *off* the wall, waits for it to clear, and photographs the wall again.
+5. Whatever got darker between the two frames is your shadow. It takes the largest such region, traces its outline, simplifies it to twenty-odd points, and maps those through the camera calibration into output space.
+
+Then it hands you the shape and gets out of the way. **It is not trying to be accurate, and you should not want it to be.** A coarse blob roughly the right shape is the right answer: the margin has to inflate it anyway, and a few points get pushed by hand. One threshold slider is there for when the room's light needs it — raise it if the trace grabs the whole wall, lower it if it finds nothing.
+
+The traced points are stored in **output space**, so the keep-out stays valid long after the webcam is unplugged.
+
+Not in this version: the polygon following you live. On a dark stage, mid-song, a mask that flickers is worse than no mask.
+
+### 8. Export the room
+
+**Export** writes the mapping to a JSON file. That file is this room — the surfaces, their corners, their layers, their order, and the keep-outs it holds dark.
 
 Next time you play here, **Import** it and the calibration comes back. **Keep one file per venue.** Getting a room flush from scratch is the expensive part of the evening; getting it back should cost nothing.
 
@@ -108,7 +135,7 @@ Next time you play here, **Import** it and the calibration comes back. **Keep on
 
 ## The venue mapping
 
-The exported JSON is the artifact Muralista exists to produce, and everything above is in service of it. It holds the geometry of one room: each surface's four corners in output space, its layer and source, and the order they paint in.
+The exported JSON is the artifact Muralista exists to produce, and everything above is in service of it. It holds the geometry of one room: each surface's four corners in output space, its layer and source, the order they paint in, and the keep-out polygons — also in output space — that paint black above all of it.
 
 Two things worth knowing:
 
@@ -116,11 +143,13 @@ Two things worth knowing:
 
 **The storage key still carries the tool's old name** — `wallmapper.project.v1`, from the working title this was built under. It is left alone deliberately, with a guard comment on the definition. It is an *address*, not a name: renaming it would not rename anything, it would point the tool at an empty place and silently orphan every mapping you have saved. Same for the `BroadcastChannel` name and the export filename.
 
-**Where this is going:** the mapping grows into a full **venue file** — adding the outer field of usable wall, named regions for lyrics and animation, and keep-out polygons the projector holds dark — which Pregonero reads and executes on stage. See `project-context.md` in this repo, under "V1 design (2026-08-20)", for the design and its open questions.
+**Where this is going:** the mapping grows into a full **venue file** — adding the outer field of usable wall and named regions for lyrics and animation, alongside the keep-outs it already carries — which Pregonero reads and executes on stage. See `project-context.md` in this repo, under "V1 design (2026-08-20)", for the design and its open questions.
 
 ### Keep-outs and the shadow rule
 
-A **keep-out** is a region the projector holds dark. Its first job is the performer: standing in the beam is physically unpleasant, and a keep-out is what you use when the room will not let you put the beam above or beside the person instead.
+The one rule that governs every keep-out you draw around a person. Step 7 above is how; this is why.
+
+A keep-out's first job is the performer: standing in the beam is physically unpleasant, and a keep-out is what you use when the room will not let you put the beam above or beside the person instead.
 
 **Trace the performer's shadow, never the performer.** Whether you are working from a photo or from the live camera, the camera does not stand where the lens stands, so the two disagree about where a body is — in the studio, with the camera as close to the lens as it would physically go, that disagreement was still 12–15cm on the wall. A keep-out drawn around the body paints black onto empty wall and leaves the beam on half the face.
 

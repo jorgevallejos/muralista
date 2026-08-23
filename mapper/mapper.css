@@ -418,6 +418,40 @@ button.danger:hover {
   pointer-events: none;
 }
 
+/* Divider before the shadow-suggestion block: it is a different kind of
+   control from the ones above it - a capture gesture, not a property. */
+.keepout-suggest-divider {
+  border-top: 1px solid var(--border);
+  margin: 14px 0 12px;
+}
+
+.keepout-suggest-status {
+  margin: 6px 0;
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1.5;
+  min-height: 1em;
+}
+
+.layer-hint.blocked {
+  color: #d9a441;
+}
+
+/* Countdown in the control window. Big, because it is read at a glance from
+   across the room on the way back from the wall. */
+.preview-countdown {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22vh;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 0 24px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+
 /* ===== Keep-outs (preview) =====
 
    Two polygons per keep-out, for one reason: the mask's stroke is spoken for
@@ -647,6 +681,25 @@ body.role-output {
   width: 100%;
   height: 100%;
   background: #fff;
+}
+
+/* Countdown on the wall itself, above the white plate. Dark on white,
+   because the plate is what it is painted on and the performer reads it from
+   inside the beam. */
+.output-countdown {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 60vh;
+  font-weight: 800;
+  line-height: 1;
+  color: #14161c;
+  pointer-events: none;
 }
 
 .output-identify {

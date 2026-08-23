@@ -141,6 +141,10 @@
                this element exists in the control role and nowhere else. -->
           <video id="preview-camera" class="preview-camera" autoplay muted playsinline hidden></video>
           <svg id="preview-svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid meet"></svg>
+          <!-- Countdown for "Suggest from my shadow", shown here as well as
+               on the wall: the performer reads it off the wall, but whoever
+               is still at the desk should see the same number. -->
+          <div id="preview-countdown" class="preview-countdown" hidden></div>
         </div>
       </main>
     </div>
@@ -162,6 +166,10 @@
          raise, so the projector's lit rectangle is visible while the camera
          backdrop's calibration corners are placed. -->
     <div id="output-white" class="output-white" hidden></div>
+    <!-- Countdown plate: ABOVE the white field so it is legible on it. It is
+         removed outright before the second capture - neither captured frame
+         may contain it, which is what the settle after it exists for. -->
+    <div id="output-countdown" class="output-countdown" hidden></div>
     <!-- Identify overlay: unwarped screen-space labels at each surface's
          centroid, shown briefly in response to a broadcast 'identify'. -->
     <div id="output-identify" class="output-identify"></div>

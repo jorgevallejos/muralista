@@ -655,6 +655,14 @@ function toggleWhiteField() {
   renderControl();
 }
 
+// Control -> output: a big number on the wall itself, so the countdown for
+// "Suggest from my shadow" can be read from where the performer is standing
+// rather than from the laptop they just walked away from. `value` is the
+// seconds remaining, or null to clear it. Nonce per project convention.
+function broadcastCountdown(value) {
+  channel.postMessage({ kind: "countdown", value, nonce: Date.now() });
+}
+
 // Output -> control: report the output window's actual pixel size so arrow-
 // key nudges (control-side) can be expressed in real output pixels. Sent on
 // load and on every resize; always carries a nonce per project convention,
@@ -670,6 +678,7 @@ function handleControlMessage(event) {
     // A fresh output window just opened and wants the current state.
     broadcastState();
     broadcastWhiteField(); // a reopened output must not come back with a stale plate
+    broadcastCountdown(suggestionCountdownValue); // nor with a stale countdown
     if (lastTransport) {
       // Bring a late joiner up to speed on playback too - without this, an
       // output opened after Play was already pressed sits frozen on its
@@ -697,6 +706,8 @@ function handleOutputMessage(event) {
     showIdentifyOverlay();
   } else if (msg.kind === "whiteField" && typeof msg.on === "boolean") {
     setOutputWhiteField(msg.on);
+  } else if (msg.kind === "countdown") {
+    setOutputCountdown(typeof msg.value === "number" ? msg.value : null);
   } else if (msg.kind === "transport" && typeof msg.action === "string") {
     applyTransportAction(msg.action);
   }
@@ -784,6 +795,29 @@ function homographyToMatrix3dString(h) {
   ];
   return `matrix3d(${m.join(",")})`;
 }
+
+// Applies a homography to a single point, doing by hand the perspective
+// divide the GPU does for us in homographyToMatrix3dString(). Needed because
+// the shadow suggestion maps traced CONTOUR POINTS from camera space into
+// output space - there is no element to hang a CSS transform on, only
+// numbers. Returns null where the point lands on the horizon (w ~ 0), which
+// a sane calibration never produces but a degenerate one can.
+function applyHomography(h, [x, y]) {
+  const w = h.h6 * x + h.h7 * y + 1;
+  if (!isFinite(w) || Math.abs(w) < 1e-12) return null;
+  const px = (h.h0 * x + h.h1 * y + h.h2) / w;
+  const py = (h.h3 * x + h.h4 * y + h.h5) / w;
+  return isFinite(px) && isFinite(py) ? [px, py] : null;
+}
+
+// The normalized output frame, as a quad in surface.corners order. The
+// camera calibration maps project.cameraQuad onto exactly this.
+const UNIT_SQUARE_CORNERS = [
+  [0, 0],
+  [1, 0],
+  [1, 1],
+  [0, 1],
+];
 
 // The pattern/layer content is drawn into a fixed 1000x1000px "unit square"
 // local coordinate space; this is the homography's source domain for every
@@ -1249,6 +1283,374 @@ function startSurfaceDrag(e, svg, surface) {
     const [dx, dy] = clampTranslateDelta(originalCorners, rawDelta);
     surface.corners = originalCorners.map(([x, y]) => [x + dx, y + dy]);
   });
+}
+
+// =========================================================================
+// SUGGEST FROM MY SHADOW
+// =========================================================================
+// Raise a white plate, photograph the empty wall, count the performer into
+// place on the wall itself, photograph it again, and keep the region that
+// got DARKER. That region is the shadow, by construction - it is precisely
+// the set of projector pixels the body blocks - and the shadow, not the
+// body, is what a keep-out must be traced around. The camera and the lens do
+// not stand in the same place, so they disagree about where a body is; they
+// cannot disagree about where its shadow falls, because the shadow lands on
+// the wall plane, which is exactly where the existing calibration is exact.
+//
+// ACCURACY IS EXPLICITLY NOT THE GOAL. A coarse blob roughly the right shape
+// is the CORRECT output here: the margin slider has to inflate it anyway (a
+// performer sways), and a few points get pushed by hand afterwards. So there
+// is no smoothing pass, no morphological cleanup and no adaptive
+// thresholding - just enough to get one blob instead of noise, with a single
+// threshold slider where a guess would otherwise go.
+//
+// Out of scope, deliberately: following the performer live. A mask that
+// flickers on a dark stage is worse than no mask.
+
+// ~320px wide is plenty for a shape that is about to be inflated by a margin
+// and tidied by hand, and it keeps the whole pass well inside one frame.
+const SHADOW_CAPTURE_WIDTH = 320;
+
+// Long enough for the plate to reach the wall AND for the camera's auto
+// exposure to finish stopping down for it. Both frames are then taken under
+// the same exposure, which matters more than either being taken quickly.
+const SHADOW_PLATE_SETTLE_MS = 900;
+
+// After the countdown comes off the output, before frame B. Frame A never
+// contained the countdown and frame B must not either - a number still on
+// its way off the wall would difference straight into the traced shape.
+const SHADOW_CLEAR_SETTLE_MS = 300;
+
+// Anything smaller than this fraction of the frame is noise, not a person.
+const SHADOW_MIN_BLOB_FRACTION = 0.002;
+
+const SHADOW_TARGET_MIN_POINTS = 20;
+const SHADOW_TARGET_MAX_POINTS = 40;
+
+// Control-local, never persisted and never broadcast. These are capture
+// settings for one gesture against one room's light, not geometry: putting
+// them in the venue file would ship a transient camera parameter inside the
+// artifact this tool exists to produce.
+let shadowThreshold = 22; // 0-255 luminance drop
+let shadowCountdownSeconds = 10;
+let suggestionRunning = false;
+let suggestionCountdownValue = null;
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+// Why the button is disabled, or null if it is not. Said out loud in the
+// panel rather than left as a dead control.
+function shadowSuggestionBlocker() {
+  if (!isCameraMode()) return "Set Backdrop \u2192 Source to Live camera first.";
+  if (!isCameraEnabled()) return "Enable the camera first.";
+  if (!isValidQuad(project.cameraQuad)) {
+    return "Calibrate the camera first. The suggestion maps your shadow into output space through that calibration, so without it there is nothing to map through.";
+  }
+  return null;
+}
+
+// One frame of the RAW camera feed as luminance, downscaled. Raw is the
+// right space: project.cameraQuad's points were placed on the untransformed
+// feed, so normalized raw-frame coordinates and normalized camera-space
+// coordinates are the same thing. drawImage reads the video's own frame and
+// ignores the CSS rectification transform, which is what we want.
+function grabCameraFrameLuma(video) {
+  if (!video || !video.videoWidth || !video.videoHeight) return null;
+  const w = SHADOW_CAPTURE_WIDTH;
+  const h = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * w));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const luma = new Uint8ClampedArray(w * h);
+  for (let i = 0, p = 0; i < luma.length; i++, p += 4) {
+    // Rec.601 luma in integer arithmetic.
+    luma[i] = (data[p] * 77 + data[p + 1] * 150 + data[p + 2] * 29) >> 8;
+  }
+  return { w, h, luma };
+}
+
+// Keeps only the largest 8-connected component. 8-connectivity rather than
+// 4 because a silhouette pinched to a diagonal thread at a wrist or an ankle
+// should stay ONE blob - splitting a person into a body and a detached hand
+// is the failure this is guarding against, and it costs nothing.
+function largestBlob(mask, w, h) {
+  const label = new Int32Array(w * h);
+  const stack = new Int32Array(w * h);
+  let next = 0, best = 0, bestSize = 0;
+
+  for (let seed = 0; seed < mask.length; seed++) {
+    if (!mask[seed] || label[seed]) continue;
+    next++;
+    let top = 0, size = 0;
+    stack[top++] = seed;
+    label[seed] = next;
+    while (top > 0) {
+      const i = stack[--top];
+      size++;
+      const x = i % w, y = (i / w) | 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const j = ny * w + nx;
+          if (mask[j] && !label[j]) {
+            label[j] = next;
+            stack[top++] = j;
+          }
+        }
+      }
+    }
+    if (size > bestSize) { bestSize = size; best = next; }
+  }
+
+  if (bestSize < w * h * SHADOW_MIN_BLOB_FRACTION) return null;
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < out.length; i++) out[i] = label[i] === best ? 1 : 0;
+  return out;
+}
+
+// Moore-neighbour boundary tracing: walk the outside of the blob, always
+// resuming the clockwise search from where we came in, so the walk hugs the
+// border rather than cutting across the shape.
+function traceBoundary(mask, w, h) {
+  const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && mask[y * w + x] === 1;
+
+  let sx = -1, sy = -1;
+  for (let i = 0; i < mask.length && sx < 0; i++) {
+    if (mask[i]) { sx = i % w; sy = (i / w) | 0; }
+  }
+  if (sx < 0) return null;
+
+  // Clockwise 8-neighbourhood.
+  const D = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+
+  const contour = [];
+  let px = sx, py = sy;
+  // Enter from the west: (sx,sy) is the first set pixel in row-major order,
+  // so the pixel to its left is guaranteed background.
+  let backtrack = 4;
+  const maxSteps = 8 * w * h;
+
+  for (let step = 0; step < maxSteps; step++) {
+    contour.push([px, py]);
+    let moved = false;
+    for (let k = 1; k <= 8; k++) {
+      const d = (backtrack + k) % 8;
+      const nx = px + D[d][0], ny = py + D[d][1];
+      if (at(nx, ny)) {
+        backtrack = (d + 4) % 8; // now pointing back at the pixel we left
+        px = nx;
+        py = ny;
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) break; // a single isolated pixel
+    if (px === sx && py === sy) break;
+  }
+  return contour;
+}
+
+// Ramer-Douglas-Peucker on an open polyline. The contour is a closed ring
+// walked from one point back to it, so running it open keeps that point
+// pinned, which is harmless for a shape about to be edited by hand.
+function rdp(points, eps) {
+  if (points.length < 3) return points.slice();
+  const [ax, ay] = points[0];
+  const [bx, by] = points[points.length - 1];
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy);
+
+  let maxD = -1, idx = -1;
+  for (let i = 1; i < points.length - 1; i++) {
+    const [x, y] = points[i];
+    const d = len < 1e-9
+      ? Math.hypot(x - ax, y - ay)
+      : Math.abs(dy * x - dx * y + bx * ay - by * ax) / len;
+    if (d > maxD) { maxD = d; idx = i; }
+  }
+
+  if (maxD > eps) {
+    const left = rdp(points.slice(0, idx + 1), eps);
+    const right = rdp(points.slice(idx), eps);
+    return left.slice(0, -1).concat(right);
+  }
+  return [points[0], points[points.length - 1]];
+}
+
+// Binary-searches RDP's tolerance for a ring in the 20-40 point range. A
+// fixed epsilon cannot do this: the right tolerance depends on how big the
+// person came out in frame, which is a property of the room. If the contour
+// is too short to reach the minimum, the tightest result is the honest
+// answer - there was simply not that much shape there.
+function simplifyRingToRange(contour, minPts, maxPts) {
+  let lo = 0.05, hi = Math.max(contour.length, 64);
+  const finest = rdp(contour, lo);
+  if (finest.length <= maxPts) return finest;
+
+  let best = finest;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    const out = rdp(contour, mid);
+    if (out.length > maxPts) {
+      lo = mid;
+    } else if (out.length < minPts) {
+      hi = mid;
+      best = out;
+    } else {
+      return out;
+    }
+  }
+  return best;
+}
+
+// A -> B, in normalized OUTPUT space. Everything above, wired together.
+function shadowRingFromFrames(frameA, frameB, threshold, H) {
+  if (!frameA || !frameB || frameA.w !== frameB.w || frameA.h !== frameB.h) return null;
+  const { w, h } = frameA;
+
+  const mask = new Uint8Array(w * h);
+  for (let i = 0; i < mask.length; i++) {
+    // SIGNED, on purpose: a shadow is a DROP in light, so only pixels that
+    // got darker count. Taking the signed difference discards everything
+    // that got brighter for free - which is most of what the camera's auto
+    // exposure does when a body walks into a bright frame.
+    mask[i] = frameA.luma[i] - frameB.luma[i] > threshold ? 1 : 0;
+  }
+
+  const blob = largestBlob(mask, w, h);
+  if (!blob) return null;
+
+  const contour = traceBoundary(blob, w, h);
+  if (!contour || contour.length < KEEPOUT_MIN_POINTS) return null;
+
+  const simplified = simplifyRingToRange(contour, SHADOW_TARGET_MIN_POINTS, SHADOW_TARGET_MAX_POINTS);
+
+  // Camera space -> output space, through the EXISTING calibration. The
+  // stored points must be in output space, so the keep-out stays valid long
+  // after the camera is unplugged.
+  const ring = [];
+  for (const [x, y] of simplified) {
+    const p = applyHomography(H, [(x + 0.5) / w, (y + 0.5) / h]);
+    if (p) ring.push(p);
+  }
+  return ring.length >= KEEPOUT_MIN_POINTS ? ring : null;
+}
+
+function setSuggestStatus(text) {
+  const el = document.getElementById("keepout-suggest-status");
+  if (el) el.textContent = text || "";
+}
+
+// The big number in the control window, so the countdown is readable from
+// the desk as well as from the wall.
+function setPreviewCountdown(value) {
+  const el = document.getElementById("preview-countdown");
+  if (!el) return;
+  if (value == null) {
+    el.hidden = true;
+    el.textContent = "";
+  } else {
+    el.textContent = String(value);
+    el.hidden = false;
+  }
+}
+
+function showCountdown(value) {
+  suggestionCountdownValue = value;
+  broadcastCountdown(value);
+  setPreviewCountdown(value);
+}
+
+// The sequence, and its order is the whole design. See the section comment.
+async function suggestKeepOutFromShadow(keepOutId) {
+  if (suggestionRunning) return;
+  const keepOut = project.keepOuts.find((k) => k.id === keepOutId);
+  if (!keepOut) return;
+  if (shadowSuggestionBlocker()) return;
+
+  const H = computeHomography(project.cameraQuad, UNIT_SQUARE_CORNERS);
+  if (!H) {
+    setSuggestStatus("The camera calibration is degenerate - recalibrate before suggesting.");
+    return;
+  }
+
+  const video = document.getElementById("preview-camera");
+  // If the plate was already up, leave it up afterwards: this gesture should
+  // give the output back exactly as it found it.
+  const plateWasUp = whiteFieldOn;
+  suggestionRunning = true;
+  renderControl();
+
+  try {
+    // 1. Raise the white plate, and let the room settle under it.
+    if (!whiteFieldOn) {
+      whiteFieldOn = true;
+      broadcastWhiteField();
+    }
+    setSuggestStatus("Lighting the wall\u2026");
+    await delay(SHADOW_PLATE_SETTLE_MS);
+
+    // 2. Frame A: the empty wall. Taken BEFORE the countdown exists, so it
+    //    cannot contain one.
+    const frameA = grabCameraFrameLuma(video);
+    if (!frameA) {
+      setSuggestStatus("No camera frame to capture - is the feed running?");
+      return;
+    }
+
+    // 3. Count the performer into place, on the wall and at the desk.
+    for (let t = shadowCountdownSeconds; t > 0; t--) {
+      showCountdown(t);
+      setSuggestStatus(`Step into the beam \u2014 ${t}\u2026`);
+      await delay(1000);
+    }
+
+    // 4. Take the countdown off the output FIRST, then settle, then capture.
+    showCountdown(null);
+    setSuggestStatus("Capturing\u2026");
+    await delay(SHADOW_CLEAR_SETTLE_MS);
+    const frameB = grabCameraFrameLuma(video);
+
+    // 5/6. Difference, blob, trace, simplify, and map into output space.
+    const ring = shadowRingFromFrames(frameA, frameB, shadowThreshold, H);
+    if (!ring) {
+      setSuggestStatus(
+        "No shadow found. Lower the threshold, or check that you were standing in the beam and inside the camera's view."
+      );
+      return;
+    }
+
+    if (setKeepOutPoints(keepOutId, ring)) {
+      setSuggestStatus(
+        `Traced ${ring.length} points. Now raise the margin until the shape is comfortably bigger than you, and push any point that reads wrong.`
+      );
+    } else {
+      setSuggestStatus("The traced shape came out unusable - try again with a different threshold.");
+    }
+  } catch (err) {
+    console.warn("Muralista: shadow suggestion failed.", err);
+    setSuggestStatus(`The suggestion failed: ${(err && err.message) || err}`);
+  } finally {
+    // 7. Give the output back as we found it, whatever happened above.
+    showCountdown(null);
+    if (!plateWasUp && whiteFieldOn) {
+      whiteFieldOn = false;
+      broadcastWhiteField();
+    }
+    suggestionRunning = false;
+    selectKeepOutState(keepOutId); // leave it selected and editable
+    const status = document.getElementById("keepout-suggest-status");
+    const carried = status ? status.textContent : "";
+    renderControl();
+    setSuggestStatus(carried); // renderControl rebuilds the panel; keep the message
+  }
 }
 
 // =========================================================================
@@ -1963,7 +2365,86 @@ function buildKeepOutPanel(container, keepOut) {
     "Click an edge in the preview to insert a point and pull it out. Click a point to select it, then Delete (or the button) to remove it. Three points is the floor.";
   container.appendChild(pointHint);
 
+  buildShadowSuggestControls(container, keepOut);
   updateKeepOutPanelValues(container, keepOut);
+}
+
+// "Suggest from my shadow" and the two knobs it needs. Both knobs are
+// control-local (see shadowThreshold): they describe this room's light and
+// how long it takes to walk to the wall, not the venue's geometry.
+function buildShadowSuggestControls(container, keepOut) {
+  const rule = document.createElement("div");
+  rule.className = "keepout-suggest-divider";
+  container.appendChild(rule);
+
+  const row = document.createElement("div");
+  row.className = "layer-field";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "keepout-suggest";
+  btn.textContent = "Suggest from my shadow";
+  btn.addEventListener("click", () => suggestKeepOutFromShadow(keepOut.id));
+  row.appendChild(btn);
+  container.appendChild(row);
+
+  const status = document.createElement("p");
+  status.id = "keepout-suggest-status";
+  status.className = "keepout-suggest-status";
+  container.appendChild(status);
+
+  const hint = document.createElement("p");
+  hint.id = "keepout-suggest-hint";
+  hint.className = "layer-hint";
+  container.appendChild(hint);
+
+  const secsRow = document.createElement("div");
+  secsRow.className = "layer-field";
+  const secsLabel = document.createElement("label");
+  secsLabel.textContent = "Countdown (s)";
+  secsLabel.setAttribute("for", "keepout-countdown-input");
+  const secsInput = document.createElement("input");
+  secsInput.type = "number";
+  secsInput.id = "keepout-countdown-input";
+  secsInput.min = "3";
+  secsInput.max = "60";
+  secsInput.step = "1";
+  secsInput.value = String(shadowCountdownSeconds);
+  secsInput.addEventListener("change", () => {
+    const n = Math.round(Number(secsInput.value));
+    shadowCountdownSeconds = isFinite(n) ? Math.max(3, Math.min(60, n)) : 10;
+    secsInput.value = String(shadowCountdownSeconds);
+  });
+  secsRow.append(secsLabel, secsInput);
+  container.appendChild(secsRow);
+
+  const thrRow = document.createElement("div");
+  thrRow.className = "layer-field";
+  const thrLabel = document.createElement("label");
+  thrLabel.textContent = "Threshold";
+  thrLabel.setAttribute("for", "keepout-threshold-input");
+  const thrInput = document.createElement("input");
+  thrInput.type = "range";
+  thrInput.id = "keepout-threshold-input";
+  thrInput.min = "4";
+  thrInput.max = "120";
+  thrInput.step = "1";
+  thrInput.value = String(shadowThreshold);
+  const thrValue = document.createElement("span");
+  thrValue.id = "keepout-threshold-value";
+  thrValue.className = "layer-opacity-value";
+  thrValue.textContent = String(shadowThreshold);
+  thrInput.addEventListener("input", () => {
+    shadowThreshold = Number(thrInput.value);
+    thrValue.textContent = String(shadowThreshold);
+  });
+  thrRow.append(thrLabel, thrInput, thrValue);
+  container.appendChild(thrRow);
+
+  const thrHint = document.createElement("p");
+  thrHint.className = "layer-hint";
+  thrHint.textContent =
+    "How much darker a pixel must get to count as shadow. One knob, not a clever guess: raise it if the trace catches the whole wall, lower it if it finds nothing. A coarse blob is the right answer here - the margin has to inflate it anyway.";
+  container.appendChild(thrHint);
 }
 
 // Refreshes values without rebuilding, skipping whichever field has focus so
@@ -1984,6 +2465,28 @@ function updateKeepOutPanelValues(container, keepOut) {
   }
   const deletePointBtn = container.querySelector("#keepout-delete-point");
   if (deletePointBtn) deletePointBtn.disabled = selectedPointIndex == null || count <= KEEPOUT_MIN_POINTS;
+
+  // The suggestion needs a calibrated, running camera. Disabled with the
+  // reason said out loud, rather than left as a dead control.
+  const blocker = shadowSuggestionBlocker();
+  const suggestBtn = container.querySelector("#keepout-suggest");
+  if (suggestBtn) {
+    suggestBtn.disabled = !!blocker || suggestionRunning;
+    suggestBtn.textContent = suggestionRunning ? "Capturing\u2026" : "Suggest from my shadow";
+  }
+  const suggestHint = container.querySelector("#keepout-suggest-hint");
+  if (suggestHint) {
+    suggestHint.textContent = blocker
+      ? blocker
+      : "Raises the white plate, photographs the empty wall, counts you into the beam, photographs it again, and keeps what got darker. That region IS your shadow - trace the shadow, never the body: the camera and the lens disagree about where you are, and cannot disagree about where your shadow falls.";
+    suggestHint.classList.toggle("blocked", !!blocker);
+  }
+  const thrInput = container.querySelector("#keepout-threshold-input");
+  if (thrInput && active !== thrInput) thrInput.value = String(shadowThreshold);
+  const thrValue = container.querySelector("#keepout-threshold-value");
+  if (thrValue) thrValue.textContent = String(shadowThreshold);
+  const secsInput = container.querySelector("#keepout-countdown-input");
+  if (secsInput && active !== secsInput) secsInput.value = String(shadowCountdownSeconds);
 }
 
 // =========================================================================
@@ -2648,6 +3151,21 @@ function showIdentifyOverlay() {
 // the plate leaves everything exactly as it was, still playing.
 function setOutputWhiteField(on) {
   document.getElementById("output-white").hidden = !on;
+}
+
+// The countdown plate, above the white field so it is legible on it. It is
+// REMOVED before the second capture, not merely faded: the whole point of
+// the settle that follows is that neither captured frame contains it, so a
+// countdown still on the wall would difference into the traced shape.
+function setOutputCountdown(value) {
+  const el = document.getElementById("output-countdown");
+  if (value == null) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.textContent = String(value);
+  el.hidden = false;
 }
 
 function toggleFullscreen() {

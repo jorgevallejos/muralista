@@ -1102,6 +1102,35 @@ A named surface costs nothing today and is the hook everything above hangs on if
 studio-only. What this buys is knowing which seam to cut when a second room or a second song forces
 the question, and that the seam is **named regions**, not a bigger file.
 
+### The integration contract (Jorge, 2026-08-23) — settled before the design session
+
+Pregonero is an **Electron app** (Electron 41, Vite, React, TypeScript), which is Chromium with Node
+attached. So it *could* host Muralista's page in a `BrowserWindow`, serve it over localhost to get a
+secure context for the File System Access API, place the output window on the projector display by
+itself, and shell out to Bombista's CLI from the main process. That is packaging, and it removes the
+terminal, the `python3 -m http.server` step and the drag-the-window-to-the-second-display dance.
+
+**None of that may change the contract, which Jorge states as: Muralista still writes a file and
+Pregonero still reads it.** Four rules keep it honest:
+
+- **The handoff carries no data, only the fact that a file changed.** The moment a signal carries the
+  mapping itself, there are two tools sharing state and the file has stopped being the truth.
+- **The mechanism is Pregonero watching the file, not a protocol.** Muralista saves; Pregonero
+  notices and re-reads. Nothing to keep in sync, and it works whether Muralista runs inside
+  Pregonero's window, in a plain Chrome tab, or on another machine with the folder synced. Bombista
+  gets the same treatment and never learns Pregonero exists — the right relationship for a CLI.
+  Muralista already knows how to write into a folder the user chose, so the plumbing exists.
+- **"Pass control back" is courtesy, not architecture.** A *Done* button that closes Muralista and
+  brings Pregonero forward is convenience; the reload already happened because the file changed. And
+  **Muralista must stay fully usable without it** — if the bridge is absent, the button is absent and
+  you export as today. A tool that only works inside another tool is the coupling in a costume.
+- **Re-reading on change is right before doors and wrong mid-song** (decided by Jorge). Pregonero
+  must not reload the world under itself while performing: either auto-reload only when not in a
+  show, or surface "reload available" and let the operator choose.
+
+The slide to watch for is from *Pregonero launches Muralista* to *they share state at runtime*, which
+is exactly the shape the desk-tool cut rejected.
+
 ### The media model
 
 **Decided 2026-08-23, and shipping in v1.** No media is part of the app, at build time or at

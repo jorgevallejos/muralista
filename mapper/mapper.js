@@ -52,7 +52,13 @@ const PREVIEW_H = 900;
 // carries no text fields, which is exactly true of it. The bump exists
 // because a v6 file will NOT open correctly in an older build - it would
 // read a layer of an unknown type and paint the test pattern instead.
-const PROJECT_VERSION = 6;
+// v7 (2026-08-23) ADDED the text layer's `aspect` field - the manual half of
+// letter proportions, see TEXT ASPECT below. A v6 text layer defaults to 1.0,
+// which is "automatic only" and is exactly what a v6 file meant, except that
+// v6 had no automatic half either: opening a v6 mapping in this build makes
+// its text stop inheriting the quad's stretch, which is the whole point of
+// the change and is not something migration should try to preserve.
+const PROJECT_VERSION = 7;
 
 function emptyProject() {
   return {
@@ -133,11 +139,12 @@ function migrateProject(obj) {
     delete layer.beatMode;
     delete layer.bpm;
     if (layer.type === "beat") layer.type = "pattern";
-    // v6: a text layer's own fields, defaulted and clamped here and nowhere
-    // else. An import is arbitrary JSON - a role of 42 or a negative size
-    // would otherwise reach the renderer and paint something inexplicable at
-    // a projector. A layer of any other type is left exactly as it is: no
-    // older project gains a field it never had.
+    // v6, and v7's `aspect` with it: a text layer's own fields, defaulted and
+    // clamped here and nowhere else. An import is arbitrary JSON - a role of
+    // 42, a negative size or an aspect of 0 would otherwise reach the renderer
+    // and paint something inexplicable at a projector (an aspect of 0 in
+    // particular divides the layout box to nothing). A layer of any other type
+    // is left exactly as it is: no older project gains a field it never had.
     if (layer.type === "text") Object.assign(layer, sanitizeTextLayer(layer));
     return Object.assign({}, surface, { layer });
   });
@@ -219,16 +226,44 @@ const TEXT_ALIGNMENTS = ["left", "center", "right"];
 // This value is the MAXIMUM. Auto-fit (fitTextLayer) only ever goes below
 // it, so the longest line in the catalogue cannot overflow at any setting
 // while short lines still get to be big.
+//
+// It stays a fraction of the quad's HEIGHT under the aspect correction below,
+// which only ever changes the layout box's width: a font size is a vertical
+// measure, and the box the correction leaves behind is still UNIT_SIZE tall.
+// So no tuned size shifts because letter proportions were adjusted.
 const TEXT_MAX_SIZE_MIN = 0.02;
 const TEXT_MAX_SIZE_MAX = 0.6;
 // Outline width as a fraction of the FITTED font size (written out in `em`),
 // so the stroke-to-glyph ratio survives auto-fit shrinking the text.
 const TEXT_OUTLINE_WIDTH_MAX = 0.25;
 
+// LETTER PROPORTIONS, MANUAL HALF. Multiplies the width of the letters on top
+// of whatever the automatic correction worked out: 1.0 is "automatic only",
+// 2.0 is letters twice as wide as natural, 0.5 half. Applied as a divisor of
+// the layout width factor - see textLayoutWidthFactor() in the painting half.
+//
+// WHY A HUMAN CONTROL EXISTS AT ALL, given that the automatic half is exact
+// arithmetic: no formula knows the surface's true physical shape, because
+// this tool only ever sees the QUAD, never the wall it lands on. A quad on an
+// angled wall is a trapezoid on purpose - the warp is compensating for where
+// the projector happens to stand - so the drawn shape and the physical shape
+// are different things, and only one of them is in the file. The person
+// authoring can see the other one, through the camera.
+//
+// That is also this tool's whole thesis, not a concession to it: closing the
+// loop against the wall beats computing a correction and applying it blind.
+// The number behind that claim - a careful automatic calibration, accurate to
+// its own inputs, lost to a hand calibration by three percent on 2026-08-22 -
+// is written up in project-context.md. Any future accuracy work here belongs
+// in making the loop tighter, not in measuring the quad harder.
+const TEXT_ASPECT_MIN = 0.5;
+const TEXT_ASPECT_MAX = 2;
+
 const TEXT_LAYER_DEFAULTS = {
   text: "",
   role: "lyrics",
   maxSize: 0.2,
+  aspect: 1,
   align: "center",
   color: "#ffffff",
   outline: true,
@@ -257,6 +292,7 @@ function sanitizeTextLayer(layer) {
     text: typeof src.text === "string" ? src.text : TEXT_LAYER_DEFAULTS.text,
     role: TEXT_ROLES.includes(src.role) ? src.role : TEXT_LAYER_DEFAULTS.role,
     maxSize: clampNumber(src.maxSize, TEXT_MAX_SIZE_MIN, TEXT_MAX_SIZE_MAX, TEXT_LAYER_DEFAULTS.maxSize),
+    aspect: clampNumber(src.aspect, TEXT_ASPECT_MIN, TEXT_ASPECT_MAX, TEXT_LAYER_DEFAULTS.aspect),
     align: TEXT_ALIGNMENTS.includes(src.align) ? src.align : TEXT_LAYER_DEFAULTS.align,
     color: isHexColor(src.color) ? src.color : TEXT_LAYER_DEFAULTS.color,
     outline: src.outline !== false,
@@ -2898,6 +2934,41 @@ function buildTextLayerControls(container, surface, layer) {
     "A ceiling, not a size: text that would not fit is shrunk below this until it does, so it cannot overflow the shape at any setting. Short lines get the full value.";
   container.appendChild(sizeHint);
 
+  // Letter width. The manual half of the aspect correction, and the half that
+  // matters - see TEXT_ASPECT_MIN in STATE for why a human control exists
+  // when the automatic half is exact arithmetic. Commits on 'input' like
+  // everything else here, because "adjust while watching the wall" is the
+  // entire point of it and a value that only lands on mouse-up cannot be
+  // tuned by eye.
+  const aspectRow = document.createElement("div");
+  aspectRow.className = "layer-field";
+  const aspectLabel = document.createElement("label");
+  aspectLabel.textContent = "Letter width";
+  aspectLabel.setAttribute("for", "layer-aspect-input");
+  const aspectInput = document.createElement("input");
+  aspectInput.type = "range";
+  aspectInput.id = "layer-aspect-input";
+  aspectInput.min = String(TEXT_ASPECT_MIN);
+  aspectInput.max = String(TEXT_ASPECT_MAX);
+  aspectInput.step = "0.01";
+  aspectInput.value = String(fields.aspect);
+  const aspectValue = document.createElement("span");
+  aspectValue.id = "layer-aspect-value";
+  aspectValue.className = "layer-opacity-value";
+  aspectValue.textContent = formatTextAspect(fields.aspect);
+  aspectInput.addEventListener("input", () => {
+    aspectValue.textContent = formatTextAspect(Number(aspectInput.value));
+    setLayerField(surface.id, "aspect", Number(aspectInput.value));
+  });
+  aspectRow.append(aspectLabel, aspectInput, aspectValue);
+  container.appendChild(aspectRow);
+
+  const aspectHint = document.createElement("p");
+  aspectHint.className = "layer-hint";
+  aspectHint.textContent =
+    "The shape already corrects itself: a wide strip lays the words out wide instead of fattening them, so ×1.00 is normal letters. This is the last few percent no formula can know — the tool sees the quad you drew, not the wall it lands on. Set it by eye, with the projector on.";
+  container.appendChild(aspectHint);
+
   // Horizontal alignment. There is no vertical control: text is centred
   // vertically, always.
   const alignRow = document.createElement("div");
@@ -2983,6 +3054,13 @@ function formatTextSize(fraction) {
   return `${(fraction * 100).toFixed(1)}%`;
 }
 
+// A multiplier, shown as one. Not a percentage: a percentage invites reading
+// it as "how wide the letters are", when what it actually says is "how much
+// wider than the shape already worked out".
+function formatTextAspect(multiplier) {
+  return `\u00d7${multiplier.toFixed(2)}`;
+}
+
 // Refreshes field values without rebuilding the DOM (see renderLayerPanel).
 // Skips whichever field is currently focused so an in-progress edit isn't
 // clobbered by the re-render its own commit triggered.
@@ -3025,6 +3103,11 @@ function updateTextLayerPanelValues(container, layer, active) {
   if (sizeInput && active !== sizeInput) sizeInput.value = String(fields.maxSize);
   const sizeValue = container.querySelector("#layer-maxsize-value");
   if (sizeValue) sizeValue.textContent = formatTextSize(fields.maxSize);
+
+  const aspectInput = container.querySelector("#layer-aspect-input");
+  if (aspectInput && active !== aspectInput) aspectInput.value = String(fields.aspect);
+  const aspectValue = container.querySelector("#layer-aspect-value");
+  if (aspectValue) aspectValue.textContent = formatTextAspect(fields.aspect);
 
   const alignSelect = container.querySelector("#layer-align-select");
   if (alignSelect && active !== alignSelect) alignSelect.value = fields.align;
@@ -3616,14 +3699,19 @@ function renderOutputSurface(container, surface, w, h) {
   }
 
   entry.wrapper.style.transform = transform;
-  renderLayer(surface, entry);
+  renderLayer(surface, entry, w, h);
 }
 
 // Renders (or reconciles) the content that lives inside a surface's warped
 // wrapper. Only recreates the content element when layer.type or layer.src
 // changed since the last render; otherwise just refreshes cheap properties
 // (opacity) on the existing element so playback state survives.
-function renderLayer(surface, entry) {
+//
+// `w`/`h` are the output frame in real pixels, and they are here for exactly
+// one reason: the text layer's aspect correction needs real lengths, not
+// normalized ones. Video and image layers do not read them and go on filling
+// their quads exactly as they always have - the stretch is theirs to keep.
+function renderLayer(surface, entry, w, h) {
   const layer = surface.layer || { type: "pattern", src: null, opacity: 1 };
   // Reconcile against the URL actually mounted, not the name in the project.
   // The name can stay put while the URL underneath it changes - a media folder
@@ -3648,14 +3736,15 @@ function renderLayer(surface, entry) {
   }
 
   // A text layer has no src to reconcile against, so it gets its own key.
-  // Editing the content or dragging the size slider must re-dress and re-fit
-  // the mounted element - but must NOT rebuild it, for the same reason a
-  // video is not rebuilt on a nudge: churn at a projector is the thing this
-  // reconciler exists to avoid.
+  // Editing the content, dragging the size or aspect slider, or reshaping the
+  // quad under it must re-dress and re-fit the mounted element - but must NOT
+  // rebuild it, for the same reason a video is not rebuilt on a nudge: churn
+  // at a projector is the thing this reconciler exists to avoid.
   if (layer.type === "text" && entry.contentEl) {
-    const nextTextKey = textLayerKey(layer);
+    const boxWidth = textLayoutBoxWidth(surface, sanitizeTextLayer(layer), w, h);
+    const nextTextKey = textLayerKey(layer, boxWidth);
     if (entry.textKey !== nextTextKey) {
-      applyTextLayer(entry.contentEl, layer);
+      applyTextLayer(entry.contentEl, layer, boxWidth);
       entry.textKey = nextTextKey;
     }
   }
@@ -3921,13 +4010,117 @@ const TEXT_INSET = 0.06;
 const TEXT_MIN_PX = 8;
 const TEXT_FIT_ITERATIONS = 14; // binary search over the size range; ~0.05px resolution
 
+// =========================================================================
+// TEXT ASPECT (why text alone does not inherit the quad's stretch)
+// =========================================================================
+// Every surface draws into a fixed UNIT_SIZE square that matrix3d maps onto
+// four corners, so a quad wider than it is tall fattens whatever is in it.
+// For video and images that stretch is deliberate and stays - a stretched pig
+// is a style. For text it is a defect: a wide strip fattens the glyphs and a
+// tall column squeezes them, and the lyric is the one thing an audience is
+// obliged to read. So text, and only text, gets the stretch taken back out.
+//
+// HOW, AND WHY THIS PARTICULAR HOW. The counter-correction resizes the text's
+// LAYOUT BOX rather than scaling the finished text: `.layer-text` is laid out
+// W wide by UNIT_SIZE tall, where W is the quad's stretch in whole pixels, and
+// carries scaleX(UNIT_SIZE/W) from its own top-left - which maps that box onto
+// the unit square exactly. Both approaches paint the same picture on the wall,
+// but only this one keeps THE GUARANTEE STRUCTURAL: auto-fit measures
+// scrollWidth/scrollHeight inside the layout box, the transform is a bijection
+// from that box onto the unit square, and the unit square IS the quad - so "it
+// fits here" still means "it fits the quad" at every shape and every slider
+// setting, with nothing to remember and no rule to keep. Counter-scaling the
+// finished text instead would have left the fit measuring untransformed
+// geometry, and the containment argument would then have needed a correction
+// factor threaded through it by hand - exactly the kind of invariant that
+// survives review and dies six months later.
+//
+// The inset goes with it: horizontal padding is a fraction of the box rather
+// than of the unit square, so after the counter-scale the margin off the
+// quad's edge is TEXT_INSET on all four sides, the same 6% it was before any
+// of this existed.
+
+// Sanity bounds on k. A real projector never lands a 20:1 quad, and past
+// these the layout box stops being a place text could live at all - a k of
+// 0.001 is a box a few pixels wide, where nothing fits at any font size and
+// the binary search would just report the floor. Clamping keeps a degenerate
+// or mistyped quad from painting nothing rather than painting something
+// wrong, which is the more debuggable failure at a projector.
+const TEXT_WIDTH_FACTOR_MIN = 0.05;
+const TEXT_WIDTH_FACTOR_MAX = 20;
+
+// Length of one quad edge IN REAL OUTPUT PIXELS. This conversion is the whole
+// trap: surface.corners are normalized 0-1 over an output frame that is NOT
+// square (1280x800 on the studio rig), so a ratio taken straight from
+// normalized coordinates is wrong by the frame's own aspect - and wrong by a
+// factor of 1.6 looks almost right, which is worse than looking broken.
+function quadEdgeLength([ax, ay], [bx, by], frameW, frameH) {
+  return Math.hypot((bx - ax) * frameW, (by - ay) * frameH);
+}
+
+// How much wider than tall the quad is, in real pixels: the factor by which
+// mapping the unit square onto it fattens the glyphs.
+//
+// A quad on an angled wall is a trapezoid ON PURPOSE - the warp is
+// compensating for the projector's position - so opposite edges genuinely
+// differ and there is no single true width. The mean of the two horizontals
+// against the mean of the two verticals is a sane summary and this claims no
+// more precision than that; the manual slider is where the rest of the
+// judgement lives, because the rest of the judgement is not arithmetic.
+// Corner order is [TL, TR, BR, BL], as everywhere else.
+function quadStretch(corners, frameW, frameH) {
+  const [tl, tr, br, bl] = corners;
+  const horizontal =
+    (quadEdgeLength(tl, tr, frameW, frameH) + quadEdgeLength(bl, br, frameW, frameH)) / 2;
+  const vertical =
+    (quadEdgeLength(tl, bl, frameW, frameH) + quadEdgeLength(tr, br, frameW, frameH)) / 2;
+  if (!(horizontal > 0) || !(vertical > 0)) return 1;
+  return horizontal / vertical;
+}
+
+// The width of the text's layout box, IN WHOLE PIXELS: the automatic
+// correction divided by the manual one, times UNIT_SIZE. Aspect 1.0 leaves the
+// automatic result alone; aspect 2.0 halves the box, which counter-scaled back
+// out paints letters twice as wide.
+//
+// A WHOLE NUMBER, and that is not cosmetic. scrollWidth/clientWidth are
+// integers - Chrome rounds them - while the box width and the inset that come
+// out of this arithmetic are not. Let the fit compare an integer scrollWidth
+// against a fractional available width and the text test fails by a fraction
+// of a pixel AT EVERY FONT SIZE, so the binary search finds nothing that fits
+// and drops the whole line to the 8px floor in a quad with room to spare. That
+// is a silent, plausible-looking failure - the text is simply tiny - and it
+// cost a debugging round on 2026-08-23. Rounding here makes every quantity the
+// fit compares an integer, the way it was when the box was always 1000 wide.
+//
+// The counter-scale is then derived from the ROUNDED width (see
+// applyTextLayer), so the box still lands exactly on the unit square and the
+// containment argument survives the rounding intact.
+function textLayoutBoxWidth(surface, fields, frameW, frameH) {
+  const raw = quadStretch(surface.corners, frameW, frameH) / fields.aspect;
+  const k = !isFinite(raw) || raw <= 0
+    ? 1
+    : Math.min(TEXT_WIDTH_FACTOR_MAX, Math.max(TEXT_WIDTH_FACTOR_MIN, raw));
+  return Math.max(1, Math.round(UNIT_SIZE * k));
+}
+
+// The inset, in whole pixels, on a layout box of the given width. Horizontal
+// only - the vertical inset is TEXT_INSET * UNIT_SIZE and never moves, because
+// the box is always UNIT_SIZE tall.
+function textLayoutInsetX(boxWidth) {
+  return Math.round(TEXT_INSET * boxWidth);
+}
+
 function createTextLayerElement(layer, surface) {
   const box = document.createElement("div");
   box.className = "layer-box";
 
   const text = document.createElement("div");
   text.className = "layer-text";
-  text.style.padding = `${TEXT_INSET * UNIT_SIZE}px`;
+  // Size, padding and the counter-scale are all applyTextLayer's - they all
+  // depend on the layout width factor, which depends on the quad, which this
+  // factory has no business reading. The stylesheet's unstretched defaults
+  // stand for the instant between mounting and dressing.
 
   const inner = document.createElement("div");
   inner.className = "layer-text-inner";
@@ -3951,9 +4144,16 @@ function createTextLayerElement(layer, surface) {
 }
 
 // Writes every text field onto an already-mounted element and re-runs the
-// fit. Called on creation and whenever a text field changes (see renderLayer)
-// - the element is never rebuilt for a colour change, only re-dressed.
-function applyTextLayer(box, layer) {
+// fit. Called on creation and whenever a text field OR the layout width
+// factor changes (see renderLayer) - the element is never rebuilt for a
+// colour change or a corner drag, only re-dressed.
+//
+// `boxWidth` is the layout box's width in whole pixels (see
+// textLayoutBoxWidth): the box is that wide, UNIT_SIZE tall, and counter-scaled
+// back onto the unit square. Sizing the box and fitting into it happen
+// together, here, on purpose - a box resized without a refit is a box the text
+// no longer fits.
+function applyTextLayer(box, layer, boxWidth) {
   const fields = sanitizeTextLayer(layer);
   const text = box.querySelector(".layer-text");
   const inner = box.querySelector(".layer-text-inner");
@@ -3961,6 +4161,19 @@ function applyTextLayer(box, layer) {
   if (!text || !inner) return;
 
   note.hidden = fields.text.trim() !== "";
+
+  // The stretch, taken back out. The counter-scale is UNIT_SIZE/boxWidth rather
+  // than 1/k, so it is computed from the width the box ACTUALLY HAS after
+  // rounding: from the box's own top-left it maps [0, boxWidth] onto
+  // [0, UNIT_SIZE] exactly, and the layout box covers the unit square - and
+  // therefore the quad - with nothing left over and nothing rounded away.
+  text.style.width = `${boxWidth}px`;
+  text.style.height = `${UNIT_SIZE}px`;
+  // The horizontal inset is a fraction of the box, so it lands back at
+  // TEXT_INSET of the quad once the counter-scale has been applied. Whole
+  // pixels, for the reason given on textLayoutBoxWidth.
+  text.style.padding = `${TEXT_INSET * UNIT_SIZE}px ${textLayoutInsetX(boxWidth)}px`;
+  text.style.transform = `scaleX(${UNIT_SIZE / boxWidth})`;
 
   // textContent, not innerHTML: the content is a string typed by a person and
   // is never markup. `white-space: pre-wrap` in the stylesheet is what makes
@@ -3984,18 +4197,20 @@ function applyTextLayer(box, layer) {
     inner.style.textShadow = "none";
   }
 
-  fitTextLayer(text, inner, fields.maxSize);
+  fitTextLayer(text, inner, fields.maxSize, boxWidth);
 }
 
 // AUTO-FIT: shrink until it fits, never grow past the maximum.
 //
-// Measured in the UNWARPED content box - the 1:1 UNIT_SIZE space before
-// matrix3d - which is the natural place for it and the reason the guarantee
-// holds without any geometry bookkeeping. The box is the same UNIT_SIZE
-// square whatever shape the quad is, so a fit computed once stays correct
-// when the quad is redrawn, moved, keystoned or the output window resized:
-// the transform rescales the already-fitted text along with everything else
-// in the box. Nothing here reads window dimensions, and nothing needs to.
+// Measured in the UNWARPED content box - the space before matrix3d - which is
+// the natural place for it and the reason the guarantee holds without any
+// geometry bookkeeping. That box is UNIT_SIZE*k by UNIT_SIZE, and scaleX(1/k)
+// maps it exactly onto the unit square the homography consumes, so fitting
+// here is still fitting the quad however the quad is shaped. A quad redrawn
+// at a different SIZE does not change k at all - only its proportions can -
+// so the old property survives untouched: rescale the quad and the transform
+// rescales the already-fitted text with it, no refit involved. Nothing here
+// reads window dimensions; k is handed in already computed.
 //
 // Fitting is monotonic in font size (a bigger size never needs fewer lines),
 // so a binary search over [TEXT_MIN_PX, max] converges on the largest size
@@ -4003,7 +4218,7 @@ function applyTextLayer(box, layer) {
 // a single word longer than the box cannot wrap at all - it is scrollWidth
 // that catches that one, and the reason word-level wrapping can stay the
 // rule instead of breaking words mid-glyph-cluster.
-function fitTextLayer(text, inner, maxSize) {
+function fitTextLayer(text, inner, maxSize, boxWidth) {
   const maxPx = maxSize * UNIT_SIZE;
   if (!inner.textContent) {
     inner.style.fontSize = `${maxPx}px`;
@@ -4013,10 +4228,18 @@ function fitTextLayer(text, inner, maxSize) {
   // The inset box, in real numbers. clientWidth/clientHeight INCLUDE padding,
   // so the inset comes off explicitly - measuring against them raw would fit
   // the text to the full quad and hand back exactly the edge-touching the
-  // inset exists to prevent.
-  const insetPx = TEXT_INSET * UNIT_SIZE;
-  const availW = text.clientWidth - 2 * insetPx;
-  const availH = text.clientHeight - 2 * insetPx;
+  // inset exists to prevent. Both are LAYOUT measurements, read before the
+  // counter-scale, which is why the horizontal inset is the box's own and not
+  // the unit square's.
+  //
+  // Every term here is a whole number - clientWidth and clientHeight because
+  // Chrome rounds them, the insets because they are rounded at the same place
+  // the padding is - so the comparisons below meet the integer scrollWidth on
+  // its own terms. See textLayoutBoxWidth for what happens when they do not.
+  const insetX = textLayoutInsetX(boxWidth);
+  const insetY = TEXT_INSET * UNIT_SIZE;
+  const availW = text.clientWidth - 2 * insetX;
+  const availH = text.clientHeight - 2 * insetY;
 
   const fits = (px) => {
     inner.style.fontSize = `${px}px`;
@@ -4036,13 +4259,20 @@ function fitTextLayer(text, inner, maxSize) {
   return lo;
 }
 
-// The text fields that, when any of them changes, mean the mounted element
-// has to be re-dressed and re-fitted. Deliberately excludes opacity, which
-// renderLayer already refreshes on every render and which cannot change the
-// fit.
-function textLayerKey(layer) {
+// Everything that, when it changes, means the mounted element has to be
+// re-dressed and re-fitted. Deliberately excludes opacity, which renderLayer
+// already refreshes on every render and which cannot change the fit.
+//
+// The layout box's width is in here alongside the fields, and it is the one
+// entry that is not a field: it is geometry, so a corner drag that changes the
+// quad's PROPORTIONS now re-fits, where before nothing about the quad ever
+// could. A drag that only moves or resizes the quad leaves the box width where
+// it was and still costs nothing - which is the old no-refit property,
+// unchanged. Being a whole number, it also cannot churn on floating-point
+// noise in the mean-edge arithmetic.
+function textLayerKey(layer, boxWidth) {
   const f = sanitizeTextLayer(layer);
-  return JSON.stringify([f.text, f.maxSize, f.align, f.color, f.outline, f.outlineWidth]);
+  return JSON.stringify([f.text, f.maxSize, f.align, f.color, f.outline, f.outlineWidth, boxWidth]);
 }
 
 // 1000x1000 canvas: numbered grid + brighter center crosshair + the

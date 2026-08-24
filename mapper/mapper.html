@@ -178,9 +178,13 @@
          raise, so the projector's lit rectangle is visible while the camera
          backdrop's calibration corners are placed. -->
     <div id="output-white" class="output-white" hidden></div>
-    <!-- Countdown plate: ABOVE the white field so it is legible on it. It is
-         removed outright before the second capture - neither captured frame
-         may contain it, which is what the settle after it exists for. -->
+    <!-- Countdown plate, and the dark plate: one element, because they are one
+         thing - what the wall shows while somebody walks into place. Opaque and
+         above the white field, so it covers both the plate and the mapped
+         content, and the sequence can swap what is underneath without a frame
+         of video reaching the wall. Removed outright before the second capture:
+         neither captured frame may contain it, which is what the settle after
+         it exists for. -->
     <div id="output-countdown" class="output-countdown" hidden></div>
     <!-- Identify overlay: unwarped screen-space labels at each surface's
          centroid, shown briefly in response to a broadcast 'identify'. -->

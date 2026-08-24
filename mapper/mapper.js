@@ -2296,6 +2296,87 @@ function simplifyRingToRange(contour, minPts, maxPts) {
   return best;
 }
 
+// =========================================================================
+// TAKING THE CAMERA'S OWN BRIGHTNESS OUT OF THE COMPARISON
+// =========================================================================
+// A SHADOW IS A LOCAL DARKENING; AUTO EXPOSURE IS A GLOBAL GAIN. Two
+// photographs of the same wall taken ten seconds apart are almost never at the
+// same brightness - the camera opens up while the plate is down for the
+// countdown and has not finished closing again when the second one is taken -
+// and until v1.2.4 that difference went straight into the signed difference
+// and darkened every pixel at once. Measured with a simulated auto exposure:
+// gain 1.30 at frame A against 0.59 at frame B, the whole field reading as
+// changed, and the failsafe refusing every time. Locking the camera's exposure
+// made it work at any latency, which made a camera setting a PRECONDITION for
+// the feature. This is that precondition removed.
+//
+// Estimate what the camera did, divide it out, then difference as before.
+//
+// FROM THE BRIGHT END, NOT THE MIDDLE. The obvious robust statistic is the
+// median, and a median breaks down once the darkened part covers half the lit
+// rectangle. But the thing being estimated is the brightness of the PLATE, and
+// everything this gesture is looking for is DARKER than the plate - a shadow,
+// an object, a countdown that should not be there. So the estimate should come
+// from as far up the bright side as noise allows, where the contaminant never
+// is. The 90th percentile holds while nine tenths of the wall is covered,
+// where the median gives up at half.
+//
+// That margin is what keeps the failsafe's teeth, which a median would have
+// pulled. With a median, something opaque covering 70% of the field drags the
+// estimate onto the covered part, normalises it back to "correct", and the
+// tool traces nothing instead of refusing. Taken from the bright end the
+// estimate stays on the uncovered plate, the 70% still reads as darkened, and
+// the failsafe fires - which is the answer that sends somebody to go and look
+// at their projector. Everything between the failsafe's 50% and this
+// estimator's 90% is refused rather than quietly explained away.
+//
+// The one thing no percentile can see through is a plate that went dark
+// EVERYWHERE by the same factor: that is arithmetically indistinguishable from
+// the camera stopping down, in two frames that carry nothing else. It comes
+// back as "nothing traced" rather than a wrong shape, which is the safe way to
+// be unable to tell.
+const ADOPT_GAIN_PERCENTILE = 0.9;
+
+// A gain this far from 1 is not an exposure adjustment, it is a broken frame,
+// and dividing by it would turn noise into a silhouette.
+const ADOPT_GAIN_MIN = 0.125;
+const ADOPT_GAIN_MAX = 8;
+
+// A frame whose plate has clipped carries no information about how much
+// brighter it "really" is - 255 is 255 whether the true value was 260 or 600 -
+// so a ratio taken across a clipped percentile is a number made up out of the
+// clamp. Measured: a plate at 220 with the camera 1.6x and 2.2x brighter both
+// estimate as 1.159, which is the clamp talking. When either side is clipped
+// the honest answer is to not normalise at all.
+const ADOPT_CLIPPED = 255;
+
+// The value at which `p` of the population sits at or below, straight off a
+// 256-bin histogram. Exact, and cheaper than sorting 57,600 samples.
+function percentileFromHistogram(hist, count, p) {
+  if (count <= 0) return 0;
+  const target = count * p;
+  let seen = 0;
+  for (let v = 0; v < 256; v++) {
+    seen += hist[v];
+    if (seen >= target) return v;
+  }
+  return 255;
+}
+
+// How much brighter frame B is than frame A, as one number. 1 means the camera
+// did not move. Falls back to 1 - no normalisation at all - whenever the
+// answer is not usable, which is the conservative direction: it leaves the
+// comparison exactly as v1.2.3 did it.
+function estimateGlobalGain(histA, histB, litCount) {
+  const a = percentileFromHistogram(histA, litCount, ADOPT_GAIN_PERCENTILE);
+  const b = percentileFromHistogram(histB, litCount, ADOPT_GAIN_PERCENTILE);
+  if (!(a > 0) || !(b > 0)) return 1;
+  if (a >= ADOPT_CLIPPED || b >= ADOPT_CLIPPED) return 1; // see ADOPT_CLIPPED
+  const gain = b / a;
+  if (!isFinite(gain) || gain < ADOPT_GAIN_MIN || gain > ADOPT_GAIN_MAX) return 1;
+  return gain;
+}
+
 // A -> B, in normalized OUTPUT space. Everything above, wired together.
 //
 // Returns { ring } on success, or { reason } saying which way it failed -
@@ -2306,39 +2387,69 @@ function shadowRingFromFrames(frameA, frameB, threshold, H) {
   if (!frameA || !frameB || frameA.w !== frameB.w || frameA.h !== frameB.h) return { reason: "nothing" };
   const { w, h } = frameA;
 
-  const mask = new Uint8Array(w * h);
-  // Counted over the LIT RECTANGLE rather than the whole camera frame: the
-  // camera sees the room as well as the wall, and a person walking about
-  // outside the projector's throw is not what this is measuring. H maps
-  // normalized camera space onto the unit output square, so "inside the lit
-  // rectangle" is just "lands in [0,1] on both axes" - the same mapping the
-  // traced ring goes through a few lines below, asked a cheaper question.
-  let lit = 0;
-  let darkenedInsideLit = 0;
+  // Pass one: which pixels are inside the LIT RECTANGLE, and how bright each
+  // photograph is there. Everything downstream is measured over that rectangle
+  // rather than the whole camera frame - the camera sees the room as well as
+  // the wall, and somebody walking about outside the projector's throw is not
+  // what this is measuring. H maps normalized camera space onto the unit
+  // output square, so "inside the lit rectangle" is just "lands in [0,1] on
+  // both axes" - the same mapping the traced ring goes through further down,
+  // asked a cheaper question. The answer is kept rather than recomputed,
+  // because pass two needs it again.
+  const lit = new Uint8Array(w * h);
+  const histA = new Uint32Array(256);
+  const histB = new Uint32Array(256);
+  let litCount = 0;
   for (let y = 0, i = 0; y < h; y++) {
     for (let x = 0; x < w; x++, i++) {
-      // SIGNED, on purpose: a shadow is a DROP in light, so only pixels that
-      // got darker count. Taking the signed difference discards everything
-      // that got brighter for free - which is most of what the camera's auto
-      // exposure does when a body walks into a bright frame.
-      const darker = frameA.luma[i] - frameB.luma[i] > threshold;
-      mask[i] = darker ? 1 : 0;
       const u = applyHomography(H, [(x + 0.5) / w, (y + 0.5) / h]);
       if (!u || u[0] < 0 || u[0] > 1 || u[1] < 0 || u[1] > 1) continue;
-      lit++;
-      if (darker) darkenedInsideLit++;
+      lit[i] = 1;
+      litCount++;
+      histA[frameA.luma[i]]++;
+      histB[frameB.luma[i]]++;
     }
   }
 
-  // The failsafe. Before anything is traced, because a shape traced out of a
-  // dirty plate is worse than no shape at all.
-  const darkenedFraction = lit > 0 ? darkenedInsideLit / lit : 0;
+  const gain = estimateGlobalGain(histA, histB, litCount);
+  // Whether the estimate had to give up because a plate was blown out. Not a
+  // refusal on its own - two frames that clip the SAME way still difference
+  // perfectly well - but if the comparison goes on to fail, this is almost
+  // always why, and it is the one cause with a remedy on the camera rather
+  // than on the wall.
+  const clipped =
+    percentileFromHistogram(histA, litCount, ADOPT_GAIN_PERCENTILE) >= ADOPT_CLIPPED ||
+    percentileFromHistogram(histB, litCount, ADOPT_GAIN_PERCENTILE) >= ADOPT_CLIPPED;
+
+  const mask = new Uint8Array(w * h);
+  let darkenedInsideLit = 0;
+  for (let i = 0; i < mask.length; i++) {
+    // SIGNED, on purpose: a shadow is a DROP in light, so only pixels that got
+    // darker count, and everything that got brighter is discarded for free.
+    //
+    // NORMALISED, since v1.2.4: frame B is divided back onto frame A's scale
+    // before the comparison, so what is measured here is how much darker a
+    // pixel got THAN THE REST OF THE FRAME. The threshold keeps its meaning -
+    // it is still luma units on the plate's own scale - and the slider that
+    // sets it still means what it said.
+    const darker = frameA.luma[i] - frameB.luma[i] / gain > threshold;
+    mask[i] = darker ? 1 : 0;
+    if (darker && lit[i]) darkenedInsideLit++;
+  }
+
+  // The failsafe, now AFTER normalisation. It has stopped being an
+  // auto-exposure detector - that is the one thing it should never have had to
+  // be - and is back to what it was for: the plate was not clean. Anything
+  // that survives having the global gain divided out of it is a real local
+  // change, and half the lit rectangle changing locally is not a person
+  // standing in front of a wall.
+  const darkenedFraction = litCount > 0 ? darkenedInsideLit / litCount : 0;
   if (darkenedFraction > ADOPT_MAX_DARKENED_FRACTION) {
-    return { reason: "dirty-plate", darkenedFraction };
+    return { reason: "dirty-plate", darkenedFraction, gain, clipped };
   }
 
   const blob = largestBlob(mask, w, h);
-  if (!blob) return { reason: "nothing" };
+  if (!blob) return { reason: "nothing", gain, clipped };
 
   // Hull first, thin second. RDP only ever removes points, and removing a
   // vertex from a convex polygon leaves a convex polygon, so what comes out of
@@ -2356,7 +2467,7 @@ function shadowRingFromFrames(frameA, frameB, threshold, H) {
     const p = applyHomography(H, [(x + 0.5) / w, (y + 0.5) / h]);
     if (p) ring.push(p);
   }
-  return ring.length >= SHAPE_MIN_POINTS ? { ring } : { reason: "nothing" };
+  return ring.length >= SHAPE_MIN_POINTS ? { ring, gain, clipped } : { reason: "nothing", gain, clipped };
 }
 
 function setAdoptStatus(text) {
@@ -2459,14 +2570,13 @@ async function adoptShapeBoundaries(shapeId) {
     const result = shadowRingFromFrames(frameA, frameB, adoptThreshold, H);
     if (result.reason === "dirty-plate") {
       const pct = Math.round(result.darkenedFraction * 100);
-      // Two causes, and the percentage does not tell them apart, so name both.
-      // Near 100% is almost always the camera rather than the wall: the plate
-      // is off for the whole countdown now, and an auto exposure that opened
-      // up in the dark and has not finished closing again darkens every pixel
-      // at once. Locking the exposure is the fix, and it is one the person at
-      // the wall can actually apply.
+      // The camera's own brightness has already been divided out by the time
+      // this fires (see estimateGlobalGain), so it is no longer a suspect and
+      // is not offered as one. What is left is the wall.
       setAdoptStatus(
-        `The two photographs do not match - ${pct}% of the lit field went darker, which is the whole plate rather than something standing in front of it. Nothing traced. Either something else was being projected, or the camera's exposure changed between the two shots: lock the camera's exposure and try again.`
+        result.clipped
+          ? `The first photograph was blown out - the plate came back pure white, so there is no brightness left in it to compare against and ${pct}% of the field reads as darker. Nothing traced. Turn the camera's exposure down, or lock it, and try again.`
+          : `The plate was not clean - ${pct}% of the lit field went darker relative to the rest of it, which is something covering the projection rather than a thing standing in front of it. Nothing traced. Check that nothing else is being projected onto that wall, and try again.`
       );
       return;
     }
@@ -3488,7 +3598,7 @@ function buildAdoptBoundariesControls(container, shape) {
   const comfort = document.createElement("p");
   comfort.className = "layer-hint";
   comfort.textContent =
-    "The wall goes dark while you walk in and lights again for the second photograph, so you are not standing in a white field for the whole count. If traces come back empty or the failsafe fires, lock the camera's exposure — the Elgato Facecam supports it — so the two photographs are taken at the same brightness.";
+    "The wall goes dark while you walk in and lights again for the second photograph, so you are not standing in a white field for the whole count. The camera's exposure moving between the two photographs is corrected for, so auto exposure is fine; locking it (the Elgato Facecam can) is still the steadier setting if you have a moment.";
   container.appendChild(comfort);
 
   const secsRow = document.createElement("div");

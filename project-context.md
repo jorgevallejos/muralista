@@ -169,6 +169,39 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23: `v1.2.1` and `v1.2.2` — the two bugs the wall found.** `v1.2.1` (PR #15, `fa0d808`,
+  umbrella `37b7403`): **the remembered camera was a dead end.** `enableCamera()` asked for
+  `deviceId: { exact: … }`, Chrome's device ids rotate on a replug or restart, and the device
+  dropdown only populated *after* a successful `getUserMedia` — so a stale id threw
+  `OverconstrainedError` and locked the camera out entirely, recoverable only by editing
+  `localStorage` by hand, which Jorge had to do. Now it falls back to any camera, names the
+  substitution in the status line, and updates the stored id. It deliberately does **not** fall back
+  on a permission error or a busy device: different failures, different remedies.
+
+- **`v1.2.2` (PR #16, `7c8b247`, umbrella `1bdb582`) — and the diagnosis is the keeper.** Symptom:
+  adopt boundaries traced the whole lit rectangle instead of Jorge's silhouette. The obvious suspects
+  were all innocent — instrumenting the output's paint loop at 60 Hz showed the countdown cleared at
+  +3972 ms, frame B taken at +4258 ms, 286 ms later, and the countdown paints glyphs on a fully
+  transparent background with no scrim. The DOM sequencing was correct.
+
+  > **A DOM is the present and a camera is the recent past.** Between the projector painting and
+  > `drawImage(video)` handing over that picture there is display lag, the exposure window, the
+  > camera pipeline, USB and decode — 100–200 ms on an ordinary webcam and **longer in a dim room,
+  > because darker means a longer exposure.** The 300 ms settle sat inside that band, so frame B was
+  > a photograph of a countdown that had already left the screen.
+
+  The settle is now **1200 ms**, and *being longer than the 900 ms plate settle is the load-bearing
+  part*: a camera slow enough to still see the countdown in frame B is too slow to have seen a clean
+  plate in frame A. Swept 0–3000 ms in 10 ms steps, no latency reproduces it. The **failsafe** now
+  refuses to trace when more than half the lit rectangle darkened, with the percentage in the
+  message — which also catches the cause no timer can fix, **auto-exposure stopping down over the
+  ten seconds between the photos**. Normalising out a global brightness shift was deliberately *not*
+  added: it could mask real cases, and the failsafe now fails loudly instead.
+
+  **Unresolved:** Jorge remembers the countdown appearing only in the control window on earlier runs,
+  and the code says it has been projected since the feature landed. Something else about that run
+  differed. Auto-exposure is the standing suspect if it recurs.
+
 - **2026-08-23: `v1.2.0` — one shape, one set of circles.** Merged `63d2dd2`, tag `v1.2.0`, umbrella
   `a752361`. From Jorge's second session at the wall. **Fill shapes stopped looking different** — one
   idiom, a body carrying what is inside and an outline carrying stroke and selection; the dashed red

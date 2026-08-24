@@ -964,9 +964,20 @@ body.role-output {
   background: #fff;
 }
 
-/* Countdown on the wall itself, above the white plate. Dark on white,
-   because the plate is what it is painted on and the performer reads it from
-   inside the beam. */
+/* THE COUNTDOWN IS ALSO THE DARK PLATE, and the two are one element because
+   they are one thing: this is what the wall shows while somebody walks into
+   place. It is opaque and full-frame, so raising it covers the white plate AND
+   the mapped content in a single change - which is what lets the sequence
+   swap the plate underneath it without a frame of video flashing up on the
+   wall (see steps 3 and 4 of adoptShapeBoundaries).
+
+   Light glyphs on black, inverted from the dark-on-white this used to be. A
+   performer stood in the beam for the whole count, and a full white field for
+   ten seconds is unpleasant enough that Jorge asked whether it was needed. It
+   is not: the shadow only exists at the two capture instants, and the
+   countdown sits between them. The glyphs cover a few percent of the frame,
+   which is enough to read from inside the beam and nothing like enough to
+   hurt. */
 .output-countdown {
   position: absolute;
   top: 0;
@@ -979,7 +990,8 @@ body.role-output {
   font-size: 60vh;
   font-weight: 800;
   line-height: 1;
-  color: #14161c;
+  background: #000;
+  color: #e6dfd1;
   pointer-events: none;
 }
 

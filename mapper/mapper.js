@@ -2015,6 +2015,13 @@ const SHADOW_PLATE_SETTLE_MS = 900;
 //   NOTHING ELSE. The only difference between them is the thing that walked
 //   into the room.
 //
+// It binds at the two CAPTURE INSTANTS and nowhere else. What the wall does in
+// between is free, and v1.2.3 spends that freedom: the plate comes DOWN for
+// the whole countdown, because a shadow only exists where projected light is
+// being blocked, and nothing is being photographed while somebody walks into
+// place. Standing in a full white field for ten seconds hurts, and it bought
+// nothing.
+//
 // Anything the TOOL paints - the countdown, a status plate, a focus ring - has
 // to be off the output before either shutter, with a settle elapsing
 // afterwards. The difference is signed, so anything that darkens the plate
@@ -2035,11 +2042,26 @@ const SHADOW_PLATE_SETTLE_MS = 900;
 // came back tracing the whole lit rectangle: frame B was a photograph of a
 // countdown that had already left the screen.
 //
-// 1200ms is chosen to clear that band with room to spare, and it costs a
-// person a second once per capture. It is still a GUESS - the camera's latency
-// cannot be measured from here - which is exactly why the failsafe below
-// exists rather than being belt to this brace.
-const SHADOW_CLEAR_SETTLE_MS = 1200;
+// WHAT THIS SETTLE NOW HAS TO ABSORB, since v1.2.3 leaves the wall DARK for
+// the whole countdown (see the sequence in adoptShapeBoundaries), is more than
+// the pipeline: the camera has spent ten seconds looking at an unlit wall and
+// its auto exposure has opened up to suit. Raising the plate again asks it to
+// close back down, and that takes appreciably longer than a frame or two.
+// 2000ms buys the pipeline latency AND that recovery, and it costs a person
+// two seconds once per capture - against standing in a full white beam for the
+// entire countdown, which is what it buys them out of.
+//
+// IT MUST STAY LONGER THAN SHADOW_PLATE_SETTLE_MS, and that inequality is
+// load-bearing rather than incidental: frame A is only clean if the camera's
+// latency is under the plate settle, and frame B is only contaminated if that
+// latency is over this one. Keeping this the larger of the two makes "frame A
+// clean AND frame B dirty" an empty set at every possible camera latency.
+//
+// It is still a GUESS - the camera's latency cannot be measured from here -
+// which is exactly why the failsafe below exists rather than being belt to
+// this brace. Under v1.2.3 the failsafe is also what catches a re-light that
+// did not finish in time, which is the new way this can go wrong.
+const SHADOW_RELIGHT_SETTLE_MS = 2000;
 
 // Anything smaller than this fraction of the frame is noise, not a person.
 const SHADOW_MIN_BLOB_FRACTION = 0.002;
@@ -2399,20 +2421,37 @@ async function adoptShapeBoundaries(shapeId) {
       return;
     }
 
-    // 3. Count the thing into place, on the wall and at the desk.
+    // 3. Count the thing into place, on the wall and at the desk - and take
+    //    the light off the wall while it happens. The countdown plate is
+    //    opaque and dark (see .output-countdown), so raising it BEFORE
+    //    dropping the white one means the mapped content never flashes up in
+    //    the gap between two broadcasts.
+    showCountdown(adoptCountdownSeconds);
+    if (whiteFieldOn) {
+      whiteFieldOn = false;
+      broadcastWhiteField();
+    }
     for (let t = adoptCountdownSeconds; t > 0; t--) {
       showCountdown(t);
       setAdoptStatus(`Get into the beam \u2014 ${t}\u2026`);
       await delay(1000);
     }
 
-    // 4. Take the countdown off the output FIRST, then settle, then capture.
-    //    The settle has to outlast the camera's end-to-end latency, not just
-    //    the browser's repaint - see SHADOW_CLEAR_SETTLE_MS for why that is a
-    //    much bigger number than it looks like it should be.
+    // 4. Light the wall again, THEN take the countdown off it, then settle,
+    //    then capture. That order matters for the same reason as step 3's: the
+    //    white plate goes up underneath the dark countdown plate, so what the
+    //    wall shows changes exactly once, from dark to white, with no frame of
+    //    mapped content in between.
+    //
+    //    The settle has to outlast the camera's end-to-end latency AND the
+    //    auto exposure closing back down after ten seconds of darkness - see
+    //    SHADOW_RELIGHT_SETTLE_MS for why that is a much bigger number than it
+    //    looks like it should be.
+    whiteFieldOn = true;
+    broadcastWhiteField();
     showCountdown(null);
-    setAdoptStatus("Clearing the wall\u2026");
-    await delay(SHADOW_CLEAR_SETTLE_MS);
+    setAdoptStatus("Lighting the wall again\u2026");
+    await delay(SHADOW_RELIGHT_SETTLE_MS);
     setAdoptStatus("Capturing\u2026");
     const frameB = grabCameraFrameLuma(video);
 
@@ -2420,8 +2459,14 @@ async function adoptShapeBoundaries(shapeId) {
     const result = shadowRingFromFrames(frameA, frameB, adoptThreshold, H);
     if (result.reason === "dirty-plate") {
       const pct = Math.round(result.darkenedFraction * 100);
+      // Two causes, and the percentage does not tell them apart, so name both.
+      // Near 100% is almost always the camera rather than the wall: the plate
+      // is off for the whole countdown now, and an auto exposure that opened
+      // up in the dark and has not finished closing again darkens every pixel
+      // at once. Locking the exposure is the fix, and it is one the person at
+      // the wall can actually apply.
       setAdoptStatus(
-        `The projected field was not clean when the second photo was taken - ${pct}% of it went darker, which is the plate itself rather than something standing in front of it. Nothing traced. Check that nothing else is being projected, and try again.`
+        `The two photographs do not match - ${pct}% of the lit field went darker, which is the whole plate rather than something standing in front of it. Nothing traced. Either something else was being projected, or the camera's exposure changed between the two shots: lock the camera's exposure and try again.`
       );
       return;
     }
@@ -2447,10 +2492,13 @@ async function adoptShapeBoundaries(shapeId) {
     console.warn("Muralista: adopting boundaries failed.", err);
     setAdoptStatus(`The capture failed: ${(err && err.message) || err}`);
   } finally {
-    // 7. Give the output back as we found it, whatever happened above.
+    // 7. Give the output back as we found it, whatever happened above. Both
+    //    directions, now that the sequence lowers the plate as well as raising
+    //    it: an abort mid-countdown has to put a plate that was already up
+    //    back up, not just take down one we raised.
     showCountdown(null);
-    if (!plateWasUp && whiteFieldOn) {
-      whiteFieldOn = false;
+    if (whiteFieldOn !== plateWasUp) {
+      whiteFieldOn = plateWasUp;
       broadcastWhiteField();
     }
     adoptRunning = false;
@@ -3436,6 +3484,12 @@ function buildAdoptBoundariesControls(container, shape) {
   rules.textContent =
     "It detects a DIFFERENCE between two photographs of the wall, so the thing has to be absent from one of them: it finds a person who walks in, or an object placed and removed, and cannot find a painting that was hanging there the whole time. And for anything standing out from the wall, trace the SHADOW, not the thing — the camera and the lens disagree about where a body is, and never about where its shadow falls.";
   container.appendChild(rules);
+
+  const comfort = document.createElement("p");
+  comfort.className = "layer-hint";
+  comfort.textContent =
+    "The wall goes dark while you walk in and lights again for the second photograph, so you are not standing in a white field for the whole count. If traces come back empty or the failsafe fires, lock the camera's exposure — the Elgato Facecam supports it — so the two photographs are taken at the same brightness.";
+  container.appendChild(comfort);
 
   const secsRow = document.createElement("div");
   secsRow.className = "layer-field";

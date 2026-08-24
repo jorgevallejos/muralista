@@ -21,6 +21,7 @@ The counterpart to that: **Muralista maps, but it does not perform.** Working ou
 - **Adopting boundaries has never been run against a real wall.** The capture (raise a white plate, photograph the wall, count the thing into the beam, photograph it again, keep what got darker) is verified against a synthetic camera feed, because its optical loop — a camera actually seeing the projected plate, a real body's shadow under real auto-exposure — is the one part a desk cannot stand in for. Treat the first venue run as the real test of it; the shape it hands back is meant to be coarse either way.
 - **The text layer landed 2026-08-23**, replacing the lyric PNGs the studio session had been faking with, and **stopped inheriting the quad's stretch** the same day. Verified in real headed Chrome against painted pixels: the catalogue's 81-character worst case cannot overflow its quad at any combination of maximum size and letter width, across eight quad shapes including keystones and a deliberately narrow column; a quad redrawn smaller with a real mouse rescales its text with it and does not refit at all; and glyph proportions measured in a 9.6:1 strip, a 0.26:1 column and a square all come out identical to the font's natural proportions to four decimal places. **Never read off a wall.** Its legibility choices — stroke weight, shadow, how big is big enough, and now whether the corrected letters actually read better — were judged on a monitor, and the room they are for is a dark one seen from the back. **This is the one acceptance criterion the layer has never had.**
 - **The media folder landed 2026-08-23.** Resolution, the Blob hand-off to the projector window, object-URL lifecycle and every fallback are verified in real headed Chrome against decoded pixels. **The picking flow itself is not automatable** — `showDirectoryPicker` opens an OS dialog no browser automation can drive — so it was exercised through a stand-in handle, and the one thing only a person can run is the round trip: pick a folder, quit Chrome, reopen, and see whether it comes back granted or asks to reconnect.
+- **Shapes learned that a song is a thing on 2026-08-24** (v1.3.0). Four types — `song-lyrics`, `song-video`, `song-intro`, `gig-contact` — plus a gig folder the tool reads `gig.json` out of and writes `visuals.json` back into, and two levels of visual setup. Verified in real headed Chrome against the rendered output, including the one assertion that matters for a mapping you already have: **a v8 file opens under v9 and paints an identical frame**, compared property by property against the previous build — the pattern canvas as a PNG, every `matrix3d` and `clip-path`, every fitted font size, stroke and colour. **The gig folder's picking flow is not automatable**, exactly like the media folder's, so it was exercised through a stand-in handle; the round trip only a person can run is pick a folder, quit Chrome, reopen, and see whether it comes back granted. **And none of the four types has been seen on a wall**: the intro card's proportions, the contact panel's QR size and the placeholder text were all judged on a monitor. The tagline is the first thing to check from the back of a real room, and whether the QR scans from where people stand is the second.
 - **Direct manipulation is now verified by hand** (2026-08-22). It landed in July and was only ever checked headlessly, and it did not in fact work: a drag moved a quad by one mouse-move and then froze, and pressing an unselected quad did not move it at all. Fixed, and confirmed in Chrome with a real mouse against painted output. **Transport-synced overlays are still hand-untested.**
 - **The desk-tool shape described above is the direction, not the current build.** Today Muralista still renders live: it has a transport, because v1 was designed as a tool that runs during the show. That decision was reversed on 2026-08-20. The sound-reactive half was removed on 2026-08-22 and preserved at the tag `mic-reactivity-archive`: a tool that maps a wall before a show cannot also be the thing listening to the room during it. The beat layer that removal left standing went too (2026-08-23) — with mic mode gone it was a circle pulsing at a fixed BPM, and nothing about drawing shapes on a wall needs one. **What Muralista renders today is video, image, text and solid-fill layers on shapes**, plus the test pattern you align against. The behaviours that left survive as direction — they become properties declared in the venue mapping and executed by [Pregonero](https://github.com/jorgevallejos/pregonero) — but nothing has moved across yet, and Pregonero cannot read a venue mapping today.
 
@@ -107,12 +108,14 @@ That copies the shape with an identical outline and frame, drops it immediately 
 
 ### 7. Put the lyrics somewhere
 
-Add a shape over the part of the wall that will carry the words, and switch its type to **text**.
+Add a shape over the part of the wall that will carry the words, and pick its type.
 
-Two fields at the top of the panel, and they are not the same fact:
+**Two types, and the difference is what the region is *for*:**
 
-- **Role** is what the region *is*. `lyrics` means this is a **slot** — the place lyrics go, to be filled from the song file when Pregonero learns to read a venue mapping. `static` means the text below is the content and stays, which is what a title card is.
-- **Text** is what is *in* it. Under `lyrics` the panel calls it *preview text*, because that is what it is: a real line, pasted in so the layout is tuned against a real length rather than against "Lorem ipsum".
+- **`song-lyrics`** is a **slot** — the place the playing song's lines go, filled from the song file by Pregonero on the night. The string you type here is a *preview* of that slot. It only appears in the menu once a gig is connected (step 9).
+- **`text`** is content this shape owns. What you type is what stays there, which is what a title card is.
+
+Up to v8 that distinction was a separate `Role` field on one `text` type. It is the type now: the type is the field everything else already switches on, so saying it there says it once.
 
 **Paste the longest line you will actually sing.** A layout tuned against a short line is not tuned. Line breaks you type are line breaks on the wall — several entries in the catalogue carry one and render as two lines, and a region sized against a single line clips them.
 
@@ -127,14 +130,16 @@ I fled from hell, I left the ashes behind.
 
 **Judge legibility against that one, not against a short line.** A region that reads with three words in it tells you nothing.
 
-Then set the size by eye, with the projector on. Two things about that slider:
+Everything you tune while watching the wall is in **one row** under the text: alignment, colour, size, outline. Hover any of them for what it does.
 
-- **It is a fraction of the shape, not a font size.** The number stored in the mapping is a percentage of the quad's height, so when you redraw that quad in the next room the text comes with it. An absolute size would quietly break every layout you ever tuned.
+Two things about the size stepper:
+
+- **It is a fraction of the shape, not a font size.** The number stored in the mapping is a percentage of the quad's height, so when you redraw that quad in the next room the text comes with it. An absolute size would quietly break every layout you ever tuned. That is why the stepper carries no unit.
 - **It is a ceiling, not a size.** Text that would not fit is shrunk below it until it does — wrapping on word boundaries, honouring your line breaks, keeping a margin off the edge. So it cannot overflow the shape at any setting, and short lines still get to be big.
 
-**Letter width** is the second slider, and most of the time you will not touch it. A shape's content is drawn into a square and mapped onto four corners, so a quad far from square would ordinarily stretch whatever is in it — and for video and images it still does, deliberately. Text is the exception: the shape corrects itself, so a wide strip lays the words out wide instead of fattening them, and ×1.00 is normal letters in a quad of any shape.
+**Letter width** is behind **More**, and most of the time you will not touch it. A shape's content is drawn into a square and mapped onto four corners, so a quad far from square would ordinarily stretch whatever is in it — and for video and images it still does, deliberately. Text is the exception: the shape corrects itself, so a wide strip lays the words out wide instead of fattening them, and ×1.00 is normal letters in a quad of any shape.
 
-The slider is there for the part no formula can reach. **Muralista only ever sees the quad you drew, never the wall it lands on** — a quad on an angled wall is a trapezoid *on purpose*, because the warp is compensating for where the projector happens to stand, so the drawn shape and the physical shape are different things and only one of them is in the file. You can see the other one, through the camera. Nudge it until the letters look right on the wall, not until the number looks right on the screen.
+It is there for the part no formula can reach. **Muralista only ever sees the quad you drew, never the wall it lands on** — a quad on an angled wall is a trapezoid *on purpose*, because the warp is compensating for where the projector happens to stand, so the drawn shape and the physical shape are different things and only one of them is in the file. You can see the other one, through the camera. Nudge it until the letters look right on the wall, not until the number looks right on the screen.
 
 The background stays transparent, so a text shape duplicated onto a video shape's frame (step 6) puts the words over the animation rather than over a black plate. Legibility comes from a dark outline and a slight shadow instead, the way cinema subtitles do it — that is a deliberate exception to how restrained everything else in the suite is, and it is not up for debate at the back of a dark room.
 
@@ -203,7 +208,37 @@ The traced points are stored in **output space**, so the shape stays valid long 
 
 Not in this version: the polygon following you live. On a dark stage, mid-song, a mask that flickers is worse than no mask.
 
-### 9. Export the room
+### 9. Bring in the gig
+
+Everything so far works with no gig at all, and that stays true — mapping a wall unpersisted is a thing you can do at any time, and nothing below is required.
+
+But four of the shape types need to know a song is a thing, and they only appear once a gig is connected. Under **Gig**, press **Choose gig folder…** and pick the folder holding the gig's `gig.json`. Pregonero writes that file; Muralista only ever reads it, and only ever reads **song ids, song titles and the venue** out of it. It will not make one for you: a folder with no `gig.json`, or a gig with no songs in it, gets told so rather than invented around.
+
+Four types come with it:
+
+| Type | What it holds | What you can set |
+|---|---|---|
+| `song-lyrics` | The playing song's lines | Everything a `text` shape has. Tuning legibility at the wall is why the type exists. |
+| `song-video` | The playing song's video | Nothing. **The quad is the framing** — the video stretches to fill it, so a video that wants to sit differently is a different shape. The wall shows you the extent it will fill. |
+| `song-intro` | The song's translation, title and tagline | Nothing. A locked template in fixed proportions; the shape's position and size are the only decisions, and they move all three parts together. |
+| `gig-contact` | One line, plus an optional QR code | The line, and the file name of a QR image. Once, for the whole night — this one is not per-song. |
+
+**A shape has exactly one type.** Lyrics and video over the same patch of wall are two shapes; **⧉** duplicates the geometry for you.
+
+**Lyrics preview with a fixed dummy line**, and it is deliberately nasty — two lines, a hard break, quote marks, long Dutch words. Muralista never reads a real lyric, and a short stand-in would let the tuning feel finished without having tested anything. Shortening it is making the tool easier to be wrong with.
+
+**The QR code is a file you supply**, resolved through the media folder like any other source. Muralista does not encode one. Generate it elsewhere, drop the PNG in beside the videos, and scan it off the wall with a phone before the doors open — which is the only test that counts.
+
+Then there are **two levels of setup**, and the second one is usually empty:
+
+- **Gig — the room.** Which shape of each kind serves every song. For a gig where all the songs follow one pattern, this is the whole job, and the first shape you give a type is picked up as the default automatically.
+- **Song — a deviation.** Pick a song, then pick which existing shape of that kind it uses instead. **Reassignment only.** A song never holds its own geometry: if it did, re-mapping the room would leave that song silently on the old position — wrong on stage, with nothing reporting it. If no shape fits, go back to gig setup and add one.
+
+While a song is selected the wall **previews that song**: the shapes it does not point at go dark, and so does the contact panel, because a song is playing. That is not a display mode, it is what those shapes will do on the night. A shape is a place that *can* hold content, not a thing that is on — which is what makes adding one cheap, and why the gap between songs falls out for free with no blackout state anywhere.
+
+Finally, **Save visuals.json**. That writes the room into the gig's folder, beside `gig.json`. **Muralista is the sole writer of that file and never touches `gig.json`** — one writer per file is the whole ownership rule, and it is what lets you take a gig to another machine, do the visual work, and hand back one file. Nothing autosaves it: the line saying when it was last written disappears the moment you edit anything, because from then on the folder is behind what is on your screen.
+
+### 10. Export the room
 
 **Export** writes the mapping to a JSON file. That file is this room — the shapes, their outlines and frames, their layers, and the order they paint in.
 
@@ -225,11 +260,13 @@ Three things worth knowing:
 
 **A shape records an outline and, when it needs one, a frame.** `outline` is a ring of three or more normalized points and is the whole of what you edit. `corners` is the four the warp uses; it is consulted **only when the outline has more than four points**, and holds the value pinned at the moment the fifth arrived. At four points the outline *is* the frame and `corners` is simply kept in step with it. Nothing has to be recorded about which state a shape is in — it is a count, so a point added and then removed puts the two back together on its own.
 
-**A text layer records two facts, and keeping them apart is the point.** `role` says what the region is for; the string says what is currently previewing in it. A mapping that recorded only "this region shows this string" could not tell the lyric slot from a caption somebody typed, and every venue file would have to be re-authored by hand the day Pregonero learns to read one. There are exactly two roles — `lyrics` and `static` — and there will not be a third until something actually needs one.
+**A text layer records two facts, and keeping them apart is the point.** What the region is *for* is the layer's **type** — `song-lyrics` for a slot Pregonero fills, `text` for content the shape owns. The string is what is currently in it. A mapping that recorded only "this region shows this string" could not tell the lyric slot from a caption somebody typed, and every venue file would have to be re-authored by hand the day Pregonero reads one. Up to v8 that fact lived in a separate `role` field; v9 retired it into the type, which is the field everything else already switches on.
+
+**Since v9 the file also carries `songVisuals`**, which is the two levels of setup written down: `defaults` says which shape of each kind serves the gig, and `songs` holds one entry per *deviating* song. A song that follows the pattern is simply absent. **Resolving a type for a song returns a set, and the renderer lights all of it** — there is no one-shape cap anywhere in the file or the code, because a lyric spanning a corner or a pillar is two shapes (a homography maps one flat plane) and so is original beside translation. The authoring UI offers one shape per type for now, so real files hold sets of one; a hand-edited file naming two already works.
 
 ### What version the file is, and what each bump did
 
-The mapping carries a `version`, and the current one is **8**. Every bump is enforced in one place — `migrateProject()`, which runs on load **and** on import — so an older file always opens, gaining what it predates and losing what it outlived. There is no separate upgrade step and no file you have to convert by hand.
+The mapping carries a `version`, and the current one is **9**. Every bump is enforced in one place — `migrateProject()`, which runs on load **and** on import — so an older file always opens, gaining what it predates and losing what it outlived. There is no separate upgrade step and no file you have to convert by hand.
 
 | Version | What changed |
 |---|---|
@@ -240,12 +277,23 @@ The mapping carries a `version`, and the current one is **8**. Every bump is enf
 | 6 | **The text layer**, and the fields only it uses — `text`, `role`, `maxSize`, `align`, `color`, `outline`, `outlineWidth`. |
 | 7 | **`aspect`** on a text layer: the manual half of letter width. Existing text layers default to `1.0`, which is "automatic only". |
 | 8 | **Keep-outs become shapes.** The top-level `keepOuts` array is dissolved: every entry becomes a shape with `"type": "fill"`, its ring as the `outline` and its margin as a fill field. Every surface gains an `outline` of its own, defaulted to its four corners. |
+| 9 | **Song-aware types**, and `role` retires into the type: a text layer with `"role": "lyrics"` becomes `"type": "song-lyrics"`, one with `"role": "static"` becomes a plain `"text"`, and the field goes. Adds the top-level `songVisuals` table. |
 
-Bumps 3 through 8 are marked **breaking**, and they mean it in one direction only: a v8 file will not open correctly in an older build, because that build would read something it has no code for and paint a test pattern instead. Going forward is always safe, and v8 says so in the strongest form the tool can: **a v7 mapping with keep-outs in it opens under v8 and paints a byte-identical frame**, checked in real Chrome against the projector window's own pixels rather than against the data. The migrated fills land at the top of the paint order, which is where the old rule used to put them; from then on they can be reordered like anything else.
+Bumps 3 through 9 are marked **breaking**, and they mean it in one direction only: a v9 file will not open correctly in an older build, because that build would read something it has no code for and paint a test pattern instead. Going forward is always safe, and each bump says so in the strongest form the tool can. **A v7 mapping with keep-outs in it opens under v8 and paints a byte-identical frame**, checked in real Chrome against the projector window's own pixels rather than against the data; the migrated fills land at the top of the paint order, which is where the old rule used to put them, and from then on they reorder like anything else. **A v8 mapping opens under v9 and paints an identical frame** too, checked the same way — the role/type change is a rename and nothing the renderer reads moves with it, so your pasted lyric line, its size, its letter width, its alignment, its colour and its outline all arrive exactly as they were.
 
-Hostile values do not reach the renderer. An import is arbitrary JSON, and a `role` of `42`, a negative size, an `aspect` of `0`, a margin of `99` or a `javascript:` colour all fall back or clamp at the same single enforcement point — because the alternative is something inexplicable appearing on a wall with no visible cause. A shape with neither a usable outline nor a usable frame is dropped there too, rather than half-repaired downstream.
+Hostile values do not reach the renderer. An import is arbitrary JSON, and a type of `42`, a negative size, an `aspect` of `0`, a margin of `99` or a `javascript:` colour all fall back or clamp at the same single enforcement point — because the alternative is something inexplicable appearing on a wall with no visible cause. A shape with neither a usable outline nor a usable frame is dropped there too, rather than half-repaired downstream.
 
 **Where this is going:** the mapping grows into a full **venue file** — adding the outer field of usable wall and named regions for lyrics and animation, alongside the shapes it already carries — which Pregonero reads and executes on stage. See `project-context.md` in this repo, under "V1 design (2026-08-20)", for the design and its open questions.
+
+### The gig folder
+
+A second folder, picked the same way and remembered the same way, holding one gig. **Muralista reads `gig.json` out of it and writes `visuals.json` back into it, and that is the entire traffic.**
+
+**What it reads: `songs` and `venue`. Nothing else, ever.** Not the setlist, not tempo, not translations, not count-ins, not lyrics. It needs song ids and titles so a deviating song can be picked by name, and the room's identity. That line is exactly why lyrics preview with a dummy string — the day the tool needs a field below it is the day it has been made to understand Pregonero, which is the thing this suite is arranged to avoid.
+
+**It never writes `gig.json`.** Pregonero owns that file. Muralista owns `visuals.json`. One writer per file is the whole ownership rule.
+
+Like the media folder, the handle lives in IndexedDB and the mapping never mentions it, so a mapping made with one gig connected opens fine with none — the song-aware types simply stop being offered, and any shape that already has one keeps it.
 
 ### The media folder
 
@@ -303,7 +351,7 @@ Deliberate, not defects:
 - **Nothing knows the wall's real shape.** The automatic half of that correction is exact about the *quad*, and the quad is not the wall — a trapezoid drawn to compensate for the projector's position is doing its job, and no formula can tell that apart from a genuinely trapezoidal wall. Which is why the last few percent is a slider you set by eye and not a number the tool computes. Muralista is built around closing that loop rather than measuring harder: a careful automatic calibration lost to a hand calibration by three percent on 2026-08-22, and that is the tool's whole thesis rather than an anecdote in it.
 - **Auto-fit has a floor, and it is loud.** Below 8px it stops shrinking and lets the text overflow rather than clip it silently, because a quad drawn far too small for its content is something you need to see. There is a lot of room before that: in a quad that reads square on the wall, the catalogue's 81-character worst case fits at 127px, an entire song's worth of text still fits at 17px, and the floor is only reached somewhere past 40,000 characters, which is not a lyric.
 - **Adopting boundaries only finds what moved.** It works by differencing two photographs of the wall, so the thing has to be absent from one of them: a person who walks into the beam, or an object placed and removed. A dark alcove, a window, a picture rail, a painting that has hung there for years — anything that was in both frames — is a shape you draw by hand, point by point. That works, and it is untested as a workflow.
-- **Nothing has moved to Pregonero yet.** The mapping is designed to grow into a venue file that [Pregonero](https://github.com/jorgevallejos/pregonero) reads and executes on stage, and `role: "lyrics"` already says "this region is a slot to be filled". But Pregonero cannot read a venue mapping today, so a lyric region is a preview of a promise, not a live surtitle feed.
+- **Nothing has moved to Pregonero yet.** The mapping is designed to grow into a venue file that [Pregonero](https://github.com/jorgevallejos/pregonero) reads and executes on stage, and a `song-lyrics` shape already says "this region is a slot to be filled". But Pregonero cannot read `visuals.json` today, so a lyric region is a preview of a promise, not a live surtitle feed — which is also why the preview line is a fixed dummy rather than anything out of a song file.
 - **Chrome only.** Alpha WebM transparency and the autoplay behaviour this leans on are Chrome-specific; Safari drops the alpha channel.
 - **Media is referenced, never copied, and there is one folder.** Point the tool at the folder your media already lives in (see *The media folder* above) or drop files into `mapper/media/` by hand. Either way Muralista reads the files where they are — the picker fills in a name, it does not copy anything, and media stays out of this repo. One folder at a time is the design and not a gap: see *One folder at a time* above.
 - **`python3 -m http.server` has no Range support**, so seeking within a long video feels sluggish. `npx http-server` is a drop-in replacement that does — and a source resolved through a chosen media folder sidesteps the server entirely, so it does not have this problem in the first place.

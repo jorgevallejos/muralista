@@ -462,6 +462,213 @@ button.danger:hover {
   margin: 0;
 }
 
+/* =====================================================================
+   FORMAT BAR (text and song-lyrics shapes)
+   =====================================================================
+   THE PANEL HAD TO GET SMALLER, NOT LARGER. Eight labelled rows of text
+   options dominated the right bar, and v9 was about to add four more types to
+   the same column. So the formatting collapses to ONE COMPACT ROW - alignment,
+   colour, size, outline - and the two settings nobody touches twice in an
+   evening go behind a disclosure that starts closed.
+
+   HOUSE STYLE, AND IT IS NOT DECORATION: monochrome line glyphs, no fills, no
+   accent colours. THE ONE PLACE COLOUR IS SPENT IS THE SWATCH, which earns it
+   because there the colour IS the data - everywhere else a coloured icon would
+   be spending contrast on saying "this is a button". */
+/* ONE ROW, and it has to stay one row: the sizes below are what make the four
+   controls fit the 247px the panel actually has at this sidebar width, which is
+   the whole claim the bar is making. `flex-wrap` is the safety net for a
+   narrower window, not the intended layout. */
+.format-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* A segmented control is one object with hairlines between its parts, not
+   three buttons that happen to touch. */
+.format-seg {
+  display: flex;
+  border: 1px solid var(--border-soft);
+}
+
+.format-seg .format-btn + .format-btn {
+  border-left: 1px solid var(--border-soft);
+}
+
+.format-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.format-seg .format-btn {
+  border: 0;
+}
+
+.format-btn:hover {
+  color: var(--text);
+}
+
+/* Selection is a BRIGHT HAIRLINE plus paper ink, never a filled swatch - the
+   same rule the shape list uses, and for the same reason: colour is reserved
+   for liveness, and "you picked this" is a question asked at a desk. */
+.format-btn.active {
+  color: var(--text);
+  background: var(--selected-bg);
+  box-shadow: inset 0 0 0 1px var(--selected-border);
+}
+
+.format-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: square;
+}
+
+/* The one place colour is spent. A native colour input with its chrome taken
+   off, so the swatch itself is the control. */
+.format-swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.format-swatch::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.format-swatch::-webkit-color-swatch {
+  border: 0;
+}
+
+/* A BARE STEPPER. No unit, because the value has none: it is a fraction of the
+   shape, and writing "px" next to it would invite exactly the reading the
+   whole text layer is built to avoid. */
+.format-stepper {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border-soft);
+}
+
+.format-stepper .format-btn {
+  border: 0;
+  width: 22px;
+}
+
+.format-stepper-value {
+  min-width: 38px;
+  text-align: center;
+  font-family: var(--font-control);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* Closed by default, and it stays closed: aspect and outline width are tuned
+   once at a wall and then left alone. */
+.format-more {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 8px;
+}
+
+.format-more > summary {
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.format-more[open] > summary {
+  margin-bottom: 8px;
+}
+
+.format-more .layer-field + .layer-field {
+  margin-top: 8px;
+}
+
+/* =====================================================================
+   GIG (sidebar)
+   ===================================================================== */
+
+/* One row per song-aware type: which shape of that kind serves the gig, or
+   which one this song uses instead. The same widget at both levels on purpose -
+   they are the same question asked at two scopes. */
+.assignment-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.assignment-row label {
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.assignment-row select {
+  font-family: var(--font-control);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 5px 6px;
+  min-width: 0;
+}
+
+/* Song visual setup is a MODE the whole tool is in, not a field - the wall is
+   previewing one song while it is on. The bright hairline says so without
+   spending a status colour on it. */
+/* Gig visual setup's rows. Same layout as song setup's, without the bright
+   rule down the side: gig level is where the tool normally sits, and it is
+   song level that is a mode worth marking. */
+.setup-rows {
+  margin: 0 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.song-setup {
+  border-left: 2px solid var(--selected-border);
+  margin: 0 16px 8px;
+  padding-left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.visuals-status {
+  margin: 0 16px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-line;
+}
+
 .backdrop-controls {
   display: flex;
   gap: 8px;
@@ -634,6 +841,23 @@ button.danger:hover {
    stealing pointerdown would make the polygon's own edge un-draggable.
    Lifted off the old chrome grey: it sits over a camera image, so it needs to
    read against a wall, not against the panel behind it. */
+/* A shape the previewed song does not point at. It is DARK on the wall, so
+   the desk shows it as an outline with nothing in it rather than hiding it -
+   you still have to be able to select and edit a shape this song is not using.
+   Only ever seen in song visual setup; in gig visual setup nothing is dark. */
+.preview-shape-body.dark-for-song {
+  opacity: 0.12;
+}
+
+.preview-shape-outline.dark-for-song {
+  stroke-dasharray: 6 6;
+  opacity: 0.5;
+}
+
+.preview-layer-badge.dark-for-song {
+  opacity: 0.45;
+}
+
 .preview-shape-outline {
   fill: none;
   stroke: var(--draw-surface-idle);
@@ -890,6 +1114,165 @@ body.role-output {
      the font exactly where it is already weakest. Chrome-only, like the rest
      of this tool. */
   paint-order: stroke fill;
+}
+
+/* =====================================================================
+   SONG-AWARE LAYERS (output)
+   =====================================================================
+   THE WALL SPEAKS IN THE INSTRUMENT'S VOICE HERE, AND THAT WAS A DECISION.
+   The intro card and the contact panel are drawn in Pregonero's brutalist
+   control vocabulary - ink ground, paper and dim text, one clay accent, no
+   radii, monospace throughout - and control.css states outright that
+   projection typography is deliberately independent of it. Choosing it means
+   the audience sees the instrument's voice rather than the site's. That is a
+   decision about who the wall speaks AS, not a styling detail, and it was made
+   deliberately (2026-08-24).
+
+   The values are Pregonero's --app-bg, --text-primary, --text-secondary and
+   --accent, copied rather than referenced: this stylesheet is a different app
+   and a token that silently tracked another repo's redesign would be worse
+   than a number somebody has to change twice.
+
+   Every panel below is laid out at the counter-scaled width and scaled back
+   onto the unit square, exactly like .layer-text - see TEXT ASPECT in
+   mapper.js. mapper.js writes width, height, padding and transform; what is
+   here is everything that does not depend on the quad. */
+
+.layer-song-video,
+.layer-intro,
+.layer-contact {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Unstretched defaults, replaced per shape by layOutScaledBox(). */
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center; /* the block is vertically centred, always */
+  /* The counter-scale pivots on the box's own top-left, or the mapping onto
+     the unit square is centred instead of exact. */
+  transform-origin: 0 0;
+  background: #121211;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  text-align: left; /* LEFT-ALIGNED, NEVER CENTRED - see mapper.js */
+}
+
+/* A placeholder for content this tool is not allowed to see. The ground fills
+   the quad edge to edge because that is what the video will do: stretch-to-fill
+   is fixed v1 behaviour, so the ink IS the framing being tuned. */
+.layer-song-video {
+  justify-content: center;
+  /* Clipped rather than fitted: a label that shrank to fit a small quad would
+     say less than one the quad visibly cuts off. */
+  overflow: hidden;
+  box-shadow: inset 0 0 0 4px #423e37;
+}
+
+.song-video-label {
+  white-space: pre-line;
+  text-align: center;
+  color: #8b8478;
+  letter-spacing: 0.14em;
+  line-height: 1.5;
+}
+
+/* The intro card. Every measure is a multiple of --t, the title size, which is
+   the single number auto-fit searches over - so the proportions variant B1
+   fixed survive at any size the block lands on.
+
+   THIS IS WHERE THE PROPORTIONS LIVE, and the only place. mapper.js keeps two
+   of them (the ceiling the fit searches below, and the inset the layout box is
+   padded by) because JS is the only thing that reads those; everything else
+   would be a number written down twice. The reasoning behind each one is in
+   SONG INTRO TEMPLATE in mapper.js and in project-context.md. */
+.intro-block {
+  --t: 160px; /* replaced by the fit; a sane value for the instant before it */
+  width: 100%;
+}
+
+/* The clay rule and the translation share one line. */
+.intro-head {
+  display: flex;
+  align-items: center;
+  /* The one measure not in the spec: half the annotation's own size, so it
+     scales with the two things it separates rather than being a fixed gap. */
+  gap: calc(var(--t) * 0.1);
+}
+
+.intro-rule {
+  flex: 0 0 auto;
+  width: calc(var(--t) * 0.4);
+  height: calc(var(--t) * 0.04);
+  background: #d98b7a;
+}
+
+/* The translation, as an ANNOTATION above the title rather than a near-equal
+   second headline - which is what it actually is, and what frees the title to
+   be the only large thing on the wall. Case and tracking do the work the
+   italic used to. */
+.intro-annotation {
+  font-size: calc(var(--t) * 0.2);
+  line-height: 1.2;
+  letter-spacing: 0.18em; /* "wide-tracked"; the one tracking value not specified */
+  text-transform: uppercase;
+  color: #8b8478;
+}
+
+.intro-title {
+  margin-top: calc(var(--t) * 0.17);
+  font-size: var(--t);
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+  text-transform: uppercase;
+  color: #e6dfd1;
+}
+
+/* THE FRAGILE PART: smallest on the wall, and carrying the sentence the room
+   is meant to leave with. First thing to check at a real wall. */
+.intro-tagline {
+  margin-top: calc(var(--t) * 0.3);
+  font-size: calc(var(--t) * 0.28);
+  line-height: 1.25;
+  color: #8b8478;
+}
+
+/* The contact panel: one line, and a QR beside it when a file was named. */
+.contact-block {
+  --t: 220px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--t) * 0.6);
+}
+
+/* Paper ground and real padding, because a QR needs its quiet zone to scan and
+   a code printed straight onto ink does not scan at all. It is square in the
+   layout box, which the counter-scale and the homography together land as a
+   square ON THE WALL - the correction earns its keep here more than anywhere,
+   since a squashed QR is not a style, it is a code that fails. */
+.contact-qr {
+  flex: 0 0 auto;
+  width: calc(var(--t) * 3.4);
+  height: calc(var(--t) * 3.4);
+  box-sizing: border-box;
+  padding: calc(var(--t) * 0.18);
+  background: #e6dfd1;
+  object-fit: contain;
+}
+
+/* ONE LINE, and nowrap is what makes that a promise rather than a description.
+   Without it a long line wraps to two and the "one line plus a QR" shape
+   quietly stops being what was designed; with it, auto-fit shrinks the line
+   until it fits on one, which is the behaviour the whole text layer already
+   has. sanitizeContactLayer collapses a pasted newline for the same reason,
+   one step earlier. */
+.contact-line {
+  font-size: var(--t);
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: #e6dfd1;
+  white-space: nowrap;
 }
 
 /* Media layer box: fills the warped wrapper; holds the <video>/<img> plus

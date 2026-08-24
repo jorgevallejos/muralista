@@ -81,6 +81,59 @@
           <div id="layer-panel" class="layer-panel"></div>
         </div>
 
+        <!-- Gig: the folder Pregonero wrote gig.json into, and the folder
+             Muralista writes visuals.json back into. ADDITIVE - with no gig
+             connected the tool maps a wall exactly as it always has, and the
+             four song-aware shape types simply are not offered. Muralista
+             reads `songs` and `venue` out of gig.json and nothing else, ever,
+             and never writes it. See GIG in mapper.js. -->
+        <div class="sidebar-section" id="gig-section" hidden>
+          <div class="sidebar-header">
+            <h2>Gig</h2>
+          </div>
+          <div class="backdrop-controls">
+            <button id="btn-gig-folder" type="button">Choose gig folder&hellip;</button>
+            <button id="btn-gig-folder-reconnect" type="button" hidden>Reconnect gig folder</button>
+            <button id="btn-gig-reload" type="button" hidden>Reload gig.json</button>
+            <button id="btn-gig-folder-clear" type="button" hidden>Clear</button>
+          </div>
+          <p id="gig-status" class="media-folder-status"></p>
+          <p id="gig-error" class="media-folder-failures" hidden></p>
+
+          <div id="gig-setup" hidden>
+            <div class="backdrop-controls">
+              <label class="backdrop-mode">Visual setup
+                <select id="select-visual-setup-mode">
+                  <option value="gig">Gig &mdash; the room</option>
+                  <option value="song">Song &mdash; a deviation</option>
+                </select>
+              </label>
+            </div>
+
+            <!-- Gig visual setup: which shape of each kind serves every song. -->
+            <div id="gig-assignments" class="setup-rows" hidden></div>
+
+            <!-- Song visual setup: the ONE place a song picker exists. A shape
+                 does not belong to a song; a song points at a shape. -->
+            <div id="song-setup" class="song-setup" hidden>
+              <div class="assignment-row">
+                <label for="select-visual-setup-song">Song</label>
+                <select id="select-visual-setup-song"></select>
+              </div>
+              <div id="song-assignments"></div>
+            </div>
+
+            <p id="visual-setup-hint" class="layer-hint"></p>
+
+            <div class="backdrop-controls">
+              <button id="btn-write-visuals" type="button">Save visuals.json</button>
+            </div>
+            <p id="visuals-status" class="visuals-status"></p>
+          </div>
+
+          <p class="layer-hint">Muralista owns <code>visuals.json</code> and writes it into this folder beside <code>gig.json</code>, which it only ever reads &mdash; song ids, song titles and the venue, and nothing below that line. Lyrics preview with a fixed dummy line, which is what keeps the line there.</p>
+        </div>
+
         <!-- Media folder: where the layer sources above are actually read
              from. Hidden until mapper.js confirms showDirectoryPicker exists
              (Chrome only) - without it every name falls back to the served

@@ -169,6 +169,53 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   bug, caught this time before it certified anything.
 - **2026-08-23: v1 scope decided in a Cowork design session.** Studio-only, a strip list, and the
   shape behaviour spec. See **"V1 scope and shape behaviour (2026-08-23)"** below.
+- **2026-08-23: `v1.2.3` — the wall goes dark while you walk in.** PR #17, `4cf5ecd`, umbrella
+  `45bea1a`. Jorge, at the wall: standing in front of a full-white field for the whole countdown
+  hurts. It was never needed. **The plate must be lit at exactly two instants — frame A and frame B —
+  because a shadow only exists where projected light is blocked and the two photographs must match.
+  The countdown between them is not photographed.** So the countdown element *is* the dark plate, one
+  opaque element, which also means the wall changes exactly once in each direction and no frame of
+  mapped content ever reaches it. The re-light settle went to 2000 ms because auto-exposure opens up
+  over ten seconds of darkness; the ordering argument survives (2000 > 900).
+
+- **The finding underneath it, which outlived the release: adopt-boundaries was never
+  exposure-invariant.** Frame A is taken 900 ms after the plate rises, frame B 2000 ms after it
+  rises again, so on **auto-exposure the camera is in two different adaptation states at the two
+  shutters** — measured at gain 1.30 versus 0.59, 53,138 differing pixels outside the performer, and
+  the failsafe refuses. Locked exposure: gain 1.00 both times, 0 differing pixels, 10 points traced.
+  **This was not created by the dark countdown, only widened by it** — `v1.2.2` had the same
+  asymmetry and was reported green because the camera model of the day had no exposure simulation.
+  Another passing check that was not looking at the thing, the same family as the synthetic drag and
+  the `hidden`-attribute bug.
+  **Timing cannot close it**, so the fix is to divide out the global brightness before differencing:
+  **a shadow is a local darkening, auto-exposure is a global gain.** **Shipped as `v1.2.4`** (PR #18,
+  `5f7edf9`, tag `65c5108`, umbrella `d9f1543`), with the failsafe kept but applied *after*
+  normalisation, where it goes back to meaning what it was for — the plate was not clean.
+
+  **The estimator is the 90th percentile, not the median, and the reason is load-bearing.**
+  Everything this gesture looks for — a shadow, an object, a countdown that should not be there — is
+  *darker* than the plate, so the estimate must come from where the contaminant never is. A median
+  survives a silhouette only to half the field; the bright end survives nine tenths. More
+  importantly, **a median would have silently defanged the failsafe**: something opaque covering 70%
+  of the plate drags a median onto the covered part, normalises it back to "correct", and the tool
+  traces nothing instead of refusing. From the bright end that 70% still reads as covered and it
+  fires. Everything between the failsafe's 50% and the estimator's 90% gets refused rather than
+  explained away. Measured: gain recovered to three decimals across auto-exposure time constants
+  from τ=150 to τ=500, ten points traced every time, failsafe silent; opaque covers at 60/70/80%
+  still refuse.
+
+  **The limit it could not remove: clipping.** 255 is 255 whether the true value was 260 or 600, so a
+  ratio across a clipped percentile is the clamp talking, not the camera — a plate at 220 with the
+  camera 1.6× and 2.2× brighter both estimate as 1.159. When either side is clipped the estimator
+  **declines to normalise rather than inventing a number**, and the message names the real cause:
+  the first photograph was blown out, turn the camera's exposure down or lock it. One sweep row
+  (τ=800, frame A at exactly 255 after the 900 ms settle) hits this; lengthening the plate settle
+  would fix it and was deliberately not done, because both settles were proven at a real wall.
+  **Locking the exposure is now a recommendation in the README and the panel copy, not a
+  requirement.** Why it matters beyond tidiness: in the studio the Facecam's exposure can
+  be locked, but in a café twenty minutes before doors, a tool that needs a camera setting adjusted
+  before it works is a tool that silently does not work.
+
 - **2026-08-23: `v1.2.1` and `v1.2.2` — the two bugs the wall found.** `v1.2.1` (PR #15, `fa0d808`,
   umbrella `37b7403`): **the remembered camera was a dead end.** `enableCamera()` asked for
   `deviceId: { exact: … }`, Chrome's device ids rotate on a replug or restart, and the device
@@ -1068,12 +1115,24 @@ points onto them by hand. What is next-version is anything smarter than that.
 7. ~~**Brutalist restyle**~~ **done** (PR #10).
 8. ~~**Tag `v1.0.0`**~~ **done 2026-08-23.** Repo private, website gate shut.
 
+**The acceptance run is closed, 2026-08-23.** Lyric legibility at the wall **passed** — the
+81-character Tragedia line reads. The media folder **passed**, including the full Chrome-restart
+round trip. Adopt boundaries **passed** optically after `v1.2.2`. The alpha-WebM overlay **passed** —
+base video and overlay start, stop and restart together. **The letter-width test was dropped by
+Jorge**, correctly: its only purpose was to decide whether a control recommended by Cowork should
+exist, and that is answered by whether he ever reaches for it, not by an exercise. If it stays
+untouched over the next sessions, remove it. `v1-acceptance-run.md` is deleted.
+
+<details><summary>Superseded: what was owed before the run</summary>
+
 **Owed by Jorge, by hand, now that v1 is out:** lyric legibility at a wall (the 81-character worst
 case, a wide strip and a tall column, low light, from the back — proportions are now arithmetically
 right, whether it *reads* is unanswered); setting **Letter width** by eye at a real angled wall,
 since the slider exists precisely for what no formula reaches and has only met synthetic quads; the
 media-folder round trip once more; and authoring something for the alpha-WebM overlay, whose layer
 type works and has no content.
+
+</details>
 
 ### Text inherits the stretch, and it is the same decision as the video
 

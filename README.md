@@ -174,12 +174,18 @@ With the camera calibrated, press **Adopt boundaries…** and the tool traces th
 1. It raises the white plate, and waits for the wall and the camera's exposure to settle.
 2. It photographs the wall.
 3. It counts you into place — **on the wall itself**, in numbers big enough to read from inside the beam, and in the control window too.
-4. At zero it takes the countdown *off* the wall, waits for it to clear, and photographs the wall again.
+4. At zero it takes the countdown *off* the wall, waits **a full second and a bit** for it to clear, and photographs the wall again.
 5. Whatever got darker between the two frames is the thing. It takes the largest such region, wraps it in its **convex hull**, thins that to eight or so points, and maps them through the camera calibration into output space.
 
 Then it hands you the shape and gets out of the way.
 
+**Why step 4 waits so long.** Both photographs have to be of the *same plain white plate*, with the only difference between them being the thing that walked into the room. The difference is signed — only what got *darker* counts — so anything the tool itself is still painting when the shutter fires does not corrupt the shape a little, it *becomes* the shape. A countdown still on the wall darkens the whole lit rectangle, and that is exactly what you get back.
+
+Taking it off the output and waiting a few frames looks like enough, and it is not: **a camera is not a screen.** Between the projector painting something and the browser being handed that picture there is the display's own lag, the sensor's exposure window, the camera's internal pipeline, USB, and decoding — a fifth of a second on an ordinary webcam and *longer in a dim room*, because darker means a longer exposure. The wait has to outlast all of that. It is set longer than the wait before the *first* photograph, which is what makes it impossible for a camera slow enough to still see the countdown to have been fast enough to see a clean plate the first time.
+
 **Simple and generous, not faithful.** An earlier version traced the blob's actual contour and handed back thirty points — every wrinkle of a jacket and every gap under an arm, recorded exactly. That is the wrong answer twice over: the margin has to inflate the shape anyway, so detail at the outline is detail that gets swallowed, and a dozen points can be pushed by hand at a wall where thirty cannot. The hull removes every concavity by construction, with nothing to tune, and it can only ever make the shape *bigger* — which is the one direction a mask is allowed to be wrong in. A standing person comes back looking roughly like a coffin, which is what a standing person's shadow is once you stop pretending to trace fingers.
+
+**If the plate was not clean, you get told, not a shape.** No timer can rule out every way the wall changes between two photographs taken ten seconds apart — a camera's auto-exposure quietly stopping down does it too, and no amount of waiting fixes that one. So before anything is traced, the tool checks how much of the *lit rectangle* went darker. Past half of it, that is the plate itself changing rather than something standing in front of it, and it refuses: *"the projected field was not clean when the second photo was taken — 87% of it went darker… nothing traced."* A wrong shape that looks like a shape is the worst thing this gesture could hand back, and it used to hand back exactly that.
 
 **It writes the outline.** What the content does about that is the counting rule above: a silhouette comes back with more than four points, so the content stays where it was warped and starts being clipped by the shape. A flat rectangular thing — a placed box, a panel — comes back as four points, and four points *are* a frame, so the content lands on it. Adopt the boundaries of a box on a video shape and the video is on the box.
 

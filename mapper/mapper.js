@@ -2009,13 +2009,54 @@ const SHADOW_CAPTURE_WIDTH = 320;
 // the same exposure, which matters more than either being taken quickly.
 const SHADOW_PLATE_SETTLE_MS = 900;
 
-// After the countdown comes off the output, before frame B. Frame A never
-// contained the countdown and frame B must not either - a number still on
-// its way off the wall would difference straight into the traced shape.
-const SHADOW_CLEAR_SETTLE_MS = 300;
+// THE INVARIANT, and everything else in this section serves it:
+//
+//   FRAMES A AND B MUST BE PHOTOGRAPHS OF THE SAME PLAIN WHITE PLATE AND
+//   NOTHING ELSE. The only difference between them is the thing that walked
+//   into the room.
+//
+// Anything the TOOL paints - the countdown, a status plate, a focus ring - has
+// to be off the output before either shutter, with a settle elapsing
+// afterwards. The difference is signed, so anything that darkens the plate
+// between the two captures is read as the thing being traced; a countdown
+// still on the wall at capture time does not corrupt the shape a little, it
+// becomes the shape.
+//
+// AND A DOM IS NOT A CAMERA, which is what the v1.2.1 build got wrong. Taking
+// the countdown off the output and then sleeping 300ms looks like it honours
+// the invariant, and in the tool's own timeline it does - measured on
+// 2026-08-23, the projector showed a clean plate for 286ms before the shutter.
+// But a camera does not report the present. Between the projector painting a
+// frame and drawImage(video) yielding it there is the display's own latency,
+// the sensor's exposure window, the camera's internal pipeline, USB transport
+// and Chrome's decode - 100-200ms on an ordinary webcam and LONGER IN A DIM
+// ROOM, because a darker room means a longer exposure. That total is the
+// number this settle has to beat, and 300ms sat squarely inside it. So a run
+// came back tracing the whole lit rectangle: frame B was a photograph of a
+// countdown that had already left the screen.
+//
+// 1200ms is chosen to clear that band with room to spare, and it costs a
+// person a second once per capture. It is still a GUESS - the camera's latency
+// cannot be measured from here - which is exactly why the failsafe below
+// exists rather than being belt to this brace.
+const SHADOW_CLEAR_SETTLE_MS = 1200;
 
 // Anything smaller than this fraction of the frame is noise, not a person.
 const SHADOW_MIN_BLOB_FRACTION = 0.002;
+
+// THE FAILSAFE. If more than this fraction of the LIT RECTANGLE got darker
+// between the two photographs, the plate was not clean and the difference is
+// not a thing standing in front of it. A performer's shadow is a fraction of
+// the wall; half of the whole lit area is the plate itself changing.
+//
+// This exists because the failure it catches produced a plausible-looking
+// GARBAGE OUTLINE rather than an error - a shape, with the right number of
+// points, that simply was not the performer. This repo's whole discipline is
+// that failures are visible, and a wrong shape that looks like a shape is the
+// worst thing this gesture can hand back. It also catches the other way the
+// plate stops being clean, which no settle can fix: the camera's auto exposure
+// drifting between two photographs taken ten seconds apart.
+const ADOPT_MAX_DARKENED_FRACTION = 0.5;
 
 // A HANDFUL OF POINTS, NOT A TRACING. Thirty points around a real silhouette
 // came back jagged - every wrinkle of a jacket and every gap under an arm
@@ -2234,27 +2275,54 @@ function simplifyRingToRange(contour, minPts, maxPts) {
 }
 
 // A -> B, in normalized OUTPUT space. Everything above, wired together.
+//
+// Returns { ring } on success, or { reason } saying which way it failed -
+// "nothing" and "dirty-plate" are different things to tell somebody standing
+// at a wall, and collapsing them into a null would put the failure this
+// release exists to catch back into the same bucket as "you were not in shot".
 function shadowRingFromFrames(frameA, frameB, threshold, H) {
-  if (!frameA || !frameB || frameA.w !== frameB.w || frameA.h !== frameB.h) return null;
+  if (!frameA || !frameB || frameA.w !== frameB.w || frameA.h !== frameB.h) return { reason: "nothing" };
   const { w, h } = frameA;
 
   const mask = new Uint8Array(w * h);
-  for (let i = 0; i < mask.length; i++) {
-    // SIGNED, on purpose: a shadow is a DROP in light, so only pixels that
-    // got darker count. Taking the signed difference discards everything
-    // that got brighter for free - which is most of what the camera's auto
-    // exposure does when a body walks into a bright frame.
-    mask[i] = frameA.luma[i] - frameB.luma[i] > threshold ? 1 : 0;
+  // Counted over the LIT RECTANGLE rather than the whole camera frame: the
+  // camera sees the room as well as the wall, and a person walking about
+  // outside the projector's throw is not what this is measuring. H maps
+  // normalized camera space onto the unit output square, so "inside the lit
+  // rectangle" is just "lands in [0,1] on both axes" - the same mapping the
+  // traced ring goes through a few lines below, asked a cheaper question.
+  let lit = 0;
+  let darkenedInsideLit = 0;
+  for (let y = 0, i = 0; y < h; y++) {
+    for (let x = 0; x < w; x++, i++) {
+      // SIGNED, on purpose: a shadow is a DROP in light, so only pixels that
+      // got darker count. Taking the signed difference discards everything
+      // that got brighter for free - which is most of what the camera's auto
+      // exposure does when a body walks into a bright frame.
+      const darker = frameA.luma[i] - frameB.luma[i] > threshold;
+      mask[i] = darker ? 1 : 0;
+      const u = applyHomography(H, [(x + 0.5) / w, (y + 0.5) / h]);
+      if (!u || u[0] < 0 || u[0] > 1 || u[1] < 0 || u[1] > 1) continue;
+      lit++;
+      if (darker) darkenedInsideLit++;
+    }
+  }
+
+  // The failsafe. Before anything is traced, because a shape traced out of a
+  // dirty plate is worse than no shape at all.
+  const darkenedFraction = lit > 0 ? darkenedInsideLit / lit : 0;
+  if (darkenedFraction > ADOPT_MAX_DARKENED_FRACTION) {
+    return { reason: "dirty-plate", darkenedFraction };
   }
 
   const blob = largestBlob(mask, w, h);
-  if (!blob) return null;
+  if (!blob) return { reason: "nothing" };
 
   // Hull first, thin second. RDP only ever removes points, and removing a
   // vertex from a convex polygon leaves a convex polygon, so what comes out of
   // here is still convex and still covers the blob's own extremes.
   const hull = convexHull(blobExtremePoints(blob, w, h));
-  if (!hull || hull.length < SHAPE_MIN_POINTS) return null;
+  if (!hull || hull.length < SHAPE_MIN_POINTS) return { reason: "nothing" };
 
   const simplified = simplifyRingToRange(hull, SHADOW_TARGET_MIN_POINTS, SHADOW_TARGET_MAX_POINTS);
 
@@ -2266,7 +2334,7 @@ function shadowRingFromFrames(frameA, frameB, threshold, H) {
     const p = applyHomography(H, [(x + 0.5) / w, (y + 0.5) / h]);
     if (p) ring.push(p);
   }
-  return ring.length >= SHAPE_MIN_POINTS ? ring : null;
+  return ring.length >= SHAPE_MIN_POINTS ? { ring } : { reason: "nothing" };
 }
 
 function setAdoptStatus(text) {
@@ -2339,19 +2407,31 @@ async function adoptShapeBoundaries(shapeId) {
     }
 
     // 4. Take the countdown off the output FIRST, then settle, then capture.
+    //    The settle has to outlast the camera's end-to-end latency, not just
+    //    the browser's repaint - see SHADOW_CLEAR_SETTLE_MS for why that is a
+    //    much bigger number than it looks like it should be.
     showCountdown(null);
-    setAdoptStatus("Capturing\u2026");
+    setAdoptStatus("Clearing the wall\u2026");
     await delay(SHADOW_CLEAR_SETTLE_MS);
+    setAdoptStatus("Capturing\u2026");
     const frameB = grabCameraFrameLuma(video);
 
-    // 5/6. Difference, blob, trace, simplify, and map into output space.
-    const ring = shadowRingFromFrames(frameA, frameB, adoptThreshold, H);
-    if (!ring) {
+    // 5/6. Difference, blob, hull, simplify, and map into output space.
+    const result = shadowRingFromFrames(frameA, frameB, adoptThreshold, H);
+    if (result.reason === "dirty-plate") {
+      const pct = Math.round(result.darkenedFraction * 100);
+      setAdoptStatus(
+        `The projected field was not clean when the second photo was taken - ${pct}% of it went darker, which is the plate itself rather than something standing in front of it. Nothing traced. Check that nothing else is being projected, and try again.`
+      );
+      return;
+    }
+    if (!result.ring) {
       setAdoptStatus(
         "Nothing changed between the two frames. Lower the threshold, or check that the thing was in the beam, inside the camera's view, and absent from the first frame."
       );
       return;
     }
+    const ring = result.ring;
 
     // The OUTLINE only. A shape's content frame is not this gesture's to
     // touch: on a video shape the animation goes on being warped exactly as

@@ -386,6 +386,14 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   same downbeat" was loose prose, not a dependency: alpha WebMs ride `registeredVideoEls` and
   `transportPlaying` exactly like video layers. Investigated and reported rather than assumed, which
   is the correct handling of an ambiguous deletion.
+- **2026-08-24: `v1.3.0` — shapes learn that a song is a thing.** Round B3 of the integration queue.
+  Four song-aware types (`song-lyrics`, `song-video`, `song-intro`, `gig-contact`), a gig folder the
+  tool reads `gig.json` out of and writes `visuals.json` back into, two levels of visual setup, and
+  the text panel collapsed into a format bar. **Schema v9**: `TEXT_ROLES` retires into the type and
+  the top-level `songVisuals` table arrives. A v8 mapping opens and paints an identical frame,
+  verified property by property against the `main` build. Design decisions belong to
+  `projects/tramoya-integration/project-context.md`; the implementation decisions are in
+  **"Song-aware shape types (v1.3.0)"** below.
 
 ## V1 design (2026-08-20)
 
@@ -1534,6 +1542,107 @@ Three angles, none decided:
    is no — the file boundary is a genuine architectural difference, not a feature gap — but the
    question should be re-asked, not assumed.
 
+## Song-aware shape types (v1.3.0, 2026-08-24)
+
+**The design is not this file's.** It was decided in the integration design sessions and lives in
+`projects/tramoya-integration/project-context.md` — "Song-aware shape types, and two levels of visual
+setup", "The `song-intro` template", "The lookup returns a set", and "Muralista's boundary does not
+move, and dummy text is why" — with the file shapes in
+`projects/tramoya-integration/docs/gig-file.md`. What follows is only what building it decided, which
+is the part those documents left open.
+
+### `TEXT_ROLES` retires into the type, and the migration is a rename
+
+`role: "lyrics"` becomes type `song-lyrics`; `role: "static"` becomes a plain `text` layer. Nothing
+else moves — string, size, aspect, alignment, colour and outline all carry across — so **a v8 mapping
+opens under v9 and paints an identical frame**, verified (see below). The alternative considered and
+rejected was migrating a lyrics layer onto the fixed dummy string: it would have thrown away a line
+Jorge pasted in on purpose, to gain nothing the next click could not.
+
+**The dummy is a default, not a hardcoded render.** A `song-lyrics` shape carries an editable preview
+string, seeded with `LYRICS_PREVIEW_TEXT` the moment the type is chosen. Making it uneditable would
+have made the migration lossy and would have removed the only handle for tuning against a line whose
+length actually matters; making it default to empty would have let a shape look finished while
+carrying nothing. The string itself is Jorge's and is not the implementer's to pick.
+
+### Two of the intro's three parts are stand-ins, and they say so on the wall
+
+The title is real when a gig is connected and a song is being previewed, because song ids and titles
+are exactly what `gig.json` gives up. **The translation and the tagline live in the song file, which
+is below Muralista's line**, so they are placeholders that read as placeholders. The tagline
+placeholder is deliberately long: it is the fragile part of the template and the proportions are most
+likely to be wrong about it.
+
+`gig.json`'s example in `gig-file.md` carries song ids with no titles while the prose governing it
+says titles are what Muralista reads. `readGigFile` takes a title if there is one and falls back to
+the id, which is the honest reading of a file that has neither.
+
+### The QR code is a file, not a generator
+
+`gig-contact` names a media file for its QR and resolves it through the media folder like any other
+source. **Muralista does not encode one.** It has no build step, no dependencies and no network, and
+a hand-rolled QR encoder here would be several hundred lines of error-correction arithmetic whose
+failure mode is a code that scans as the wrong URL. A PNG generated elsewhere can be checked with a
+phone off the wall before the doors open, which is the only test that counts.
+
+The contact line is forced onto one line (`white-space: nowrap`, plus a sanitizer that collapses a
+pasted newline). "One line of text plus an optional QR code" is the design; without the rule it is a
+description that a long line quietly breaks.
+
+### The proportions live in the stylesheet, and only there
+
+Every measure in the intro card is a multiple of `--t`, the title size, which auto-fit binary-searches
+over — so the whole block shrinks as one thing and the mock's proportions survive at any size. They
+are `calc()` expressions in `mapper.css`. `mapper.js` keeps exactly two of them, the ceiling the fit
+searches below and the inset the layout box is padded by, because JS is the only thing that reads
+those. An earlier draft had all ten as JS constants that nothing read: two copies of one fact,
+waiting to disagree.
+
+### The gig-level default is adopted, not configured
+
+The first shape given a song-aware type becomes the gig's default for it, with no second gesture. The
+overwhelmingly common room has one of each, and this is what "the authoring UI offers one shape per
+type for now" looks like from the hand's side. A type that already has a default is left alone: the
+second lyrics shape is an alternative to pick, not a silent replacement. **A migrated `song-lyrics`
+shape gets no default**, because migration happens with no gig in sight; the gig assignment row shows
+"None" and one click fixes it.
+
+**No size-one cap exists anywhere.** The picker offers one shape and the model holds a set; a
+hand-edited `visuals.json` naming two already resolves to two and lights both, and the picker says
+"2 shapes (edited by hand)" rather than silently truncating it.
+
+### Song visual setup is a mode, and the wall shows it
+
+While a song is selected, the output previews that song: shapes it does not point at are **not
+rendered**, and the contact panel is dark because a song is playing. In gig visual setup nothing is
+dark — no song is playing at a desk, and you cannot place a shape you cannot see. The control preview
+dims and dashes the same shapes, so the desk and the wall agree.
+
+### What is verified, and what is not
+
+**Verified in real headed Chrome against the rendered output**, with the output role driven in a
+1280×800 iframe so both builds could be measured at identical dimensions:
+
+- **The migration.** A v8 mapping carrying both text roles, a six-point clipped outline, a fill with a
+  margin and a test pattern was rendered under the `main` build and under this one, and every property
+  that determines the painted frame was compared: the pattern layer's canvas as a PNG data URL, every
+  `matrix3d`, every `clip-path`, the fitted font sizes, the counter-scale, the strokes, the shadows,
+  the colours and the text. **86,076 characters, identical.**
+- The boundary: a stand-in gig folder handed the tool a full `gig.json`, and `gig` came back holding
+  `id`, `venue` and `songs` (id and title) — no `setlist`, no `date`, no `file` paths.
+- Per-song reassignment, the set of two, the type-picker gate with and without a gig, the empty-gig
+  message, `visuals.json`'s contents, and the four new types painting at the projector size.
+
+**Not verified, and it is the same gap the media folder has:** `showDirectoryPicker` opens an OS
+dialog no browser automation can drive, so the gig folder was exercised through a stand-in handle.
+**The round trip only a person can run is: pick a gig folder, quit Chrome, reopen, and see whether it
+comes back granted or asks to reconnect** — and, once, that `visuals.json` really appears on disk
+beside `gig.json`.
+
+**Never read off a wall.** The intro template's proportions, the contact panel's QR size and the
+placeholder text were all judged on a monitor. **The tagline is the first thing to check from the back
+of a real room**, and the QR is the second: it has to scan from where people actually stand.
+
 ## Where the state actually lives
 
 The working venue mappings are not in git. They live in the browser's `localStorage`, under the key
@@ -1541,6 +1650,16 @@ The working venue mappings are not in git. They live in the browser's `localStor
 rename these" table above). Exported venue JSONs sit in `mapper/media/`, alongside the gitignored
 video assets. This file and the repo's committed code describe the tool; the actual state of any
 given mapping is on whichever machine last drove the calibration.
+
+Since v1.3.0 there are two more places, and neither is in git either:
+
+- **`<gig>/visuals.json`**, in whichever folder holds that gig's `gig.json`. Muralista is its sole
+  writer and writes it only when **Save visuals.json** is pressed; nothing autosaves it. The line in
+  the sidebar saying when it was last written **disappears on the next edit**, because from that
+  moment the folder is behind the screen.
+- **The gig folder's directory handle**, in IndexedDB under `muralista`/`handles`/`gigFolder`,
+  beside the media folder's. A handle is a browser object and cannot live in a JSON, which is why the
+  mapping never mentions the folder and why a mapping made on one machine opens on another.
 
 ## Pointers
 

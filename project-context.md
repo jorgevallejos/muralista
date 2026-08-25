@@ -1624,29 +1624,21 @@ rendered**, and the contact panel is dark because a song is playing. In gig visu
 dark — no song is playing at a desk, and you cannot place a shape you cannot see. The control preview
 dims and dashes the same shapes, so the desk and the wall agree.
 
-### A gig is a source of input, not a mode (Jorge, 2026-08-25)
+### Ungating the types from the gig: declined, with a trigger (Jorge, 2026-08-25)
 
-**This reverses a constraint B3 implemented deliberately**, and the reasoning lives in
-`projects/tramoya-integration/project-context.md`, "A gig is a source of input, not a mode", which
-owns it. What belongs here is what it means for this tool.
+**The type gate B3 shipped stays exactly as it is**, and a gig-less mapping stays unpersisted. Full
+reasoning and the analysis behind the alternative live in
+`projects/tramoya-integration/project-context.md`, "A gig as a source of input: considered and
+declined", which owns the decision.
 
-**The gig gives Muralista two things and no more:** the room's identity, and a list of named
-subjects. **Only per-song reassignment needs the second**, so the type gate was drawn one notch too
-coarse. The four song-aware types become available with or without a gig — they already preview
-against placeholders, because this tool never reads song content — and what stays gated is `bySong`.
-The empty-gig message stops meaning *you cannot do this yet* and starts meaning *no songs to
-deviate*.
+The short of it: needing a gig was proposed as a cost worth removing, and **creating a gig is
+something Jorge does before visiting a venue anyway**, so the cost is not real. **Revisit once
+Muralista is being used several times** — the argument is entirely about repetition and earns its
+keep only when the repetition is.
 
-**A gig-less session persists**, into a folder the user picks, as the same `visuals.json` with `gig`
-and `bySong` absent and a room name and mapping date in their place. Same schema, same writer, one
-filename. **Muralista still never creates or adopts a gig**: that constraint is untouched, and
-stamping a gig-less file into a gig is deliberately not built.
-
-**What made it urgent rather than tidy:** placing a `song-intro` shape to judge the tagline from the
-back of a room required inventing a gig, and re-mapping the wall every session on top of that. The
-first real use of this tool was the use it locked out.
-
-Round B4 in `projects/tramoya-integration/kickoffs.md`, behind B2 in this repo.
+**Worth keeping from the analysis, because it is a true fact about this tool's boundary:** the gig
+supplies only the room's identity and a list of named subjects, and **only `bySong` consumes the
+second**. None of the four types needs song content. Whoever revisits this starts there.
 
 ### What is verified, and what is not
 

@@ -394,6 +394,12 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   verified property by property against the `main` build. Design decisions belong to
   `projects/tramoya-integration/project-context.md`; the implementation decisions are in
   **"Song-aware shape types (v1.3.0)"** below.
+- **2026-08-25: `v1.4.0` — the warp becomes shared code.** Round B2 of the integration queue, the
+  one B3 was written to unblock. The `WARP` section came out of `mapper.js` into `mapper/warp.js`, a
+  pure ES module Pregonero will vendor and execute on stage. A **minor and not a patch** despite
+  being a pure refactor for this repo: nothing about Muralista changed, but the file became a
+  surface another repo depends on, and that is a new thing in the world. See **"The warp as shared
+  code (v1.4.0)"** below.
 
 ## V1 design (2026-08-20)
 
@@ -1618,6 +1624,30 @@ rendered**, and the contact panel is dark because a song is playing. In gig visu
 dark — no song is playing at a desk, and you cannot place a shape you cannot see. The control preview
 dims and dashes the same shapes, so the desk and the wall agree.
 
+### A gig is a source of input, not a mode (Jorge, 2026-08-25)
+
+**This reverses a constraint B3 implemented deliberately**, and the reasoning lives in
+`projects/tramoya-integration/project-context.md`, "A gig is a source of input, not a mode", which
+owns it. What belongs here is what it means for this tool.
+
+**The gig gives Muralista two things and no more:** the room's identity, and a list of named
+subjects. **Only per-song reassignment needs the second**, so the type gate was drawn one notch too
+coarse. The four song-aware types become available with or without a gig — they already preview
+against placeholders, because this tool never reads song content — and what stays gated is `bySong`.
+The empty-gig message stops meaning *you cannot do this yet* and starts meaning *no songs to
+deviate*.
+
+**A gig-less session persists**, into a folder the user picks, as the same `visuals.json` with `gig`
+and `bySong` absent and a room name and mapping date in their place. Same schema, same writer, one
+filename. **Muralista still never creates or adopts a gig**: that constraint is untouched, and
+stamping a gig-less file into a gig is deliberately not built.
+
+**What made it urgent rather than tidy:** placing a `song-intro` shape to judge the tagline from the
+back of a room required inventing a gig, and re-mapping the wall every session on top of that. The
+first real use of this tool was the use it locked out.
+
+Round B4 in `projects/tramoya-integration/kickoffs.md`, behind B2 in this repo.
+
 ### What is verified, and what is not
 
 **Verified in real headed Chrome against the rendered output**, with the output role driven in a
@@ -1642,6 +1672,54 @@ beside `gig.json`.
 **Never read off a wall.** The intro template's proportions, the contact panel's QR size and the
 placeholder text were all judged on a monitor. **The tagline is the first thing to check from the back
 of a real room**, and the QR is the second: it has to scan from where people actually stand.
+
+## The warp as shared code (v1.4.0, 2026-08-25)
+
+**The contract is not in this repo, and that is deliberate.** `projects/tramoya-integration/docs/warp-contract.md`
+owns it, on the same principle as `gig-file.md`: how two tools agree is a fact about two tools at
+once, and it belongs where both are in view. This repo owns the **code**, because ownership of the
+warp belongs where it can be proved right — Muralista has the camera and closes the loop against a
+real wall; Pregonero cannot tell you whether a warp is correct, because it cannot see the wall.
+
+**What moved:** `solveLinearSystem`, `computeHomography`, `homographyToMatrix3dString`,
+`applyHomography`, `UNIT_SQUARE_CORNERS`, `UNIT_SIZE`, `UNIT_SRC_CORNERS` and `frameMatrix3d` — the
+whole `WARP` section, byte for byte. Six of those are exported; the Gaussian elimination and the
+unit-box source corners stay private, because no caller needs them and a smaller surface is a
+smaller promise. Nothing that touches an element, a document or app state went with them.
+
+**mapper.js became a module, and one consequence is worth knowing rather than rediscovering.**
+Strict mode is not it: mapper.js has declared `"use strict"` since it was written, so the module's
+strictness changes nothing. What does change is that nothing mapper.js declares at top level lands
+on `window` any more, so the DevTools console can no longer poke at the app's internals. That costs
+nothing for how this repo actually verifies itself — "check what is *painted*, not what is
+reachable", since the 2026-07-02 desk pass — but it does change the debugging reflex.
+
+**The cache-busting token had to be extended to reach it.** A relative specifier inside a module
+does NOT inherit the query string of the importing file: `"./warp.js"` seen from `mapper.js?v=123`
+resolves with no token at all, which is the stale-subresource bug again and this time on the file
+whose numbers decide where every shape lands. `mapper.html` now writes an **import map** before the
+module graph is fetched, so mapper.js keeps a plain `"./warp.js"` and still gets the busted URL. An
+import map is the browser's own answer and needs no build step, which is the constraint the whole
+module is built under.
+
+**Why `frameMatrix3d` takes the output size and always will.** The corners are normalised and
+resolution-independent; the matrix is built in real stage pixels. The projector at a venue is not
+the display the room was mapped on, so a matrix frozen into `visuals.json` — or cached across a
+resize — renders perfectly and lands in the wrong place, with nothing crashing and nothing warning.
+Save the recipe, not the cake.
+
+**No package registry, no submodule, no build pipeline, and the trigger for revisiting that is
+named in the contract:** a *third* consumer, or the day Pregonero needs the warp changed for a
+reason Muralista does not share. Until then, ceremony for 157 lines.
+
+**How this build was verified.** The contract test (`node --test mapper/warp.test.mjs`, 16
+assertions) pins the maths against golden `matrix3d` strings. Muralista's own behaviour was checked
+the way this repo always checks: a six-shape mapping — pattern, text, fill with a five-point
+outline, `song-lyrics`, `song-intro`, `gig-contact`, including quads that overshoot the frame — was
+loaded into both the `main` build and this one, and the output window's painted result compared
+node by node at two output sizes, 1280x720 and 1024x768. Every `matrix3d`, `clip-path`, computed
+font size, stroke, colour and bounding rect matched, and so did the pattern canvas hashed as a PNG.
+The same real-mouse click and arrow-key nudge on both builds persisted identical geometry.
 
 ## Where the state actually lives
 

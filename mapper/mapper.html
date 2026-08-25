@@ -28,14 +28,41 @@
       css.href = "mapper.css?v=" + encodeURIComponent(v);
       document.head.appendChild(css);
 
+      // mapper.js imports warp.js, and a relative specifier inside a module
+      // does NOT inherit the query string of the file doing the importing:
+      // "./warp.js" seen from "mapper.js?v=123" resolves to "warp.js" with no
+      // token at all. Which is exactly the stale-subresource bug again, and
+      // this time on the file whose numbers decide where every shape lands.
+      // An import map is the browser's own answer and needs no build step: it
+      // rewrites the specifier before the module graph is fetched, so
+      // mapper.js keeps a plain "./warp.js" and still gets the busted URL.
+      // It has to be in place BEFORE any module script starts loading, which
+      // is why it goes in here, synchronously, and not alongside the
+      // DOMContentLoaded injection below.
+      var imports = document.createElement("script");
+      imports.type = "importmap";
+      imports.textContent = JSON.stringify({
+        imports: { "./warp.js": "./warp.js?v=" + encodeURIComponent(v) },
+      });
+      document.head.appendChild(imports);
+
       // mapper.js runs at top level against an already-parsed DOM - it used to
       // sit at the end of <body>. A script element created in JS is async no
       // matter what, and `defer` does not apply to it (defer is honoured only on
       // parser-inserted scripts), so injecting it from <head> would race the
       // parser and sometimes run before the DOM exists. Holding the injection
       // until DOMContentLoaded reproduces the old end-of-body guarantee exactly.
+      //
+      // It is a MODULE now, because it imports warp.js. Strict mode is not a
+      // change - mapper.js has declared "use strict" since it was written. The
+      // one consequence worth knowing rather than rediscovering is that nothing
+      // mapper.js declares at top level lands on `window` any more, so the
+      // console can no longer poke at the app's internals. That does not change
+      // what gets painted, and this repo has verified what is PAINTED rather
+      // than what is reachable since the 2026-07-02 desk pass.
       document.addEventListener("DOMContentLoaded", function () {
         var js = document.createElement("script");
+        js.type = "module";
         js.src = "mapper.js?v=" + encodeURIComponent(v);
         document.body.appendChild(js);
       });

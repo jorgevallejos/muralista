@@ -1,0 +1,47 @@
+name: CI
+
+# The contract test is the whole point of this workflow. `mapper/warp.js` is the
+# one file another repo runs, and `mapper/warp.test.mjs` pins its output as
+# golden matrix3d strings taken from a build verified at a real projector. Until
+# now the guarantee on this side was "someone ran it"; see `warp-contract.md` in
+# the tramoya-integration vault.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22 is the floor declared in the header of `warp.test.mjs`: it is the
+        # first release that loads `warp.js` as an ES module by syntax detection,
+        # which is what lets this repo stay free of a package.json. 24 is current
+        # LTS, so a change that only breaks on newer Node is caught here too.
+        node-version: ["22", "24"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          # No `cache:` on purpose. There is no package.json and no lockfile
+          # here, and there should not be one: `warp.js` is a single file that a
+          # browser <script type="module"> takes as-is. There is nothing to
+          # install, so there is nothing to cache.
+
+      # No install step, no build step, no test framework. `node --test` is the
+      # runner, which is also what lets a consuming repo run this same file
+      # against its vendored copy.
+      - name: Warp contract test
+        run: node --test mapper/warp.test.mjs

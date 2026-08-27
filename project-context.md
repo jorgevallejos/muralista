@@ -1810,6 +1810,110 @@ no migration and none was added: telling a hand-typed line from an untouched def
 decision, not an implementation one. **Re-seed by switching the shape's type away and back, or by
 emptying the field.**
 
+## The intro placeholder is the worst case too (v1.6.0, 2026-08-27)
+
+**Muralista has two independent stand-ins, and only one of them had ever been measured.** v1.5.0
+held `LYRICS_PREVIEW_TEXT` to the real catalogue and replaced it. `INTRO_PLACEHOLDER` — the three
+strings `applySongIntroLayer()` paints — had never been measured against anything at all. Its
+tagline read *"The tagline from the song file goes here, and it is the smallest thing on the wall."*,
+which is a **description**, not a worst case.
+
+**It mattered more than the lyrics one did.** The tagline is the fragile part of the whole design:
+smallest thing on the wall, carrying the sentence the room is meant to leave with, and named as the
+first thing to check at a real wall. Tuning it against a stand-in gentler than reality is exactly
+the v1.5.0 error, on the part with the least margin.
+
+**The corpus.** Same `difficultyOf()` metric as v1.5.0 — Pregonero's `src/worstCase.ts`, used
+verbatim so the two repos report the same three numbers — over `songs/`, 13 song files with
+`_template.json` excluded. The intro template has three parts and each has its own population:
+
+| part | population | strings | max length | max run | max hard rows |
+|---|---|---|---|---|---|
+| title | `title` | 13 | 23 | 9 | 1 |
+| annotation | `title_translations.{es,en,fr,nl}` | 52 | 32 | 9 | 1 |
+| tagline | `intro.{es,en,fr,nl}` | 52 | 80 | 14 | 1 |
+
+`title` equals `title_translations.es` in **all 13 files**, so the 13 titles are a subset of the 52
+annotations: the title axis is backed by 52 strings, not 13, and the annotation's `(32, 9)` bounds
+it. That is what makes a 13-string population usable — it is not a sample, it is the whole
+catalogue, and it is contained in a larger one.
+
+**The old stand-in lost on four of the nine comparisons**: title on length (20 v 23) and longest run
+(5 v 9), annotation on length (26 v 32), tagline on longest run (8 v 14). Only the tagline's length
+was already safe.
+
+**THE TITLE IS WHAT BINDS, and that was the surprise.** Everything in the card is a multiple of
+`--t`, the title size, which auto-fit searches over; the tagline is 0.28 of it and the annotation
+0.20. So an unbreakable run costs the tagline 3.6 times less than it costs the title. Fitting each
+part alone on a 346x864 shape: **title 43.39, tagline 97.31, annotation 128.08, whole block 43.39.**
+The title decides the size of all three every time the fit leaves its ceiling — **a nastier tagline
+alone would have fixed nothing**, which is what makes measuring all three parts the point rather
+than a formality.
+
+**The replacement**, in `mapper.js` beside a comment saying it is a fixture:
+
+```
+annotation: "TRANSLATED TITLE GOES HERE, MODDERPLASLIED"
+title:      "SONG TITLE GOES HERE, MODDERPLASLIED"
+tagline:    "The tagline from the song file goes here, and it is the smallest
+             modderplasherinnering the room takes home."
+```
+
+| part | length | longest run | hard rows | corpus max |
+|---|---|---|---|---|
+| title | 36 | 14 | 1 | 23 / 9 / 1 |
+| annotation | 42 | 14 | 1 | 32 / 9 / 1 |
+| tagline | 107 | 21 | 1 | 80 / 14 / 1 |
+
+**Each part still names itself in plain English**, because saying so on the wall rather than
+pretending is a design property of these two fake parts, not filler. The awkward Dutch carries the
+unbreakable run and nothing else. **`MODDERPLASLIED` and `modderplasherinnering` are fixtures**, not
+prose in Jorge's name — his rule about writing Dutch he would actually say governs drafts in his
+voice, not a string whose only job is to be worse than anything real.
+
+**Hard rows stay at 1 deliberately.** The corpus max is 1, and `.intro-tagline` has no
+`white-space: pre-line`, so a `\n` in any of the three renders as a space. A stand-in carrying one
+would be claiming a row the template cannot paint. Beating the corpus on this axis means matching it.
+
+**The four tagline sizes, re-measured — with the shapes written down this time.** Painted at
+1920x1080, axis-aligned quads, tagline in real wall pixels:
+
+| shape | quad | old stand-in | hardest real content | new stand-in |
+|---|---|---|---|---|
+| half wall | 960x540 | 24.19 px | 24.19 px | 24.19 px |
+| tall side panel | 346x864 | 29.36 px | 16.33 px | 10.50 px |
+| narrow column | 192x648 | 16.29 px | 9.05 px | 5.82 px |
+| small panel | 384x194 | 8.69 px | 8.69 px | 8.69 px |
+
+**The half wall and the small panel sit at the auto-fit ceiling in all three columns**, so nothing
+moves there: the ceiling is `INTRO_TITLE_MAX_SIZE` 0.16 times the tagline's 0.28 = **4.48% of the
+shape's height**, which is 24.19 px on 540 and 8.69 px on 194. Every number that is not at the
+ceiling changed.
+
+**The middle column is the size of the error being corrected.** On a side panel the old stand-in
+previewed the tagline at 29.36 px when the hardest thing the catalogue can actually put there
+renders at 16.33 — **eighty per cent too generous**, on the part with the least margin. Same shape
+of failure as v1.5.0's, and worse in consequence.
+
+**These four shapes are not the four the 2026-08-24 numbers were taken on.** Those were 24.2, 19.0,
+11.4 and 9.2 px, and only the half-wall case could be reproduced, because the quads were never
+recorded — 19.0, 11.4 and 9.2 are **unreproducible and are now history, not a baseline**. The four
+above are the four already written down in the v1.5.0 lyrics table, reused so the intro and lyrics
+measurements are directly comparable, and **every number here carries its quad**. Anyone
+re-measuring records the quad or the number is worthless.
+
+**No proportion was touched and none should be.** 5.82 px on a narrow column is a finding for a real
+wall, and the agreed answer is a **minimum floor in `.intro-tagline`**, never a bigger ratio: a
+bigger ratio inflates the tagline in the large-shape case where it is already fine and costs the
+title its dominance everywhere.
+
+**How it was measured.** `mapper.css` verbatim, the intro card's DOM built exactly as
+`createSongIntroLayerElement()` builds it, and `layOutScaledBox()` and `fitScaledBlock()` copied
+from `mapper.js` with only whitespace differing — driven in real headed Chrome. Wall pixels are the
+fitted `--t` times the part's ratio times the quad's height over `UNIT_SIZE`, which is what
+`matrix3d` does to the unit box. The one number the vault had pinned, the 4.48% ceiling, reproduces
+exactly.
+
 ## Where the state actually lives
 
 The working venue mappings are not in git. They live in the browser's `localStorage`, under the key

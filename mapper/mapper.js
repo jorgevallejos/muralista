@@ -565,12 +565,76 @@ const INTRO_INSET = 0.07; // of the shape's width, left and right
 // ids and titles are the one thing Muralista is allowed to read out of
 // gig.json. The translation and the tagline live in the SONG FILE, which is
 // below the line - so they are stand-ins, and they say so on the wall rather
-// than pretending. The tagline stand-in is long on purpose: it is the part the
-// proportions are most likely to be wrong about.
+// than pretending. Saying so is a design property, not filler, so it survives
+// everything below: each part still names itself in plain English.
+//
+// THIS IS THE SECOND OF MURALISTA'S TWO INDEPENDENT STAND-INS, and it is the
+// one that carries the whole intro card. LYRICS_PREVIEW_TEXT seeds a
+// song-lyrics slot and has exactly one consumer; this one is everything
+// applySongIntroLayer() ever paints. v1.5.0 held the lyrics stand-in to the
+// real catalogue and it lost. This one was never measured against anything at
+// all - its tagline read "The tagline from the song file goes here, and it is
+// the smallest thing on the wall", which is a DESCRIPTION, not a worst case.
+//
+// MEASURED AGAINST songs/ ON 2026-08-27, same difficultyOf() metric as v1.5.0
+// (length excluding hard breaks; longest whitespace-free run; hard rows), 13
+// song files, _template.json excluded:
+//
+//   part         population                        corpus max (len/run/rows)
+//   title        title                    13 str   23 / 9 / 1
+//   annotation   title_translations.*     52 str   32 / 9 / 1
+//   tagline      intro.*                  52 str   80 / 14 / 1
+//
+// `title` equals `title_translations.es` in all 13 files, so the 13 titles are
+// a subset of the 52 annotations and the title axis is backed by 52 strings
+// too, not 13. THE OLD STAND-IN LOST ON FOUR OF THE NINE COMPARISONS: title on
+// length (20 v 23) and run (5 v 9), annotation on length (26 v 32), tagline on
+// run (8 v 14). These three beat the corpus on every axis of every part.
+//
+// HARD ROWS STAY AT 1 ON PURPOSE. The corpus max is 1, and the intro card has
+// no `white-space: pre-line` - a \n in any of these three renders as a space,
+// so a stand-in carrying one would be claiming a row the template cannot
+// paint. Beating the corpus here means matching it.
+//
+// WHAT IT COSTS THE PREVIEW, tagline in real px at 1920x1080 (shapes recorded
+// beside every number this time - the older set was not, and is lost):
+//
+//   shape                     old      hardest real     new
+//   half wall     960x540    24.19        24.19       24.19   (all at ceiling)
+//   tall panel    346x864    29.36        16.33       10.50
+//   narrow col    192x648    16.29         9.05        5.82
+//   small panel   384x194     8.69         8.69        8.69   (all at ceiling)
+//
+// The middle column is the size of the error: on a side panel the old stand-in
+// previewed the tagline at 29.36 px when the hardest thing the catalogue can
+// actually put there renders at 16.33 - EIGHTY PER CENT too generous, on the
+// part with the least margin on the wall. Same failure as v1.5.0's.
+//
+// THE TITLE IS WHAT BINDS, and that was not obvious. The tagline is the
+// FRAGILE part - smallest on the wall - but it is 0.28 of the title, so an
+// unbreakable run costs it 3.6x less. Fitting each part alone on the tall
+// panel: title 43.39, tagline 97.31, annotation 128.08, whole block 43.39.
+// The title decides the size of all three, every time the fit leaves its
+// ceiling. So a nastier tagline alone would have fixed nothing.
+//
+// NO PROPORTION WAS TOUCHED AND NONE SHOULD BE. 5.82 px on a narrow column is
+// a finding for a real wall, and the agreed answer is a minimum floor in
+// `.intro-tagline`, never a bigger ratio - a bigger ratio inflates the tagline
+// in the large-shape case where it is already fine and costs the title its
+// dominance everywhere.
+//
+// THESE ARE TEST FIXTURES, NOT PROSE IN JORGE'S NAME. `MODDERPLASLIED` and
+// `modderplasherinnering` are deliberately awkward Dutch that nobody would say
+// out loud, carried over from the lyrics stand-in on purpose; his rule about
+// writing Dutch he would actually say governs drafts in his voice, not a
+// string whose only job is to be worse than anything real. The failure mode
+// here is somebody improving the prose and silently loosening the guarantee.
+// Anyone changing these should re-run the measurement over `songs/` first.
 const INTRO_PLACEHOLDER = {
-  annotation: "TRANSLATED TITLE GOES HERE",
-  title: "SONG TITLE GOES HERE",
-  tagline: "The tagline from the song file goes here, and it is the smallest thing on the wall.",
+  annotation: "TRANSLATED TITLE GOES HERE, MODDERPLASLIED",
+  title: "SONG TITLE GOES HERE, MODDERPLASLIED",
+  tagline:
+    "The tagline from the song file goes here, and it is the smallest modderplasherinnering the room takes home.",
 };
 
 // =========================================================================

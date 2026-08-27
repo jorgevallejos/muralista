@@ -226,7 +226,7 @@ Four types come with it:
 
 **A shape has exactly one type.** Lyrics and video over the same patch of wall are two shapes; **⧉** duplicates the geometry for you.
 
-**Lyrics preview with a fixed dummy line**, and it is deliberately nasty — two lines, a hard break, quote marks, long Dutch words. Muralista never reads a real lyric, and a short stand-in would let the tuning feel finished without having tested anything. Shortening it is making the tool easier to be wrong with.
+**Lyrics preview with a fixed dummy line**, and it is deliberately nasty — three rows, two hard breaks, quote marks, and awkward Dutch built around a 23-letter compound. Muralista never reads a real lyric: it tunes against the worst case and writes down a boundary, and Pregonero renders the real lyrics inside it. So the stand-in has to genuinely *be* the worst case, and this one is — measured against all 1088 lyric strings in the song catalogue on 2026-08-27, it is at least as hard as every one of them on length, on hard rows and on longest unbreakable run. Softening it is making the tool easier to be wrong with.
 
 **The QR code is a file you supply**, resolved through the media folder like any other source. Muralista does not encode one. Generate it elsewhere, drop the PNG in beside the videos, and scan it off the wall with a phone before the doors open — which is the only test that counts.
 

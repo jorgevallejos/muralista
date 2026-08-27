@@ -486,21 +486,38 @@ function isSongAwareType(type) {
 
 // THE DUMMY LYRIC, AND IT IS NOT A PLACEHOLDER TO BE IMPROVED. Muralista reads
 // no song content at all - see the GIG section for the boundary it is keeping -
-// so a lyrics slot previews with a fixed string. This one is chosen (Jorge,
-// 2026-08-24) and is deliberately nasty: two lines, a hard break, quote marks,
-// a comma-heavy Dutch sentence with long words in it.
+// so a lyrics slot previews with a fixed string. Deliberately nasty: three
+// rows, two hard breaks, quote marks, a comma-heavy Dutch sentence with a very
+// long compound in it.
+//
+// IT IS AWKWARD DUTCH ON PURPOSE AND MUST STAY THAT WAY. Nobody would say
+// "modderplasherinneringen" out loud. Jorge's rule about writing Dutch he
+// would actually say governs drafts in his name; this is a test fixture, and
+// its whole job is to be a worse case than anything real. SMOOTHING IT OUT
+// BREAKS THE TOOL'S GUARANTEE rather than improving its prose.
 //
 // The reason it is nasty is the reason it is not a short "Lorem ipsum":
-// LEGIBILITY FROM THE BACK OF A DARK ROOM IS THE TOP UNTESTED ASSUMPTION IN
-// THE WHOLE DESIGN, and a short stand-in makes the tuning FEEL finished while
-// having tested nothing. Anyone shortening it should understand they are
-// making the tool easier to be wrong with.
+// Muralista tunes against the worst case and emits a BOUNDARY, and Pregonero
+// renders the real lyrics inside that boundary (Jorge, 2026-08-27). A stand-in
+// that is not actually the worst case produces a boundary that is too
+// generous, and every real line harder than it renders smaller than tuned.
+//
+// WHICH IS WHAT HAPPENED. The previous stand-in - two rows, 91 characters,
+// longest unbreakable run 11 - was measured against every lyric string in
+// `songs/` on 2026-08-27 and LOST ON 36 OF 1088: none on total length, but 35
+// on the longest unbreakable run (`ontdekkingsreiziger` is 19 against its 11)
+// and one, `paso`'s English, on hard rows. This string beats the whole
+// catalogue on all three axes at once: 120 characters against 91, an
+// unbreakable run of 24 against 19, three hard rows against three. Anyone
+// changing it should re-run that measurement over `songs/` first.
 //
 // It is the DEFAULT of a real, editable field rather than a hardcoded render,
 // because a v8 mapping arrives carrying a lyric line somebody pasted in on
-// purpose and migration has no business throwing that away.
+// purpose and migration has no business throwing that away. The cost is that a
+// mapping made before this change still carries the OLD string: re-seed it by
+// switching the shape's type away and back, or by emptying the field.
 const LYRICS_PREVIEW_TEXT =
-  '"Wat een lekkernij zul jij zijn," zucht hij,\nterwijl ik denk aan mijn vertrouwde modderplas.';
+  '"Wat een lekkernij zul jij zijn," zucht hij,\nen ik proef al het onvermijdelijke afscheid\nvan mijn modderplasherinneringen.';
 
 // =========================================================================
 // SONG INTRO TEMPLATE (numbers; the painting is in the output half)
@@ -4639,7 +4656,7 @@ function buildTextLayerControls(container, shape, layer) {
   const textHint = document.createElement("p");
   textHint.className = "layer-hint";
   textHint.textContent = isSlot
-    ? "The dummy line, and it is deliberately nasty: two lines, a hard break, quote marks, long words. Pregonero fills this slot from the song file on the night — this string is only ever what the layout is tuned against, so shortening it makes the tuning feel finished without having tested anything."
+    ? "The dummy line, and it is deliberately nasty: three rows, two hard breaks, quote marks, and a compound nobody would say out loud. It is measured against every line in the catalogue and is harder than all of them. Pregonero fills this slot from the song file on the night — this string is only ever what the layout is tuned against, so softening it makes the tuning feel finished without having tested anything."
     : "Wraps on word boundaries, and a line break here is a line break on the wall. Paste the longest line you will actually use — that is the one the layout has to survive.";
   container.appendChild(textHint);
 

@@ -400,6 +400,22 @@ Process for v2: still spike discipline (no test suite), but the **git repo is in
   being a pure refactor for this repo: nothing about Muralista changed, but the file became a
   surface another repo depends on, and that is a new thing in the world. See **"The warp as shared
   code (v1.4.0)"** below.
+- **2026-08-26: `v1.4.1` — the contract test runs itself.** Repo infrastructure only, and recorded
+  here because a release list that skips a release misleads. `mapper/warp.js` and
+  `mapper/warp.test.mjs` are byte-identical to `v1.4.0`; what changed is that
+  `.github/workflows/ci.yml` runs `node --test mapper/warp.test.mjs` on every push and PR against
+  `main`, on Node 22 and 24, 16/16 on both. Before this the contract test shipped here but was
+  enforced by hand. PR #21.
+- **2026-08-27: `v1.5.0` — the dummy string becomes the real worst case.** A **minor and not a
+  patch**, because both what the tool previews and the boundary it emits change. The stand-in a
+  `song-lyrics` slot is seeded with was measured against the whole song catalogue and lost: **36 of
+  1088 lyric strings were harder than it**, 35 on the longest unbreakable run and one on hard rows.
+  Muralista tunes against the worst case and emits a boundary Pregonero renders inside, so a
+  stand-in that is not the worst case emits a boundary that is too generous — nothing spills on a
+  wall, because Pregonero shrinks a line rather than spilling it, but those lines render smaller
+  than tuned. The replacement beats the entire catalogue on all three axes at once. **No proportion
+  moved and no schema moved**: it is a seed value. See **"The dummy string is the worst case, and it
+  was measured (v1.5.0)"** below.
 
 ## V1 design (2026-08-20)
 
@@ -1712,6 +1728,87 @@ loaded into both the `main` build and this one, and the output window's painted 
 node by node at two output sizes, 1280x720 and 1024x768. Every `matrix3d`, `clip-path`, computed
 font size, stroke, colour and bounding rect matched, and so did the pattern canvas hashed as a PNG.
 The same real-mouse click and arrow-key nudge on both builds persisted identical geometry.
+
+## The dummy string is the worst case, and it was measured (v1.5.0, 2026-08-27)
+
+**Why this mattered enough to be a release.** Since 2026-08-27 the stand-in is load-bearing:
+*Muralista tunes against the worst case and emits a boundary; Pregonero renders the real lyrics
+inside that boundary* (Jorge — the decision lives in
+`projects/tramoya-integration/project-context.md`, "Muralista sets the boundary, Pregonero renders
+inside it"). That only holds if the stand-in genuinely is the worst case. It was not.
+
+**The measurement, re-run rather than taken on trust.** The metric is Pregonero's
+`src/worstCase.ts` `difficultyOf()`, used verbatim so the two repos are talking about the same three
+numbers: **length** (characters, hard breaks themselves excluded), **longest unbreakable run** (the
+longest whitespace-free token, punctuation included) and **hard rows** (rows the string arrives
+already committed to). A string is harder on **any** axis, not all three. The corpus is every
+`lyrics[].{es,en,fr,nl}` value in `songs/` — 13 song files, `_template.json` excluded — which is
+**1088 strings**, the same population round G reported.
+
+| | length | longest run | hard rows | beaten by |
+|---|---|---|---|---|
+| old stand-in | 91 | 11 | 2 | **36 of 1088** |
+| catalogue worst | 91 | 19 | 3 | — |
+| new stand-in | 120 | 24 | 3 | **0 of 1088** |
+
+The 36 split 35 on the longest unbreakable run and 1 on hard rows (`paso`'s English, three rows);
+**none on total length**. The run offenders are the Dutch compounds — `ontdekkingsreiziger` at 19,
+then `zonnestraaltje`, `triomfantelijk`, `dichterswonden` — plus French hyphenates like
+`recommence-t-il`, which the metric correctly refuses to treat as breakable.
+
+**The old stand-in was a real catalogue line, which is why it lost.** It is
+`tragedia-de-cerdo-asado.json` line 6 in Dutch, verbatim. That made it the longest string in the
+catalogue and nothing harder — a good worst case on the axis it was picked for and an average one
+everywhere else. The new string keeps its opening clause and rewrites the rest to beat the catalogue
+on all three axes at once.
+
+**Two numbers in the vault were wrong and are corrected here.** The old stand-in is **91**
+characters, not the 89 recorded in `tramoya-integration/project-context.md` and in the docstring of
+Pregonero's `worstCase.ts` — the code was always measuring 91, so only the prose was wrong. And the
+new string's longest run is **24**, not 23: `modderplasherinneringen` is 23 letters, but the token
+`difficultyOf()` sees carries the closing period, exactly as the old stand-in's 11 was `modderplas.`
+and not `modderplas`.
+
+**IT IS DELIBERATELY AWKWARD DUTCH.** Nobody would say `modderplasherinneringen` out loud, and that
+is the point: it is a test fixture whose job is to be worse than anything real, not a draft in
+Jorge's voice. The comment beside it in `mapper.js` says so, because the failure mode here is
+somebody improving the prose and silently loosening the guarantee.
+
+**What it costs on screen, measured in the real output window at 1920x1080** (four axis-aligned
+shapes, `maxSize` at its 0.2 default, auto-fit doing the rest):
+
+| shape | old stand-in | new stand-in |
+|---|---|---|
+| half wall, 960x540 | 82.4 px | 67.3 px |
+| tall side panel, 346x864 | 51.1 px | 24.2 px |
+| narrow column, 192x648 | 28.4 px | 13.5 px |
+| small panel, 384x194 | 29.7 px | 24.8 px |
+
+**On the narrow shapes the preview halves.** That is the size of the error being corrected: tuning
+against the old string on a side panel was tuning against a line rendering at twice what the
+catalogue's worst case will render at.
+
+**The `song-intro` template is untouched by this, and that is a fact worth writing down** because it
+is easy to assume otherwise. There are **two independent stand-ins** in this file.
+`LYRICS_PREVIEW_TEXT` seeds a `song-lyrics` slot and has exactly one consumer, `setLayerType()`.
+`INTRO_PLACEHOLDER.tagline` — *"The tagline from the song file goes here, and it is the smallest
+thing on the wall."* — is what `applySongIntroLayer()` paints, and it never reads the lyric string.
+Verified twice: by the call graph, and by measuring the intro tagline in the output window with each
+string in place, which gives **the same four numbers to three decimals**. The half-wall case
+reproduces the recorded **24.2 px** exactly (24.189 on a 960x540 shape), which also confirms the
+recorded ceiling of 4.48% of shape height — `INTRO_TITLE_MAX_SIZE` 0.16 times the tagline's 0.28.
+
+**No proportion was touched and none should be.** If the wall says the tagline is too small the fix
+is a minimum floor in `.intro-tagline`, not a bigger ratio, for the reason already recorded in the
+integration file: a bigger ratio inflates the tagline in the large-shape case where it is fine, and
+costs the title its dominance everywhere.
+
+**One thing this change cannot reach.** The dummy is the *default of an editable field*, not a
+hardcoded render — deliberately, so a pasted line survives migration. So a mapping made before
+v1.5.0 still carries the old string in its lyrics slots and still previews too generously. There is
+no migration and none was added: telling a hand-typed line from an untouched default is a schema
+decision, not an implementation one. **Re-seed by switching the shape's type away and back, or by
+emptying the field.**
 
 ## Where the state actually lives
 

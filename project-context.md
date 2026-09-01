@@ -1914,6 +1914,51 @@ fitted `--t` times the part's ratio times the quad's height over `UNIT_SIZE`, wh
 `matrix3d` does to the unit box. The one number the vault had pinned, the 4.48% ceiling, reproduces
 exactly.
 
+## The gig can arrive as an endpoint, not only as a folder (v1.7.0, 2026-09-01)
+
+**One condition at the top, exactly the way `?output` already is.** With no `gig` parameter in the
+URL, nothing in this section runs and the tool behaves as it always has: `showDirectoryPicker`, a
+directory handle in IndexedDB, and a direct write through it. **Muralista staying fully usable on
+its own is a requirement about this repo**, and this is what keeps it true rather than claimed.
+
+**Why it exists, and it was forced rather than chosen.** A host that has already created a gig's
+folder cannot hand it over. A `FileSystemDirectoryHandle` can only be minted by `showDirectoryPicker`
+under a user gesture — Chromium admits no path-to-handle route, by design, and Electron exposes no
+hook to answer or pre-seed the picker. So a hosted Muralista was asking for a folder its host created
+and already knows the path of. **A question with one knowable answer is not a question**, and this
+one fails silently: pick one level too high and `visuals.json` lands beside the poster, where nothing
+looks for it, with no error anywhere.
+
+**What Muralista learns, and it is only this:** that something served this page and accepts a write
+at a place relative to it. `?gig=<relative URL>` is the whole interface. **An absolute URL is
+refused** — a scheme or a protocol-relative `//host` is ignored and the tool falls back to the
+picker. That is not a formality: refusing it is what stops a host's name, port or scheme ever
+reaching this file. Muralista does not know what is on the other end, and must not.
+
+- **Read**: `GET <base>gig.json`. A 404 is reported as a missing file, the same sentence the folder
+  path produces for the same condition.
+- **Write**: `PUT <base>visuals.json`, **the same bytes** `visualsDocument()` produces for the
+  folder path. What happens to them is not this tool's business.
+
+**The boundary is untouched.** `readGigFile` is still the one place the parsed gig is touched and
+still projects it down to `{id, venue, songs}`; `visuals.json` still carries only what
+`visualsDocument()` puts in it; `gig.json` is still never written.
+
+**The sidebar loses its folder controls when hosted and keeps `Reload gig.json`.** There is nothing
+to pick, nothing to remember and nothing to reconnect — but the gig is still a file somebody else
+wrote and may have rewritten while this window was open.
+
+## A folder with no gig in it names the mistake that actually happens (v1.7.0, 2026-09-01)
+
+**Standalone only, because hosted never picks.** `gig.json` lives in `<gig>/setup/`, so a picked
+folder with no `gig.json` in it is usually the gig folder itself, one level too high. When the
+picked folder *has* a `setup/gig.json`, the tool says that, by name, instead of the generic
+sentence.
+
+**It warns, it does not refuse.** Opening Muralista on a folder that is not a gig at all is a
+legitimate thing to do — mapping a wall needs no gig, and the song-aware types are simply not
+offered. Refusing would take that away to prevent a mistake a sentence prevents just as well.
+
 ## Where the state actually lives
 
 The working venue mappings are not in git. They live in the browser's `localStorage`, under the key
@@ -1922,7 +1967,9 @@ rename these" table above). Exported venue JSONs sit in `mapper/media/`, alongsi
 video assets. This file and the repo's committed code describe the tool; the actual state of any
 given mapping is on whichever machine last drove the calibration.
 
-Since v1.3.0 there are two more places, and neither is in git either:
+Since v1.3.0 there are two more places, and neither is in git either. **Hosted (v1.7.0), the second
+one does not exist at all**: there is no handle, because there was no picker — the endpoint in the
+URL is the whole connection, and it is gone when the window is.
 
 - **`<gig>/visuals.json`**, in whichever folder holds that gig's `gig.json`. Muralista is its sole
   writer and writes it only when **Save visuals.json** is pressed; nothing autosaves it. The line in

@@ -2022,6 +2022,60 @@ const GIG_FILE_NAME = "gig.json";
 const VISUALS_FILE_NAME = "visuals.json";
 const VISUALS_VERSION = 1;
 
+// --- HOSTED: the gig arrives as an endpoint instead of as a folder. ---
+//
+// ONE CONDITION AT THE TOP, exactly the way ?output already is. With no `gig`
+// parameter, nothing below this comment runs and the tool behaves EXACTLY as
+// it does today: the picker, a directory handle, and a direct write. Muralista
+// staying fully usable on its own is a requirement about this repo and this is
+// what keeps it true.
+//
+// WHY IT EXISTS. A host that has already created the gig's folder cannot hand
+// it over: a FileSystemDirectoryHandle can only be minted by showDirectoryPicker
+// under a user gesture, Chromium admits no path-to-handle route by design, and
+// Electron exposes no hook to pre-seed the picker. So a hosted Muralista asks
+// for a folder its host created and already knows the path of - a question with
+// one knowable answer, whose failure is silent: pick one level too high and
+// visuals.json lands somewhere the host will never look.
+//
+// WHAT MURALISTA LEARNS, AND IT IS ONLY THIS: that something served this page
+// and accepts a write at a place relative to it. THE ENDPOINT IS A RELATIVE URL
+// AND AN ABSOLUTE ONE IS REFUSED - not a formality: refusing it is what stops a
+// host's name, port or scheme ever reaching this file. Muralista does not know
+// what is on the other end, and must not.
+//
+// The boundary above is untouched. gig.json is still read and never written,
+// still projected down to {id, venue, songs} in readGigFile, and visuals.json
+// still carries only what visualsDocument() puts in it.
+const hostedGigBase = readHostedGigBase();
+
+function readHostedGigBase() {
+  const raw = new URLSearchParams(window.location.search).get("gig");
+  if (!raw) return null;
+  // RELATIVE ONLY. A scheme ("http:", "file:") or a protocol-relative "//host"
+  // would carry the host's identity into this tool. Both are refused rather
+  // than sanitized: there is one right shape and anything else is a mistake
+  // worth failing on.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("//")) {
+    console.warn("Muralista: the gig endpoint must be a relative URL. Ignoring:", raw);
+    return null;
+  }
+  try {
+    return new URL(raw.endsWith("/") ? raw : raw + "/", window.location.href);
+  } catch (err) {
+    console.warn("Muralista: could not read the gig endpoint.", err);
+    return null;
+  }
+}
+
+function isHostedGig() {
+  return hostedGigBase !== null;
+}
+
+function hostedGigUrl(fileName) {
+  return new URL(fileName, hostedGigBase).href;
+}
+
 // Same four states as the media folder, and the same reasons - see there.
 // "readwrite" rather than "read" is the one difference: visuals.json is
 // written back into this folder, and asking for the weaker mode would mean a
@@ -2043,10 +2097,12 @@ let visualsWrittenAt = null;
 let visualsWriteError = "";
 
 function gigFolderSupported() {
-  return typeof window.showDirectoryPicker === "function";
+  // Hosted needs no picker, so the section is offered even where there is none.
+  return isHostedGig() || typeof window.showDirectoryPicker === "function";
 }
 
 function gigFolderLabel() {
+  if (isHostedGig()) return "the gig this window was opened on";
   return gigFolderHandle ? gigFolderHandle.name : null;
 }
 
@@ -2078,8 +2134,7 @@ function clearStoredGigFolderHandle() {
 // says titles are what Muralista reads. Showing the id is the honest reading of
 // a file that has no title in it, and it still picks the right song by name.
 async function readGigFile(handle) {
-  const fileHandle = await handle.getFileHandle(GIG_FILE_NAME);
-  const text = await (await fileHandle.getFile()).text();
+  const text = isHostedGig() ? await fetchHostedGigText() : await readGigFileText(handle);
   const parsed = JSON.parse(text);
   if (!parsed || typeof parsed !== "object") throw new Error("gig.json is not an object");
   const songs = (Array.isArray(parsed.songs) ? parsed.songs : [])
@@ -2101,6 +2156,24 @@ async function readGigFile(handle) {
   };
 }
 
+async function readGigFileText(handle) {
+  const fileHandle = await handle.getFileHandle(GIG_FILE_NAME);
+  return (await fileHandle.getFile()).text();
+}
+
+// The hosted read. A 404 is reported the same way a missing file is, so the
+// two paths say the same thing about the same condition.
+async function fetchHostedGigText() {
+  const res = await fetch(hostedGigUrl(GIG_FILE_NAME), { cache: "no-store" });
+  if (res.status === 404) {
+    const err = new Error("no " + GIG_FILE_NAME);
+    err.name = "NotFoundError";
+    throw err;
+  }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.text();
+}
+
 function gigVenueLabel() {
   if (!gig || !gig.venue) return gig && gig.id ? gig.id : "this gig";
   const { name, city } = gig.venue;
@@ -2114,7 +2187,7 @@ function gigVenueLabel() {
 async function refreshGig() {
   gig = null;
   gigError = null;
-  if (!gigFolderHandle || gigFolderState !== "granted") {
+  if (gigFolderState !== "granted" || (!gigFolderHandle && !isHostedGig())) {
     renderControl();
     return;
   }
@@ -2133,7 +2206,7 @@ async function refreshGig() {
   } catch (err) {
     gigError =
       err && err.name === "NotFoundError"
-        ? "No " + GIG_FILE_NAME + " in " + gigFolderLabel() + ". Pick the folder that holds the gig."
+        ? await missingGigMessage()
         : "Could not read " + GIG_FILE_NAME + ": " + ((err && err.message) || "unreadable");
     console.warn("Muralista: could not read the gig.", err);
   }
@@ -2144,6 +2217,43 @@ async function refreshGig() {
   }
   broadcastState(); // the preview song rides the state message
   renderControl();
+}
+
+// THE FOLDER WITH NO GIG IN IT, AND THE ONE MISTAKE THAT ACTUALLY HAPPENS.
+//
+// gig.json lives in <gig>/setup/, so a picked folder with no gig.json in it is
+// usually the gig folder itself, one level too high - and picking it is silent:
+// visuals.json lands beside the poster, where the thing that reads it never
+// looks, with no error anywhere. So when the folder that was picked HAS a
+// setup/gig.json, say that, by name, instead of the generic sentence.
+//
+// IT WARNS, IT DOES NOT REFUSE. Opening Muralista on a folder that is not a
+// gig at all is a legitimate thing to do - mapping a wall needs no gig, and
+// the song-aware types simply are not offered. Refusing would take that away
+// to prevent a mistake that a sentence prevents just as well.
+const SETUP_FOLDER_NAME = "setup";
+
+async function missingGigMessage() {
+  const generic =
+    "No " + GIG_FILE_NAME + " in " + gigFolderLabel() + ". Pick the folder that holds the gig.";
+  if (!gigFolderHandle) return generic;
+  try {
+    const setup = await gigFolderHandle.getDirectoryHandle(SETUP_FOLDER_NAME);
+    await setup.getFileHandle(GIG_FILE_NAME);
+  } catch {
+    return generic;
+  }
+  return (
+    "No " +
+    GIG_FILE_NAME +
+    " here, but there is one in " +
+    gigFolderLabel() +
+    "/" +
+    SETUP_FOLDER_NAME +
+    ". That is the folder to pick: this one is the gig folder, one level up, and " +
+    VISUALS_FILE_NAME +
+    " written here would be somewhere nothing reads it. Mapping the wall works either way."
+  );
 }
 
 function gigSongById(songId) {
@@ -2225,12 +2335,12 @@ function visualsDocument() {
 }
 
 async function writeVisualsFile() {
-  if (gigFolderState !== "granted" || !gigFolderHandle) return;
+  if (gigFolderState !== "granted") return;
+  if (!gigFolderHandle && !isHostedGig()) return;
   try {
-    const fileHandle = await gigFolderHandle.getFileHandle(VISUALS_FILE_NAME, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(JSON.stringify(visualsDocument(), null, 2));
-    await writable.close();
+    const body = JSON.stringify(visualsDocument(), null, 2);
+    if (isHostedGig()) await putHostedVisuals(body);
+    else await writeVisualsToFolder(body);
     visualsWrittenAt = new Date();
     visualsWriteError = "";
   } catch (err) {
@@ -2242,10 +2352,38 @@ async function writeVisualsFile() {
   renderControl();
 }
 
+async function writeVisualsToFolder(body) {
+  const fileHandle = await gigFolderHandle.getFileHandle(VISUALS_FILE_NAME, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(body);
+  await writable.close();
+}
+
+// The hosted write. THE SAME BYTES, PUT at the same name beside gig.json
+// instead of written through a handle. What is on the other end is not this
+// tool's business: it served the page, it accepts a write here, and Muralista
+// knows nothing else about it.
+async function putHostedVisuals(body) {
+  const res = await fetch(hostedGigUrl(VISUALS_FILE_NAME), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+}
+
 // Boot. Query, never request - the same round trip the media folder makes, for
 // the same reason: reopen Chrome and a folder that is still granted just works
 // with no dialog anywhere.
 async function initGigFolder() {
+  // HOSTED: there is nothing to pick, nothing to remember and nothing to ask
+  // permission for. The endpoint is the connection, and it is granted the
+  // moment the page loads with it.
+  if (isHostedGig()) {
+    gigFolderState = "granted";
+    await refreshGig();
+    return;
+  }
   if (!gigFolderSupported()) {
     gigFolderState = "unsupported";
     renderControl();
@@ -2418,13 +2556,20 @@ function renderGigControls() {
   section.hidden = false;
 
   const label = gigFolderLabel();
+  const hosted = isHostedGig();
+  // HOSTED: no folder question, so no folder controls. Reload stays - gig.json
+  // is a file somebody else wrote and may have rewritten while this is open.
+  document.getElementById("btn-gig-folder").hidden = hosted;
   document.getElementById("btn-gig-folder").textContent = label ? "Change gig folder…" : "Choose gig folder…";
-  document.getElementById("btn-gig-folder-reconnect").hidden = gigFolderState !== "reconnect";
+  document.getElementById("btn-gig-folder-reconnect").hidden = hosted || gigFolderState !== "reconnect";
   document.getElementById("btn-gig-reload").hidden = gigFolderState !== "granted";
-  document.getElementById("btn-gig-folder-clear").hidden = !label;
+  document.getElementById("btn-gig-folder-clear").hidden = hosted || !label;
 
   const status = document.getElementById("gig-status");
-  if (gigConnected()) {
+  if (gigConnected() && hosted) {
+    const n = gig.songs.length;
+    status.textContent = `${gigVenueLabel()} — ${n} song${n === 1 ? "" : "s"}. ${GIG_FILE_NAME} and ${VISUALS_FILE_NAME} are where this window was pointed; you were not asked, because there was nothing to ask.`;
+  } else if (gigConnected()) {
     const n = gig.songs.length;
     status.textContent = `${gigVenueLabel()} — ${n} song${n === 1 ? "" : "s"}, read from ${label}/${GIG_FILE_NAME}.`;
   } else if (gigFolderState === "reconnect" && label) {
@@ -2447,10 +2592,11 @@ function renderGigControls() {
   if (gigConnected()) renderVisualSetup();
 
   const written = document.getElementById("visuals-status");
+  const where = hosted ? "beside " + GIG_FILE_NAME : "into " + label;
   const message = visualsWriteError
     ? visualsWriteError
     : visualsWrittenAt
-      ? `Wrote ${VISUALS_FILE_NAME} into ${label} at ${visualsWrittenAt.toLocaleTimeString()}.`
+      ? `Wrote ${VISUALS_FILE_NAME} ${where} at ${visualsWrittenAt.toLocaleTimeString()}.`
       : "";
   written.hidden = !message;
   written.textContent = message;

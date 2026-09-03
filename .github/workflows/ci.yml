@@ -45,3 +45,11 @@ jobs:
       # against its vendored copy.
       - name: Warp contract test
         run: node --test mapper/warp.test.mjs
+
+      # The stage capture's maths, for the same reason and by the same runner.
+      # It is not a cross-repo contract — nothing vendors it — but its failure
+      # mode is the one this workflow exists for: a capture taken the wrong way
+      # through the calibration still LOOKS like the stage, and every shape
+      # drawn on it lands wrong at the venue.
+      - name: Stage capture test
+        run: node --test mapper/stageCapture.test.mjs

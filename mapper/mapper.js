@@ -2475,12 +2475,518 @@ import {
   UNIT_SIZE,
   frameMatrix3d,
 } from "./warp.js";
+// The stage capture's maths, in a file of its own so `node --test` can reach
+// it without a DOM - the same reason `warp.js` is a file of its own.
+import { stageSampler } from "./stageCapture.js";
+
+// =========================================================================
+// THE FLOW
+// =========================================================================
+// FOUR STEPS OVER THE TOOL THAT WAS ALWAYS HERE:
+//
+//   THE DEAL  ·  1 LAYOUT  ·  2 SHAPES  ·  3 OUTPUT
+//
+// Step 2 IS the canvas as it exists today, untouched. The flow adds a way in
+// and a way out; it does not add a second tool.
+//
+// THE DEAL IS NOT MERGED WITH SCREEN 1, and that is the whole reason it is a
+// separate cell. A deal states cost and gift ONCE; screen 1 asks a question
+// that has to be answered every gig. Merging them makes the deal unskippable
+// forever, or makes the choice vanish after the first gig.
+//
+// THE SIGNAL IS WHETHER A MAPPING ALREADY EXISTS, never a "seen it" flag:
+// hosted, whether this gig's folder already answers for visuals.json;
+// standalone, whether Muralista's own storage holds a room. A flag would be a
+// second copy of a fact the world already carries, which is the class of state
+// this suite keeps deleting.
+//
+// THE BAR IS ALWAYS THERE AND THE DEAL STAYS REACHABLE. That is Bombista's
+// rule, arrived at the same way: `it stays reachable` reads as unconditional,
+// so the cell sits in the bar on every screen rather than only while it is due.
+//
+// STANDALONE WITH NO GIG SKIPS SCREEN 1, because no gig means no songs and the
+// default has nothing to act on. That is the question NOT ARISING - it is not
+// the screen moving to Pregonero, and the 02/09 ruling is untouched: the
+// default belongs to Muralista, and nothing is ever written on behalf of a
+// tool that did not run.
+//
+// 3 OUTPUT IS NAMED FOR DOING, and it was Jorge's correction. That screen is
+// where you take the picture and save the room; `preview` implies looking
+// only. It also makes the two flows rhyme, since Bombista's step 3 is the same
+// role under the same name.
+
+const FLOW_DEAL = "deal";
+const FLOW_LAYOUT = "layout";
+const FLOW_SHAPES = "shapes";
+const FLOW_OUTPUT = "output";
+
+// The bar, in order. `THE DEAL` carries no number because it is not one of the
+// three - it is the thing you agree to before the three start.
+const FLOW_STEPS = [
+  { key: FLOW_DEAL, n: null, label: "THE DEAL" },
+  { key: FLOW_LAYOUT, n: 1, label: "LAYOUT" },
+  { key: FLOW_SHAPES, n: 2, label: "SHAPES" },
+  { key: FLOW_OUTPUT, n: 3, label: "OUTPUT" },
+];
+
+// THE DEFAULT ROOM, and it is two shapes rather than three.
+//
+// The designed default - video across the frame, lyrics at the foot while the
+// video is filled, lyrics across the frame while it is empty - is written in
+// terms of CONDITIONAL VISIBILITY, which is round two and is deliberately not
+// here. Round one's default is therefore the layout that needs no condition
+// and is the one this suite already played two gigs on: THE FRAME, WITH THE
+// LYRICS OVER IT. `default costing nothing and giving a frame that works`,
+// which is what the value discussion asked of it.
+//
+// Round two attaches conditions to shapes that already exist, so this is what
+// it attaches to.
+const DEFAULT_FRAME = [
+  [0, 0],
+  [1, 0],
+  [1, 1],
+  [0, 1],
+];
+
+// Later in the list is on top, so the lyrics go second.
+const DEFAULT_LAYOUT = [
+  { type: "song-video", name: "Frame" },
+  { type: "song-lyrics", name: "Lyrics" },
+];
+
+// Which screen is showing. Never persisted: it is a fact about this sitting,
+// not about the room.
+let flowStep = FLOW_SHAPES;
+// How far the flow has been taken, so the bar can offer what has been reached
+// and dim what has not. The canvas is always reachable - it is the tool.
+let flowReached = FLOW_SHAPES;
+// What the last capture or save said. Cleared by the next attempt.
+let flowCaptureStatus = "";
+let flowSaveStatus = "";
+let flowBusy = false;
+
+/**
+ * WHETHER THIS MACHINE HAS DONE THIS BEFORE.
+ *
+ * Hosted, the question is about the gig: a `visuals.json` at the endpoint means
+ * a room was mapped for it. Standalone, it is about the tool: shapes in
+ * Muralista's own storage. Neither is a flag, and that is the point - both read
+ * the thing itself.
+ *
+ * A read that fails answers NO, which is the safe direction: showing the deal
+ * to somebody who has seen it costs one press, and skipping it for somebody who
+ * has not costs the whole explanation.
+ */
+async function mappingAlreadyExists() {
+  if (isHostedGig()) {
+    try {
+      const res = await fetch(hostedGigUrl(VISUALS_FILE_NAME), { cache: "no-store", method: "GET" });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+  return Array.isArray(project.surfaces) && project.surfaces.length > 0;
+}
+
+/** Screen 1 has nothing to act on with no gig behind it - see the section comment. */
+function flowLayoutApplies() {
+  return gigConnected();
+}
+
+/** Where `Continue` on the deal goes. */
+function flowAfterDeal() {
+  return flowLayoutApplies() ? FLOW_LAYOUT : FLOW_SHAPES;
+}
+
+const FLOW_ORDER = [FLOW_DEAL, FLOW_LAYOUT, FLOW_SHAPES, FLOW_OUTPUT];
+
+function flowIndex(step) {
+  return FLOW_ORDER.indexOf(step);
+}
+
+function goToFlowStep(step) {
+  flowStep = step;
+  if (flowIndex(step) > flowIndex(flowReached)) flowReached = step;
+  renderControl();
+}
+
+/**
+ * SEEDING THE DEFAULT. Two shapes at the projector's frame, typed, and the gig
+ * defaults adopt them for free (`adoptGigDefaultIfUnset` runs on typing).
+ *
+ * IT ONLY EVER SEEDS AN EMPTY ROOM. A room that already has shapes is somebody's
+ * afternoon, and replacing it is not what `keep the default` means - so the
+ * control is disabled with the reason attached rather than being a press that
+ * quietly throws work away.
+ */
+function seedDefaultLayout() {
+  if (project.surfaces.length > 0) return false;
+  DEFAULT_LAYOUT.forEach(({ type, name }) => {
+    const shape = defaultShape(project.surfaces.length + 1);
+    shape.name = name;
+    shape.corners = DEFAULT_FRAME.map(([x, y]) => [x, y]);
+    shape.outline = DEFAULT_FRAME.map(([x, y]) => [x, y]);
+    project.surfaces.push(shape);
+    setLayerType(shape.id, type);
+  });
+  selectedShapeId = null;
+  clearShapeSubselection();
+  commitProjectChange();
+  return true;
+}
+
+/** Why `Keep the default` is shut, or null when it is not. */
+function keepDefaultBlocker() {
+  if (project.surfaces.length > 0) {
+    return "This room already has shapes in it. Keeping the default would replace them, so it does not: adjust what is there in 2 SHAPES.";
+  }
+  if (!canWriteVisuals()) {
+    return "There is no gig to write into. Connect one, or adjust the layout and save from 3 OUTPUT.";
+  }
+  return null;
+}
+
+function canWriteVisuals() {
+  return gigFolderState === "granted" && (!!gigFolderHandle || isHostedGig());
+}
+
+/**
+ * KEEP THE DEFAULT. MURALISTA writes the file - which is the 02/09 ruling made
+ * literal: the default belongs to this tool, so this tool is what puts it on
+ * disk, and nothing is written on behalf of a tool that did not run.
+ */
+async function flowKeepDefault() {
+  if (keepDefaultBlocker() || flowBusy) return;
+  flowBusy = true;
+  renderControl();
+  seedDefaultLayout();
+  await writeVisualsFile();
+  flowSaveStatus = visualsWriteError || "";
+  flowBusy = false;
+  goToFlowStep(FLOW_OUTPUT);
+}
+
+/** ADJUST IT. The same shapes, on the canvas. Custom does not start empty. */
+function flowAdjust() {
+  seedDefaultLayout();
+  goToFlowStep(FLOW_SHAPES);
+}
+
+// -------------------------------------------------------------------------
+// THE STAGE CAPTURE
+// -------------------------------------------------------------------------
+// A PHOTOGRAPH OF THE STAGE, TAKEN THROUGH THE CALIBRATED CAMERA AND SAVED
+// WITH THE GIG. It is what makes working from home honest: map at the venue on
+// Monday with the projector and camera where they will stand, move things
+// around at home on Wednesday against this picture, reconfirm at the venue on
+// Friday.
+//
+// WHY NOT THE PHOTO BACKDROP THAT ALREADY EXISTS. That one is a photo of the
+// wall which you CROP TO THE PROJECTOR'S THROW BY HAND, and any error in that
+// crop becomes a fixed offset in every shape drawn on it - Muralista's own
+// README argues against it for exactly that reason. There is no crop step here,
+// so that error cannot happen.
+//
+// IT IS IN OUTPUT SPACE OR IT IS WORTH NOTHING. The same calibration
+// `Adopt boundaries…` maps its traced outline through, run the other way: for
+// every pixel of the output frame, ask the camera what is there. A raw camera
+// frame would reintroduce precisely the offset this exists to remove.
+//
+// AUTHORING ONLY, like every other backdrop. It never reaches the output
+// window, and nothing in the output role knows the file exists.
+const STAGE_FILE_NAME = "stage.png";
+
+// The output frame's own aspect, and the size the preview already draws at.
+// Big enough to place a shape against, small enough to be one ordinary PNG.
+const STAGE_CAPTURE_WIDTH = 1600;
+const STAGE_CAPTURE_HEIGHT = 900;
+
+/** Why the capture is shut, or null. The same three conditions the adopt gesture has. */
+function stageCaptureBlocker() {
+  // EVERY ONE OF THESE NAMES THE SCREEN THE CONTROL IS ON. The camera lives in
+  // 2 SHAPES's sidebar, which is not this screen, and a requirement stated with
+  // nowhere to go is the dead end this suite has a rule about. The bar is one
+  // press away; the sentence has to say which press.
+  if (!isCameraMode()) return "Set Backdrop → Source to Live camera, in 2 SHAPES, first.";
+  if (!isCameraEnabled()) return "Enable the camera in 2 SHAPES first.";
+  if (!isValidQuad(project.cameraQuad)) {
+    return "Calibrate the camera in 2 SHAPES first. The capture is taken through that calibration, into output space - without it there is nothing to map through.";
+  }
+  return null;
+}
+
+/**
+ * One frame of the raw camera feed, mapped into OUTPUT SPACE through the
+ * calibration, as a canvas.
+ *
+ * The inverse direction of the one `Adopt boundaries…` uses: it carries traced
+ * points from camera space to output space, and an image has to be carried the
+ * other way - for each output pixel, where in the camera does it come from.
+ * `project.cameraQuad` is in normalized RAW camera coordinates, which is
+ * exactly what `drawImage(video)` yields, so no rectification is applied to the
+ * source and none should be.
+ */
+function captureStageIntoOutputSpace(video) {
+  if (!video || !video.videoWidth || !video.videoHeight) return null;
+  const sample = stageSampler(
+    project.cameraQuad,
+    STAGE_CAPTURE_WIDTH,
+    STAGE_CAPTURE_HEIGHT,
+    video.videoWidth,
+    video.videoHeight
+  );
+  // NO FALLBACK TO THE RAW FRAME, and that is the point of returning null. A
+  // raw frame is exactly the offset this capture exists to remove, so a
+  // degenerate calibration produces nothing rather than something wrong.
+  if (!sample) return null;
+
+  const src = document.createElement("canvas");
+  src.width = video.videoWidth;
+  src.height = video.videoHeight;
+  const srcCtx = src.getContext("2d", { willReadFrequently: true });
+  srcCtx.drawImage(video, 0, 0, src.width, src.height);
+  const srcData = srcCtx.getImageData(0, 0, src.width, src.height).data;
+
+  const out = document.createElement("canvas");
+  out.width = STAGE_CAPTURE_WIDTH;
+  out.height = STAGE_CAPTURE_HEIGHT;
+  const outCtx = out.getContext("2d");
+  const outImage = outCtx.createImageData(out.width, out.height);
+  const dst = outImage.data;
+
+  for (let y = 0; y < out.height; y++) {
+    for (let x = 0; x < out.width; x++) {
+      const d = (y * out.width + x) * 4;
+      const p = sample(x, y);
+      if (!p) {
+        // A part of the output the camera cannot see. BLACK, not transparent:
+        // it is an honest answer about the wall, and a hole reads as a
+        // rendering fault instead.
+        dst[d + 3] = 255;
+        continue;
+      }
+      const sIdx = (p[1] * src.width + p[0]) * 4;
+      dst[d] = srcData[sIdx];
+      dst[d + 1] = srcData[sIdx + 1];
+      dst[d + 2] = srcData[sIdx + 2];
+      dst[d + 3] = 255;
+    }
+  }
+  outCtx.putImageData(outImage, 0, 0);
+  return out;
+}
+
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
+/**
+ * Takes the picture and saves it with the gig.
+ *
+ * THE GIG FOLDER GAINS A BINARY, and that is named rather than hidden:
+ * `setup/<id>/` held two JSON files and now holds an image beside them. It is
+ * machine territory, so no boundary moves - the artist's poster and contract
+ * are one level up, exactly where they were.
+ */
+async function captureStage() {
+  if (flowBusy) return;
+  const blocked = stageCaptureBlocker();
+  if (blocked) {
+    flowCaptureStatus = blocked;
+    renderControl();
+    return;
+  }
+  flowBusy = true;
+  flowCaptureStatus = "Capturing…";
+  renderControl();
+  try {
+    const canvas = captureStageIntoOutputSpace(document.getElementById("preview-camera"));
+    if (!canvas) throw new Error("the camera gave no frame to capture");
+    const blob = await canvasToPngBlob(canvas);
+    if (!blob) throw new Error("the frame could not be encoded");
+    if (canWriteVisuals()) {
+      await writeStageFile(blob);
+      flowCaptureStatus =
+        "Stage captured, through the calibration, and saved as " + STAGE_FILE_NAME + " with the gig.";
+    } else {
+      downloadBlob(blob, STAGE_FILE_NAME);
+      flowCaptureStatus =
+        "Stage captured, through the calibration. There is no gig to save it into, so it was downloaded.";
+    }
+  } catch (err) {
+    console.warn("Muralista: the stage capture failed.", err);
+    flowCaptureStatus = "Could not capture the stage: " + ((err && err.message) || "capture failed");
+  }
+  flowBusy = false;
+  renderControl();
+}
+
+async function writeStageFile(blob) {
+  if (isHostedGig()) {
+    const res = await fetch(hostedGigUrl(STAGE_FILE_NAME), {
+      method: "PUT",
+      headers: { "content-type": "image/png" },
+      body: blob,
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return;
+  }
+  const fileHandle = await gigFolderHandle.getFileHandle(STAGE_FILE_NAME, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** `Save to gig` on screen 3. The same write the sidebar has always had. */
+async function flowSaveToGig() {
+  if (flowBusy || !canWriteVisuals()) return;
+  flowBusy = true;
+  flowSaveStatus = "";
+  renderControl();
+  await writeVisualsFile();
+  flowSaveStatus = visualsWriteError || "";
+  flowBusy = false;
+  renderControl();
+}
+
+/** Standalone's way out: the same bytes, into the browser's downloads. */
+function flowDownloadVisuals() {
+  const body = JSON.stringify(visualsDocument(), null, 2);
+  downloadBlob(new Blob([body], { type: "application/json" }), VISUALS_FILE_NAME);
+  flowSaveStatus = "Downloaded " + VISUALS_FILE_NAME + ".";
+  renderControl();
+}
+
+// -------------------------------------------------------------------------
+// PAINTING THE FLOW
+// -------------------------------------------------------------------------
+
+function renderFlow() {
+  renderFlowSteps();
+
+  const onDeal = flowStep === FLOW_DEAL;
+  const onLayout = flowStep === FLOW_LAYOUT;
+  const onShapes = flowStep === FLOW_SHAPES;
+  const onOutput = flowStep === FLOW_OUTPUT;
+
+  document.getElementById("flow-deal").hidden = !onDeal;
+  document.getElementById("flow-layout").hidden = !onLayout;
+  // The canvas element itself is NEVER moved or unmounted - the camera's
+  // matrix3d is built from its measured size, and a remounted preview is a
+  // remounted video. Only the panel beside it changes.
+  document.querySelector(".main-layout").hidden = !(onShapes || onOutput);
+  document.getElementById("shapes-sidebar").hidden = !onShapes;
+  document.getElementById("flow-output").hidden = !onOutput;
+
+  if (onLayout) renderFlowLayout();
+  if (onOutput) renderFlowOutput();
+}
+
+function renderFlowSteps() {
+  const nav = document.getElementById("flow-steps");
+  nav.innerHTML = "";
+  FLOW_STEPS.forEach(({ key, n, label }) => {
+    // Screen 1 with no gig behind it is a question that does not arise, so it
+    // is not in the bar at all. A dimmed cell would say "later"; this is not
+    // later, it is not applicable to a tool used on its own.
+    if (key === FLOW_LAYOUT && !flowLayoutApplies()) return;
+    const here = key === flowStep;
+    const open = flowIndex(key) <= flowIndex(flowReached);
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "flow-step" + (here ? " on" : "");
+    el.dataset.step = key;
+    el.dataset.state = here ? "here" : open ? "open" : "closed";
+    el.disabled = !open;
+    if (here) el.setAttribute("aria-current", "step");
+    el.textContent = n === null ? label : n + " " + label;
+    el.addEventListener("click", () => goToFlowStep(key));
+    nav.appendChild(el);
+  });
+}
+
+function renderFlowLayout() {
+  const keep = document.getElementById("btn-flow-keep-default");
+  const why = document.getElementById("flow-keep-default-why");
+  const blocked = keepDefaultBlocker();
+  // DISABLED WITH THE REASON, NEVER ABSENT. A screen with the control taken
+  // off it gives no evidence the capability exists; this repo's sibling has a
+  // named rule for it and the same argument holds here.
+  keep.disabled = !!blocked || flowBusy;
+  why.hidden = !blocked;
+  why.textContent = blocked || "";
+  document.getElementById("btn-flow-adjust").disabled = flowBusy;
+}
+
+function renderFlowOutput() {
+  const capture = document.getElementById("btn-flow-capture");
+  const captureBlocked = stageCaptureBlocker();
+  capture.disabled = !!captureBlocked || flowBusy;
+  const captureStatus = document.getElementById("flow-capture-status");
+  const captureText = flowCaptureStatus || captureBlocked || "";
+  captureStatus.hidden = !captureText;
+  captureStatus.textContent = captureText;
+
+  const save = document.getElementById("btn-flow-save-gig");
+  const canSave = canWriteVisuals();
+  save.disabled = !canSave || flowBusy;
+  // Standalone gets a download instead, and it is offered rather than
+  // substituted: a gig that is connected can have both.
+  document.getElementById("btn-flow-download").hidden = canSave;
+
+  const status = document.getElementById("flow-save-status");
+  const message = flowSaveStatus
+    ? flowSaveStatus
+    : !canSave
+      ? "No gig is connected, so there is nowhere to save. Download the file and put it beside the gig's gig.json yourself."
+      : visualsWriteError
+        ? visualsWriteError
+        : visualsWrittenAt
+          ? "Saved " + VISUALS_FILE_NAME + " with the gig at " + visualsWrittenAt.toLocaleTimeString() + "."
+          : "";
+  status.hidden = !message;
+  status.textContent = message;
+}
+
+/**
+ * WHERE THE FLOW OPENS. Called once, after the gig has had its chance to
+ * connect, because whether screen 1 applies is a question about the gig.
+ */
+async function initFlow() {
+  if (await mappingAlreadyExists()) {
+    // A room already exists, so the deal is behind this person and the tool is
+    // the tool: the canvas, with everything reachable.
+    flowStep = FLOW_SHAPES;
+    flowReached = FLOW_OUTPUT;
+  } else {
+    // A FIRST TIME WALKS THE FLOW, and the bar dims what has not been reached.
+    // Not for ceremony: 3 OUTPUT on an empty room offers a save that would
+    // write a room with nothing in it, and the layout question is what stops
+    // that being the first thing anybody does.
+    flowStep = FLOW_DEAL;
+    flowReached = FLOW_DEAL;
+  }
+  renderControl();
+}
 
 // =========================================================================
 // CONTROL UI
 // =========================================================================
 
 function renderControl() {
+  renderFlow();
   renderShapeList();
   renderPreview();
   renderBackdrop();
@@ -2608,7 +3114,12 @@ function renderVisualSetup() {
 
   const gigBlock = document.getElementById("gig-assignments");
   const songBlock = document.getElementById("song-setup");
-  const inSong = visualSetupMode === "song";
+  // **2 SHAPES IS GIG LEVEL ONLY** (2026-09-03). The mode picker is shut and
+  // the song half with it, so the screen carries the room's shapes and their
+  // types and nothing per-song. `visualSetupMode` stays a real variable and the
+  // song machinery stays correct - this defers the screen, it does not delete
+  // the model underneath it.
+  const inSong = false;
   gigBlock.hidden = inSong;
   songBlock.hidden = !inSong;
 
@@ -5422,7 +5933,6 @@ function wireControlEvents() {
   // A gig is a file somebody else writes, and it can be rewritten while this
   // window is open. Re-reading it is one click rather than a reload.
   document.getElementById("btn-gig-reload").addEventListener("click", refreshGig);
-  document.getElementById("btn-write-visuals").addEventListener("click", writeVisualsFile);
 
   document
     .getElementById("select-visual-setup-mode")
@@ -5430,6 +5940,14 @@ function wireControlEvents() {
   document
     .getElementById("select-visual-setup-song")
     .addEventListener("change", (e) => setVisualSetupSong(e.target.value));
+
+  // --- The flow. ---
+  document.getElementById("btn-flow-deal-next").addEventListener("click", () => goToFlowStep(flowAfterDeal()));
+  document.getElementById("btn-flow-keep-default").addEventListener("click", () => void flowKeepDefault());
+  document.getElementById("btn-flow-adjust").addEventListener("click", flowAdjust);
+  document.getElementById("btn-flow-capture").addEventListener("click", () => void captureStage());
+  document.getElementById("btn-flow-save-gig").addEventListener("click", () => void flowSaveToGig());
+  document.getElementById("btn-flow-download").addEventListener("click", flowDownloadVisuals);
 }
 
 function initControl() {
@@ -5464,7 +5982,10 @@ function initControl() {
   // IndexedDB must not hold up the first paint of a mapping that is already in
   // localStorage. Each re-renders itself when it lands.
   initMediaFolder();
-  initGigFolder();
+  // **The flow opens after the gig has had its chance to connect**, because
+  // both questions it asks first - has this machine done this before, and does
+  // screen 1 apply at all - are questions about the gig.
+  void initGigFolder().then(initFlow);
 }
 
 // =========================================================================

@@ -41,8 +41,16 @@
       // DOMContentLoaded injection below.
       var imports = document.createElement("script");
       imports.type = "importmap";
+      // EVERY MODULE MURALISTA IMPORTS GOES IN HERE, not just warp.js: the
+      // stale-subresource bug is about the specifier, not about which file it
+      // names, so a second module added without a line here is the same bug
+      // waiting on the second file. `stageCapture.js` imports warp.js itself
+      // and gets the token from this same map.
       imports.textContent = JSON.stringify({
-        imports: { "./warp.js": "./warp.js?v=" + encodeURIComponent(v) },
+        imports: {
+          "./warp.js": "./warp.js?v=" + encodeURIComponent(v),
+          "./stageCapture.js": "./stageCapture.js?v=" + encodeURIComponent(v),
+        },
       });
       document.head.appendChild(imports);
 
@@ -89,8 +97,99 @@
       </div>
     </header>
 
+    <!-- THE FLOW. Four steps over the tool that was always here: the canvas is
+         step 2 and is untouched. The bar is always present so the deal stays
+         reachable, which is the rule Bombista's flow already follows. See
+         THE FLOW in mapper.js. -->
+    <nav id="flow-steps" class="flow-steps" aria-label="Visual setup"></nav>
+
+    <!-- THE DEAL. Shown once, on the signal that no mapping exists yet. The
+         copy is argued clause by clause in tramoya-integration's
+         project-context.md and is not to be paraphrased. -->
+    <section id="flow-deal" class="flow-screen" hidden>
+      <div class="flow-deal-blocks">
+        <div class="flow-deal-block">
+          <h2>What you get</h2>
+          <p>Your lyrics, videos and pictures land where you want them in the room, not in a
+            rectangle someone else chose. Your wall, your shapes, and the projector fills them.
+            You do this at the venue once, then move things around from home without going back.</p>
+        </div>
+        <div class="flow-deal-block">
+          <h2>What it costs</h2>
+          <p>One sitting at the venue, with the projector and camera standing where they will
+            stand on the night. You mark out the surfaces you want to use and say what each one
+            is for.</p>
+        </div>
+        <div class="flow-deal-block">
+          <h2>What it does not do</h2>
+          <p>It never changes your files. It decides where things go in the room, not what they
+            are.</p>
+        </div>
+      </div>
+      <div class="flow-actions">
+        <button id="btn-flow-deal-next" type="button">Continue</button>
+      </div>
+    </section>
+
+    <!-- 1 LAYOUT. Keep the default, or adjust it. Custom does not start empty:
+         it starts as the default, already placed. -->
+    <section id="flow-layout" class="flow-screen" hidden>
+      <h2 class="flow-title">The layout</h2>
+      <p class="flow-lede">The default fills the projector's frame: the video across the whole
+        frame, and the lyrics over it. It costs nothing and it works. Adjusting it is where the
+        room comes in &mdash; and it starts from the default, already placed.</p>
+      <div class="flow-choices">
+        <div class="flow-choice">
+          <h3>Keep the default</h3>
+          <p>Muralista writes the room now, and you go straight to the output.</p>
+          <button id="btn-flow-keep-default" type="button">Keep the default</button>
+          <p id="flow-keep-default-why" class="flow-why" hidden></p>
+        </div>
+        <div class="flow-choice">
+          <h3>Adjust it</h3>
+          <p>The same layout, on the canvas, where you mark out the surfaces you actually have.</p>
+          <button id="btn-flow-adjust" type="button">Adjust it</button>
+        </div>
+      </div>
+    </section>
+
     <div class="main-layout">
-      <aside class="sidebar">
+      <!-- 3 OUTPUT. Named for doing: the preview on the left uses MURALISTA'S OWN
+           DUMMY CONTENT and never reaches for the setlist, and the actions here
+           are the capture and the save. -->
+      <aside class="sidebar flow-output-panel" id="flow-output" hidden>
+        <div class="sidebar-header">
+          <h2>Output</h2>
+        </div>
+        <p class="flow-lede">What is beside this is Muralista's own stand-in content, never a song
+          from the gig. Tuning is judged against the worst case, which is what the stand-in is.</p>
+
+        <div class="sidebar-section">
+          <div class="sidebar-header">
+            <h2>Stage capture</h2>
+          </div>
+          <p class="flow-lede">A photograph of the stage, taken through the calibrated camera and
+            saved with the gig. It is what lets you map at the venue and move things around from
+            home. Authoring only &mdash; it never reaches the output window.</p>
+          <div class="backdrop-controls">
+            <button id="btn-flow-capture" type="button">Capture the stage</button>
+          </div>
+          <p id="flow-capture-status" class="camera-status"></p>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-header">
+            <h2>Save</h2>
+          </div>
+          <div class="backdrop-controls">
+            <button id="btn-flow-save-gig" type="button">Save to gig</button>
+            <button id="btn-flow-download" type="button" hidden>Download visuals.json</button>
+          </div>
+          <p id="flow-save-status" class="visuals-status"></p>
+        </div>
+      </aside>
+
+      <aside class="sidebar" id="shapes-sidebar">
         <!-- One list, because there is one kind of thing on the wall. A
              shape that holds black is a shape whose layer type is "fill", so
              it lives here with everything else and takes part in the same
@@ -128,7 +227,12 @@
           <p id="gig-error" class="media-folder-failures" hidden></p>
 
           <div id="gig-setup" hidden>
-            <div class="backdrop-controls">
+            <!-- GIG LEVEL ONLY (2026-09-03). 2 SHAPES is the room's shapes and
+                 each one's type; song visual setup is deferred entirely, so the
+                 mode picker and the song half below are shut rather than
+                 removed - the machinery is still right and is not being torn
+                 out on the way past. -->
+            <div class="backdrop-controls" id="visual-setup-mode-row" hidden>
               <label class="backdrop-mode">Visual setup
                 <select id="select-visual-setup-mode">
                   <option value="gig">Gig &mdash; the room</option>
@@ -152,9 +256,11 @@
 
             <p id="visual-setup-hint" class="layer-hint"></p>
 
-            <div class="backdrop-controls">
-              <button id="btn-write-visuals" type="button">Save visuals.json</button>
-            </div>
+            <!-- THE SAVE MOVED TO 3 OUTPUT (2026-09-03), and this is why it is
+                 not also here: two controls with the same name doing the same
+                 thing is how a screen stops being readable. The STATUS line
+                 stays, because it is a fact about the folder rather than a
+                 second way to act on it. -->
             <p id="visuals-status" class="visuals-status"></p>
           </div>
 

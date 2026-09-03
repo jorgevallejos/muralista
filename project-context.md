@@ -1959,6 +1959,132 @@ sentence.
 legitimate thing to do — mapping a wall needs no gig, and the song-aware types are simply not
 offered. Refusing would take that away to prevent a mistake a sentence prevents just as well.
 
+## The tool becomes a flow, and the flow takes the picture (v1.8.0, 2026-09-03)
+
+**Ruling: `tramoya-integration/project-context.md`, "Step 9.3 — Muralista's flow, designed
+2026-09-03".** Round one of two. Round two is conditional visibility, alone, and nothing here
+depends on it.
+
+    THE DEAL  ·  1 LAYOUT  ·  2 SHAPES  ·  3 OUTPUT
+
+**Step 2 is the canvas exactly as it was.** The flow is a shell around the tool, not a second tool,
+and that is the whole reason it could be one round: the expensive screen already existed.
+
+### THE DEAL is its own cell, and the signal is the world
+
+**Not merged with screen 1**, because a deal states cost and gift *once* and screen 1 asks a question
+that has to be answered every gig. Merging them makes the deal unskippable forever, or makes the
+choice vanish after the first gig.
+
+**The signal is whether a mapping already exists, and it is never a flag.** Hosted, whether this
+gig's endpoint answers for `visuals.json`; standalone, whether Muralista's own storage holds a room.
+A "seen it" flag would be a second copy of a fact the world already carries, which is the class of
+state this suite keeps deleting.
+
+**A read that fails answers *no*.** Showing the deal to somebody who has seen it costs one press;
+skipping it for somebody who has not costs the whole explanation.
+
+**The copy is verbatim from the ruling** and every clause in it was argued. It is not to be
+paraphrased, tightened or re-voiced.
+
+### 1 LAYOUT, and what the default actually is in round one
+
+**Keep the default, or adjust it — never *default, or a blank wall*.** Custom starts as the default,
+already placed.
+
+**Keeping the default makes MURALISTA write the `visuals.json`**, which is the 02/09 ruling made
+literal: the default belongs to this tool, so this tool is what puts it on disk, and nothing is
+written on behalf of a tool that did not run. Then straight to 3 OUTPUT.
+
+**Standalone with no gig has no screen 1 at all** — no gig means no songs, and the default has
+nothing to act on. That is the question *not arising*; the screen has not moved to Pregonero. The
+cell is absent rather than dimmed, because dimmed says *later* and this is not later.
+
+**THE DEFAULT IS TWO SHAPES HERE, AND THE DESIGN DESCRIBES THREE. Named because it is a difference,
+not an oversight.** The designed default — video across the frame, lyrics at the foot while the
+video is filled, lyrics across the frame while it is empty — is written in terms of **conditional
+visibility**, which is round two and is deliberately held. The ruling also says *nothing in round one
+depends on it*. So round one's default is the layout that needs no condition and is the one this
+suite has already played two gigs on: **the frame, with the lyrics over it** — a frame-filling
+`song-video` and a frame-filling `song-lyrics` above it. It satisfies *default costing nothing and
+giving a frame that works*, and it is what round two attaches its conditions to.
+
+**Seeding only ever fills an empty room.** A room that already has shapes is somebody's afternoon,
+and `keep the default` is disabled with the reason attached rather than being a press that quietly
+throws it away.
+
+### 2 SHAPES is gig level only
+
+The room's shapes and each one's type. **No song selector and no per-song anything**: song visual
+setup is deferred entirely. The mode picker and the song half are **shut, not torn out** —
+`visualSetupMode` is still a real variable and the reassignment model is still correct. This defers a
+screen; it does not delete a model.
+
+### 3 OUTPUT is named for doing
+
+**`OUTPUT` rather than `PREVIEW`, and it was Jorge's correction**: that screen is where you take the
+picture and save the room, and *preview* implies looking only. It also makes the two flows rhyme,
+since Bombista's step 3 is the same role under the same name.
+
+**The preview uses Muralista's own stand-in content and never reaches for the setlist.** It already
+did — `LYRICS_PREVIEW_TEXT` is the whole boundary — and nothing here changed that.
+
+**`Save visuals.json` came off the sidebar.** With the save on 3 OUTPUT, keeping it in both places
+would be two controls with the same name doing the same thing. The *status* line stays, because it is
+a fact about the folder rather than a second way to act on it.
+
+### The stage capture, and it is in output space or it is worth nothing
+
+**A photograph of the stage taken through the calibrated camera, saved as `stage.png` with the gig.**
+It is what makes Jorge's actual workflow honest: Monday at the venue with the projector and camera
+where they will stand, Wednesday at home moving things around, Friday at the venue reconfirming.
+
+**Why not the photo backdrop that already exists.** You photograph the wall, **crop the photo to the
+projector's throw by hand**, load it, draw on it, then walk to the wall to find out what you got —
+and any error in that crop becomes a **fixed offset in every shape you drew**. This repo's own
+*Limits* section has said so since it had a backdrop. There is no crop step here.
+
+**The transform is the calibration run backwards, and that is the part that gets a test.** `Adopt
+boundaries…` carries traced *points* from camera space to output space with
+`computeHomography(project.cameraQuad, UNIT_SQUARE_CORNERS)`. An *image* has to be carried the other
+way: stand on each output pixel and ask the camera what is there, which is
+`computeHomography(UNIT_SQUARE_CORNERS, project.cameraQuad)`. The source is the **raw** frame,
+because `project.cameraQuad`'s points were placed on the untransformed feed and `drawImage(video)`
+yields exactly that.
+
+**It has its own file and its own `node --test` suite**, `mapper/stageCapture.js` and
+`mapper/stageCapture.test.mjs`, for the reason `warp.js` has one: **a capture taken the wrong way
+through the calibration still looks like the stage**, and the shapes drawn on it then land somewhere
+else at the venue, in front of people. The asymmetric and keystoned cases are what would catch it;
+the centred one passes either way and the test says so out loud.
+
+**A degenerate or missing calibration produces nothing, and there is deliberately nothing to fall
+back to.** A raw camera frame is exactly the offset this exists to remove.
+
+**Verified end to end in headed Chrome against a synthetic camera frame** (2026-09-03): a lit
+rectangle occupying the middle half of the camera's view, painted in four quadrant colours, came back
+filling the 1600×900 output with each colour in its own corner. A raw frame would have carried the
+grey surround with it.
+
+**Three consequences, named rather than hidden.**
+
+- **The gig folder gains a binary.** `setup/<id>/` held two JSON files and now holds an image beside
+  them. Machine territory, so no boundary moves — the poster and the contract are one level up.
+- **Authoring only.** It never reaches the output window, and nothing in the output role knows the
+  file exists.
+- **The camera lives in 2 SHAPES's sidebar, not on 3 OUTPUT**, so every blocker sentence on the
+  capture **names the screen to go to**. A requirement stated with nowhere to go is the dead end this
+  suite has a rule about, and the bar is one press away — the sentence has to say which press.
+
+### What this round found and did not close
+
+**Muralista still never reads `visuals.json` back.** It writes it and forgets it. With the deal's
+signal now reading that file, a machine that has *not* mapped this room but whose gig folder *has*
+one skips the deal and lands on an empty canvas. That is the pre-existing write-only asymmetry
+surfacing somewhere new, not something this round introduced — and reading the file back is a design
+question nobody has answered, so it is named here and left. **It bites the design's own Wednesday if
+Wednesday is a different machine from Monday.**
+
 ## Where the state actually lives
 
 The working venue mappings are not in git. They live in the browser's `localStorage`, under the key
@@ -1972,9 +2098,13 @@ one does not exist at all**: there is no handle, because there was no picker —
 URL is the whole connection, and it is gone when the window is.
 
 - **`<gig>/visuals.json`**, in whichever folder holds that gig's `gig.json`. Muralista is its sole
-  writer and writes it only when **Save visuals.json** is pressed; nothing autosaves it. The line in
-  the sidebar saying when it was last written **disappears on the next edit**, because from that
-  moment the folder is behind the screen.
+  writer and writes it only when **Save to gig** is pressed on 3 OUTPUT, or when **Keep the default**
+  is pressed on 1 LAYOUT; nothing autosaves it. The line saying when it was last written
+  **disappears on the next edit**, because from that moment the folder is behind the screen.
+- **`<gig>/stage.png`** (v1.8.0), beside it. The stage capture, in output space, written on the same
+  two paths as the visuals file — a `PUT` when hosted, a handle write when a folder is connected, and
+  a download when there is neither. **The gig folder stops being text**, which is machine territory
+  and moves no boundary.
 - **The gig folder's directory handle**, in IndexedDB under `muralista`/`handles`/`gigFolder`,
   beside the media folder's. A handle is a browser object and cannot live in a JSON, which is why the
   mapping never mentions the folder and why a mapping made on one machine opens on another.

@@ -1489,7 +1489,11 @@ function replaceProject(newProject) {
 // Both paths post the live `project` object, so a nudge that overtakes a
 // pending resolve still carries the newer geometry - the two cannot disagree.
 function commitProjectChange() {
-  saveProject(project);
+  // **THE LOCAL COPY IS KEPT ONLY WHEN NOTHING WAS HANDED OVER** (Jorge,
+  // 2026-09-03). Editing inside a gig writes to the gig folder and nowhere
+  // else, so the two cannot drift; the local store is for standalone with no
+  // gig, which is the only time this tool has to remember a room by itself.
+  if (!gigConnected()) saveProject(project);
   // The shapes just moved past whatever is in the folder, so the "wrote it at
   // 19:42" line stops being true and stops being shown. Not an error state and
   // not a warning - just the tool declining to claim something it no longer
@@ -2180,10 +2184,16 @@ function gigVenueLabel() {
   return [name, city].filter(Boolean).join(", ") || (gig.id || "this gig");
 }
 
-// Re-reads gig.json from the connected folder. Called on connect, on
-// reconnect, and from the Reload button - a gig is a file somebody else wrote
-// and may have rewritten while this window was open, and re-reading it is one
-// click rather than a reload of the whole tool.
+// Re-reads the connected folder - gig.json AND, since 2026-09-03, the room in
+// visuals.json. Called on connect, on reconnect, and from the Reload button: a
+// gig is a file somebody else wrote and may have rewritten while this window
+// was open, and re-reading it is one click rather than a reload of the tool.
+//
+// **RELOADING DISCARDS UNSAVED EDITS TO THE ROOM, and that is the rule rather
+// than a side effect.** The handed-in file is the record for this gig, so
+// re-reading the folder means taking what the folder says. The button's label
+// says `Reload from the gig folder` for exactly this reason - `Reload gig.json`
+// stopped being true the moment the room came back with it.
 async function refreshGig() {
   gig = null;
   gigError = null;
@@ -2209,6 +2219,16 @@ async function refreshGig() {
         ? await missingGigMessage()
         : "Could not read " + GIG_FILE_NAME + ": " + ((err && err.message) || "unreadable");
     console.warn("Muralista: could not read the gig.", err);
+  }
+  // **THE HANDED-IN FILE WINS.** A connected gig's room comes out of its folder,
+  // replacing whatever was in memory - which on a standalone machine is the
+  // local store, and it is deliberately ignored here. Re-read on every refresh
+  // for the reason gig.json is: it is a file somebody else may have rewritten
+  // while this window was open.
+  if (gigConnected()) {
+    await adoptGigVisuals();
+    visualsWrittenAt = null;
+    visualsWriteError = "";
   }
   // A gig that went away must not leave the tool previewing a song from it.
   if (!gigConnected() || !gigSongById(visualSetupSongId)) {
@@ -2296,21 +2316,178 @@ async function reconnectGigFolder() {
   await refreshGig();
 }
 
-// Disconnects the folder. THE ASSIGNMENTS STAY IN THE PROJECT - they are
-// authored work, not a fact about the folder, and a person clearing a folder
-// is changing which gig they are looking at, not throwing away an afternoon of
-// mapping. Reconnecting the same gig finds them again.
+// Disconnects the folder, and THE STANDALONE ROOM COMES BACK.
+//
+// **The exact mirror of connecting one** (2026-09-03). Connecting adopts the
+// gig's file and ignores the local store; disconnecting hands the local store
+// back, because from that moment nobody is handing a file over and the local
+// store is what standalone means. Nothing is thrown away either way: the gig's
+// afternoon is in the gig's file, and the standalone afternoon is where it
+// always was.
+//
+// **The alternative was keeping the gig's room on screen and persisting it
+// locally on the next edit**, which copies a handed file into the store the
+// rule says exists only when nothing was handed over. It also silently
+// replaced whatever standalone work was there. Rejected on both counts.
 async function clearGigFolder() {
   gigFolderHandle = null;
   gigFolderState = "none";
   visualsWrittenAt = null;
   visualsWriteError = "";
+  visualsReadError = "";
+  project = loadProject();
+  selectedShapeId = null;
+  clearShapeSubselection();
   try {
     await clearStoredGigFolderHandle();
   } catch (err) {
     console.warn("Muralista: could not forget the gig folder.", err);
   }
   await refreshGig();
+}
+
+// --- Reading a gig's visuals.json back. ---
+//
+// THE HANDED-IN FILE ALWAYS WINS (Jorge, 2026-09-03).
+//
+//   Muralista keeps a local copy only when it was NOT handed one.
+//
+// No merge, no conflict resolution, no arbitration between two stores. What
+// follows from it, and all of it is intended:
+//
+//   - IN A GIG CONTEXT THE LOCAL STORE IS NEVER CONSULTED. Work done
+//     standalone on the same room is ignored when that room is opened with a
+//     gig, because the gig's file is the record for that gig.
+//   - EDITING INSIDE A GIG WRITES TO THE GIG FOLDER ONLY. The local copy does
+//     not shadow it, so the two cannot drift.
+//   - THE LOCAL STORE IS FOR THE CASE NOBODY HANDED A FILE OVER - standalone
+//     with no gig, the only time this tool has to remember a room by itself.
+//
+// WHY IT HAD TO EXIST. Round one shipped write-only: this tool never read a
+// visuals.json back, so a machine with no local mapping whose gig folder had
+// one skipped the deal and landed on an EMPTY CANVAS - the deal's signal read
+// the file and the canvas did not. The app said "you have done this before"
+// and showed nothing.
+//
+// AND IT IS WHAT MAKES THE STAGE CAPTURE WORTH ANYTHING. A file saved into a
+// gig folder that nothing reads back serves nobody; with the file as the
+// winner, the folder is what a later session loads, and Wednesday-from-home
+// works whether or not it is the same machine.
+//
+// A FILE THAT NAMES ANOTHER GIG IS REFUSED, NOT LOADED. Copying last month's
+// gig folder to start the next one and not re-mapping gives a mapping of the
+// wrong room that renders perfectly with nothing reporting it. Pregonero
+// already refuses exactly this on exactly this field; the two now agree.
+
+// What the last read of visuals.json said, when it said anything. Null while
+// there is nothing to report. Shown beside the write status, because they are
+// two facts about one file.
+let visualsReadError = "";
+
+async function readVisualsText() {
+  if (isHostedGig()) {
+    const res = await fetch(hostedGigUrl(VISUALS_FILE_NAME), { cache: "no-store" });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.text();
+  }
+  if (!gigFolderHandle) return null;
+  try {
+    const fileHandle = await gigFolderHandle.getFileHandle(VISUALS_FILE_NAME);
+    return (await fileHandle.getFile()).text();
+  } catch (err) {
+    // Absent is not an error. A gig whose room has never been mapped is the
+    // ordinary starting state, and it is what screen 1 exists for.
+    if (err && err.name === "NotFoundError") return null;
+    throw err;
+  }
+}
+
+// The document this tool wrote, turned back into a project.
+//
+// IT GOES THROUGH migrateProject, which is the single enforcement point for
+// arbitrary JSON on load AND on import - a ring under the 3-point floor or a
+// non-finite coordinate would otherwise paint as a degenerate polygon with no
+// visible cause at a projector. A gig folder is a folder somebody can edit.
+//
+// WHAT IS NOT IN THE FILE STAYS UNSET. `backdropMode` and the backdrop photo
+// are authoring aids and were deliberately never written (see
+// visualsDocument), so a loaded room starts on the photo backdrop with none
+// chosen, exactly as a fresh project does.
+function projectFromVisuals(doc, expectedGigId) {
+  if (!doc || typeof doc !== "object") throw new Error("visuals.json is not an object");
+  if (typeof doc.visualsVersion !== "number") {
+    throw new Error("visuals.json declares no visualsVersion.");
+  }
+  if (doc.visualsVersion !== VISUALS_VERSION) {
+    throw new Error(
+      "visuals.json is version " +
+        doc.visualsVersion +
+        "; this build writes version " +
+        VISUALS_VERSION +
+        ". It is not loaded."
+    );
+  }
+  if (expectedGigId && doc.gigId && doc.gigId !== expectedGigId) {
+    throw new Error(
+      'visuals.json belongs to gig "' +
+        doc.gigId +
+        '", not "' +
+        expectedGigId +
+        '". That is a mapping of a different room, so it is not loaded.'
+    );
+  }
+  return migrateProject({
+    version: PROJECT_VERSION,
+    backdropMode: "photo",
+    cameraDeviceId: typeof doc.cameraDeviceId === "string" ? doc.cameraDeviceId : null,
+    cameraQuad: isValidQuad(doc.cameraQuad) ? doc.cameraQuad : null,
+    surfaces: Array.isArray(doc.shapes) ? doc.shapes : [],
+    songVisuals: doc.songVisuals,
+  });
+}
+
+/**
+ * Loads the connected gig's room, replacing whatever is in memory.
+ *
+ * IT WRITES NOTHING, and that is the rule rather than an implementation
+ * detail: adopting a handed file must not copy it into the local store, or the
+ * two stores exist again and can drift.
+ *
+ * A gig with no visuals.json yet loads an EMPTY room rather than the local one.
+ * That is the ruling applied rather than softened: in a gig context the local
+ * store is never consulted, and a gig whose room has not been mapped is a room
+ * that has not been mapped.
+ */
+async function adoptGigVisuals() {
+  visualsReadError = "";
+  let text = null;
+  try {
+    text = await readVisualsText();
+  } catch (err) {
+    console.warn("Muralista: could not read " + VISUALS_FILE_NAME + ".", err);
+    visualsReadError =
+      "Could not read " + VISUALS_FILE_NAME + ": " + ((err && err.message) || "unreadable");
+    return;
+  }
+  if (text === null) {
+    project = emptyProject();
+    selectedShapeId = null;
+    clearShapeSubselection();
+    return;
+  }
+  try {
+    project = projectFromVisuals(JSON.parse(text), gig ? gig.id : null);
+  } catch (err) {
+    console.warn("Muralista: could not load " + VISUALS_FILE_NAME + ".", err);
+    // REFUSED, NOT REPAIRED, and not silently replaced by the local room
+    // either - an empty canvas beside a named refusal is a state somebody can
+    // act on, and the fix is in the folder rather than here.
+    visualsReadError = (err && err.message) || ("Could not load " + VISUALS_FILE_NAME + ".");
+    project = emptyProject();
+  }
+  selectedShapeId = null;
+  clearShapeSubselection();
 }
 
 // --- Writing visuals.json. The one file this tool owns. ---
@@ -2568,24 +2745,20 @@ let flowBusy = false;
 /**
  * WHETHER THIS MACHINE HAS DONE THIS BEFORE.
  *
- * Hosted, the question is about the gig: a `visuals.json` at the endpoint means
- * a room was mapped for it. Standalone, it is about the tool: shapes in
- * Muralista's own storage. Neither is a flag, and that is the point - both read
- * the thing itself.
+ * **One question and one read, since the handed-in file wins** (2026-09-03).
+ * It used to be two: a `GET` of the gig's `visuals.json` when hosted, and the
+ * local store standalone. Now the gig's file has already been loaded by the
+ * time this is asked, so *are there shapes* answers both - and the two can no
+ * longer disagree, which is exactly how round one shipped a deal that said
+ * *you have done this before* over an empty canvas.
  *
- * A read that fails answers NO, which is the safe direction: showing the deal
- * to somebody who has seen it costs one press, and skipping it for somebody who
- * has not costs the whole explanation.
+ * Not a flag, and deliberately not: it reads the room itself.
+ *
+ * A room with nothing in it answers NO, which is the safe direction. Showing
+ * the deal to somebody who has seen it costs one press; skipping it for
+ * somebody who has not costs the whole explanation.
  */
-async function mappingAlreadyExists() {
-  if (isHostedGig()) {
-    try {
-      const res = await fetch(hostedGigUrl(VISUALS_FILE_NAME), { cache: "no-store", method: "GET" });
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
+function mappingAlreadyExists() {
   return Array.isArray(project.surfaces) && project.surfaces.length > 0;
 }
 
@@ -2947,7 +3120,9 @@ function renderFlowOutput() {
   document.getElementById("btn-flow-download").hidden = canSave;
 
   const status = document.getElementById("flow-save-status");
-  const message = flowSaveStatus
+  const message = visualsReadError
+    ? visualsReadError
+    : flowSaveStatus
     ? flowSaveStatus
     : !canSave
       ? "No gig is connected, so there is nowhere to save. Download the file and put it beside the gig's gig.json yourself."
@@ -2965,7 +3140,7 @@ function renderFlowOutput() {
  * connect, because whether screen 1 applies is a question about the gig.
  */
 async function initFlow() {
-  if (await mappingAlreadyExists()) {
+  if (mappingAlreadyExists()) {
     // A room already exists, so the deal is behind this person and the tool is
     // the tool: the canvas, with everything reachable.
     flowStep = FLOW_SHAPES;
@@ -3099,13 +3274,19 @@ function renderGigControls() {
 
   const written = document.getElementById("visuals-status");
   const where = hosted ? "beside " + GIG_FILE_NAME : "into " + label;
-  const message = visualsWriteError
-    ? visualsWriteError
-    : visualsWrittenAt
-      ? `Wrote ${VISUALS_FILE_NAME} ${where} at ${visualsWrittenAt.toLocaleTimeString()}.`
-      : "";
+  // **A read refusal outranks everything else this line can say.** It means the
+  // room on screen is not the room in the folder, which is the one thing about
+  // this file worth interrupting for.
+  const message = visualsReadError
+    ? visualsReadError
+    : visualsWriteError
+      ? visualsWriteError
+      : visualsWrittenAt
+        ? `Wrote ${VISUALS_FILE_NAME} ${where} at ${visualsWrittenAt.toLocaleTimeString()}.`
+        : "";
   written.hidden = !message;
   written.textContent = message;
+  written.classList.toggle("visuals-status-bad", !!(visualsReadError || visualsWriteError));
 }
 
 function renderVisualSetup() {
@@ -7292,6 +7473,13 @@ if (isOutputRole) {
   project = emptyProject(); // output never seeds from localStorage; waits for state broadcast
   initOutput();
 } else {
-  project = loadProject();
+  // **HOSTED IS A GIG CONTEXT AND IS KNOWN SYNCHRONOUSLY**, so the local store
+  // is not read at all: the gig's own file arrives a moment later and would
+  // replace it, and a local room painted in between is a room somebody sees
+  // and reaches for. Standalone still loads it here, because standalone with
+  // no gig is exactly what it is for. A remembered gig FOLDER is discovered
+  // asynchronously, so that case paints the local room for one tick and then
+  // adopts the gig's - it is never persisted over and never written back.
+  project = isHostedGig() ? emptyProject() : loadProject();
   initControl();
 }

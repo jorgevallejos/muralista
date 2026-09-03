@@ -2230,6 +2230,10 @@ async function refreshGig() {
     visualsWrittenAt = null;
     visualsWriteError = "";
   }
+  // Whether the gig's folder holds a stage capture to offer as a backdrop. A
+  // file somebody else may have written since this window opened, so it is
+  // re-read with the gig rather than answered once.
+  await refreshStageCapturePresent();
   // A gig that went away must not leave the tool previewing a song from it.
   if (!gigConnected() || !gigSongById(visualSetupSongId)) {
     visualSetupSongId = null;
@@ -2488,6 +2492,93 @@ async function adoptGigVisuals() {
   }
   selectedShapeId = null;
   clearShapeSubselection();
+}
+
+// --- Reading the stage capture back. ---
+//
+// THE CAPTURE BECOMES A BACKDROP, AND IT IS NOT A NEW KIND OF THING (Jorge,
+// 2026-09-03). It is an OPTION IN THE BACKDROP DROPDOWN, beside a photo and
+// the live camera, and picking it loads the file down the SAME PATH a chosen
+// photo takes - including the downscale, because the reason that step exists
+// has nothing to do with where the image came from.
+//
+// WHY IT HAD TO EXIST. v1.8.0 wrote stage.png and NOTHING READ IT. A file
+// saved into a gig folder that nothing loads serves nobody, and this one was
+// built for one purpose: setting the room up at home, against a photograph of
+// the stage taken through the calibrated camera, without going back to the
+// venue.
+//
+// IT IS OFFERED ONLY WHEN THE FILE IS THERE. An option that is always present
+// and usually does nothing is a control that has to be tried to be understood.
+//
+// IT IS NOT PERSISTED, AND IT CANNOT BE. `stage` is reachable only while a gig
+// is connected, and since v1.9.0 a connected gig means the project is not
+// written to the local store at all - so `migrateProject`'s rule that anything
+// but "camera" is "photo" needs no change: a LOADED project can never carry
+// this mode. Re-picking it after a reload is one press, and the dropdown says
+// it is there.
+const STAGE_FILE_NAME = "stage.png";
+
+// Whether the connected gig's folder holds a stage capture. Re-read whenever
+// the gig is, because it is a file somebody else may have written since.
+let stageCapturePresent = false;
+
+async function readStageBlob() {
+  if (isHostedGig()) {
+    const res = await fetch(hostedGigUrl(STAGE_FILE_NAME), { cache: "no-store" });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.blob();
+  }
+  if (!gigFolderHandle) return null;
+  try {
+    const fileHandle = await gigFolderHandle.getFileHandle(STAGE_FILE_NAME);
+    return await fileHandle.getFile();
+  } catch (err) {
+    if (err && err.name === "NotFoundError") return null;
+    throw err;
+  }
+}
+
+/** Whether to offer the option. A read that fails answers no rather than throwing at a dropdown. */
+async function refreshStageCapturePresent() {
+  if (!gigConnected()) {
+    stageCapturePresent = false;
+    return;
+  }
+  try {
+    stageCapturePresent = (await readStageBlob()) !== null;
+  } catch (err) {
+    console.warn("Muralista: could not look for " + STAGE_FILE_NAME + ".", err);
+    stageCapturePresent = false;
+  }
+}
+
+/**
+ * Puts the gig's stage capture behind the shapes.
+ *
+ * **The same path a chosen photo takes**, `loadBackdropPhotoFile`, which takes
+ * a Blob as readily as a File - so the downscale, the dataURL and every
+ * failure message are the ones that were already there rather than a second
+ * set that can drift from them.
+ */
+async function loadStageCaptureBackdrop() {
+  let blob = null;
+  try {
+    blob = await readStageBlob();
+  } catch (err) {
+    console.warn("Muralista: could not read " + STAGE_FILE_NAME + ".", err);
+  }
+  if (!blob) {
+    // It was offered because it was there; if it is gone now, say so and stop
+    // offering rather than leaving a dead option in the menu.
+    stageCapturePresent = false;
+    project.backdropMode = "photo";
+    setCameraStatus("The stage capture is no longer in the gig folder.");
+    commitProjectChange();
+    return;
+  }
+  loadBackdropPhotoFile(blob);
 }
 
 // --- Writing visuals.json. The one file this tool owns. ---
@@ -2868,7 +2959,11 @@ function flowAdjust() {
 //
 // AUTHORING ONLY, like every other backdrop. It never reaches the output
 // window, and nothing in the output role knows the file exists.
-const STAGE_FILE_NAME = "stage.png";
+//
+// AND IT IS READ BACK AS ONE (v1.10.0). `STAGE_FILE_NAME` is declared with the
+// reader, in the gig section above, because writing it and loading it are two
+// halves of one file and a second constant is how the two halves start
+// disagreeing about a name.
 
 // The output frame's own aspect, and the size the preview already draws at.
 // Big enough to place a shape against, small enough to be one ordinary PNG.
@@ -2980,8 +3075,13 @@ async function captureStage() {
     if (!blob) throw new Error("the frame could not be encoded");
     if (canWriteVisuals()) {
       await writeStageFile(blob);
+      // **Offerable from this moment**, without a reload: the file this window
+      // just wrote is the file the Backdrop dropdown looks for.
+      stageCapturePresent = true;
       flowCaptureStatus =
-        "Stage captured, through the calibration, and saved as " + STAGE_FILE_NAME + " with the gig.";
+        "Stage captured, through the calibration, and saved as " +
+        STAGE_FILE_NAME +
+        " with the gig. It is now a Backdrop source, in 2 SHAPES.";
     } else {
       downloadBlob(blob, STAGE_FILE_NAME);
       flowCaptureStatus =
@@ -4788,7 +4888,11 @@ function setCameraStatus(text, kind) {
 }
 
 function setBackdropMode(mode) {
-  project.backdropMode = mode === "camera" ? "camera" : "photo";
+  // **`stage` is a photo whose source is the gig**, and everything downstream
+  // treats it as one: `isCameraMode()` is false, `renderBackdrop` draws
+  // `project.photo`, and Clear and Choose photo both still work on it.
+  const stage = mode === "stage" && stageCapturePresent;
+  project.backdropMode = mode === "camera" ? "camera" : stage ? "stage" : "photo";
   // Coming into camera mode, refresh the menu before anybody looks at it.
   // Un-awaited: it re-renders itself when it lands, and a dropdown is not
   // worth holding up a mode switch for.
@@ -4800,6 +4904,9 @@ function setBackdropMode(mode) {
     disableCamera();
   }
   commitProjectChange();
+  // Un-awaited for the same reason the camera menu is: the load re-renders
+  // itself when it lands, and it goes through the photo path from there.
+  if (stage) void loadStageCaptureBackdrop();
 }
 
 function setCameraDeviceId(deviceId) {
@@ -4997,7 +5104,14 @@ function renderCamera() {
 // buttons can never disagree with what the preview is actually doing.
 function renderBackdropControls() {
   const camera = isCameraMode();
-  document.getElementById("select-backdrop-mode").value = project.backdropMode;
+  const select = document.getElementById("select-backdrop-mode");
+  // **Offered only when the gig's folder holds one.** Hiding the option rather
+  // than disabling it: a disabled row in a dropdown you have to open to see is
+  // not the same kind of thing as a disabled button on the screen, and there is
+  // no action to explain — the capture is either there or it is not.
+  const stageOption = select.querySelector('option[value="stage"]');
+  if (stageOption) stageOption.hidden = !stageCapturePresent;
+  select.value = project.backdropMode;
   document.getElementById("backdrop-photo-controls").hidden = camera;
   document.getElementById("backdrop-camera-controls").hidden = !camera;
 

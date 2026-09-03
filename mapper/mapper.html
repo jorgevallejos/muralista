@@ -296,8 +296,13 @@
           </div>
           <div class="backdrop-controls">
             <label class="backdrop-mode">Source
+              <!-- The stage capture is offered ONLY when the connected gig's
+                   folder holds one - an option that is always there and
+                   usually does nothing is a control you have to try to
+                   understand. See THE STAGE CAPTURE's reader in mapper.js. -->
               <select id="select-backdrop-mode">
                 <option value="photo">Photo</option>
+                <option value="stage" hidden>Stage capture</option>
                 <option value="camera">Live camera</option>
               </select>
             </label>

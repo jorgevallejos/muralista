@@ -2164,6 +2164,45 @@ no browser automation can drive — the same limit this repo already records for
 folders. The round trip only a person can run is: pick a gig folder, look at its room, press
 `Clear`, and see the standalone room come back.
 
+## The stage capture becomes a backdrop (v1.10.0, 2026-09-03)
+
+**Ruling: Jorge, 2026-09-03.** `v1.8.0` wrote `stage.png` and **nothing read it**. Code asked
+whether the capture should become `project.photo` or a new authoring-only field; **it is neither new
+thing — it is an option in the Backdrop dropdown**, beside a photo and the live camera.
+
+**This is what makes the capture worth having.** A file saved into a gig folder that nothing loads
+serves nobody, and this one was built for one purpose: **setting the room up at home, against a
+photograph of the stage taken through the calibrated camera, without going back to the venue.**
+
+**It loads down the same path a chosen photo takes.** `loadBackdropPhotoFile` takes a Blob as
+readily as a `File`, so the downscale, the dataURL and every failure message are the ones that were
+already there rather than a second set that can drift from them. **The broadcast cost is accepted**:
+it already exists for any chosen photo, and it is the same cost.
+
+**Offered only when the gig's folder holds one.** An option that is always present and usually does
+nothing is a control you have to try in order to understand. The option is *hidden*, not disabled —
+a disabled row inside a dropdown you must open to see it is not the same kind of thing as a disabled
+button on the screen, and there is no action here to explain: the capture is either there or it is
+not. A capture that has gone since the option was offered says so and stops being offered.
+
+**Taking one offers it immediately**, without a reload: the file screen 3 just wrote is the file the
+dropdown looks for, so `captureStage` sets the flag it would otherwise learn on the next gig read.
+
+**`stage` is a photo whose source is the gig**, and everything downstream treats it as one:
+`isCameraMode()` is false, `renderBackdrop` draws `project.photo`, and both `Clear` and
+`Choose photo…` still work on it.
+
+**It is not persisted, and it cannot be** — which is why `migrateProject`'s rule that anything but
+`camera` is `photo` needed no change. `stage` is reachable only while a gig is connected, and since
+`v1.9.0` a connected gig means the project is not written to the local store at all. **So a loaded
+project can never carry this mode**, and re-picking it after a reload is one press with the dropdown
+saying it is there.
+
+**Walked in real headed Chrome** against a served gig folder: with a `stage.png` present the option
+appears and picking it puts the capture behind the shapes as a downscaled JPEG dataURL — the photo
+path's own output, which is the evidence it went down that path and not a second one. With the file
+removed the option is hidden.
+
 ## Where the state actually lives
 
 The working venue mappings are not in git. **Since 2026-09-03 there are two homes, and which one is
@@ -2182,8 +2221,8 @@ URL is the whole connection, and it is gone when the window is.
   writer and writes it only when **Save to gig** is pressed on 3 OUTPUT, or when **Keep the default**
   is pressed on 1 LAYOUT; nothing autosaves it. The line saying when it was last written
   **disappears on the next edit**, because from that moment the folder is behind the screen.
-- **`<gig>/stage.png`** (v1.8.0), beside it. The stage capture, in output space, written on the same
-  two paths as the visuals file — a `PUT` when hosted, a handle write when a folder is connected, and
+- **`<gig>/stage.png`** (v1.8.0), beside it, and **read back as a Backdrop source since v1.10.0**.
+  The stage capture, in output space, written on the same two paths as the visuals file — a `PUT` when hosted, a handle write when a folder is connected, and
   a download when there is neither. **The gig folder stops being text**, which is machine territory
   and moves no boundary.
 - **The gig folder's directory handle**, in IndexedDB under `muralista`/`handles`/`gigFolder`,

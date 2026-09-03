@@ -669,6 +669,12 @@ button.danger:hover {
   white-space: pre-line;
 }
 
+/* A REFUSAL, not a note. The room on screen is not the room in the folder,
+   which is the one thing about this file worth interrupting for. */
+.visuals-status-bad {
+  color: var(--danger);
+}
+
 .backdrop-controls {
   display: flex;
   gap: 8px;

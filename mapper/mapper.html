@@ -220,7 +220,11 @@
           <div class="backdrop-controls">
             <button id="btn-gig-folder" type="button">Choose gig folder&hellip;</button>
             <button id="btn-gig-folder-reconnect" type="button" hidden>Reconnect gig folder</button>
-            <button id="btn-gig-reload" type="button" hidden>Reload gig.json</button>
+            <!-- **It reloads BOTH files since 2026-09-03**, because the handed-in
+                 visuals.json is the record for this gig and re-reading the folder
+                 means re-reading the folder. The label says so: `Reload gig.json`
+                 stopped being true the moment the room came back with it. -->
+            <button id="btn-gig-reload" type="button" hidden>Reload from the gig folder</button>
             <button id="btn-gig-folder-clear" type="button" hidden>Clear</button>
           </div>
           <p id="gig-status" class="media-folder-status"></p>

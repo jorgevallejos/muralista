@@ -2085,9 +2085,90 @@ surfacing somewhere new, not something this round introduced — and reading the
 question nobody has answered, so it is named here and left. **It bites the design's own Wednesday if
 Wednesday is a different machine from Monday.**
 
+## The handed-in visuals.json always wins (v1.9.0, 2026-09-03)
+
+**Ruling: `tramoya-integration/project-context.md`, "The handed-in `visuals.json` always wins".**
+This closes the gap `v1.8.0` left open and reported.
+
+**The rule, in one line: Muralista keeps a local copy only when it was NOT handed one.** No merge,
+no conflict resolution, no arbitration between two stores.
+
+**What round one shipped, and why it had to be fixed.** `v1.8.0` was write-only: this tool never
+read a `visuals.json` back, so a machine with no local mapping whose gig folder had one **skipped
+the deal and landed on an empty canvas** — the deal's signal read the file and the canvas did not.
+The app said *you have done this before* and showed nothing.
+
+### The three consequences, and all of them are intended
+
+| | |
+|---|---|
+| **In a gig context the local store is never consulted** | Work done standalone on the same room is ignored when that room is opened with a gig. The gig's file is the record for that gig. |
+| **Editing inside a gig writes to the gig folder only** | `commitProjectChange` skips `saveProject` while a gig is connected, so the local copy cannot shadow the file and the two cannot drift. |
+| **The local store is for the case nobody handed a file over** | Standalone with no gig — the only time this tool has to remember a room by itself. Unchanged. |
+
+**Hosted never reads the local store at all**, because `isHostedGig()` is known synchronously: the
+gig's file arrives a moment later and would replace it, and a local room painted in between is a
+room somebody sees and reaches for. **A remembered gig *folder* is discovered asynchronously**, so
+that one case paints the local room for a tick and then adopts the gig's — never persisted over,
+never written back.
+
+### Disconnecting is the exact mirror, and that is the one thing the ruling did not spell out
+
+**Clearing the gig hands the local store back.** Connecting adopts the gig's file and ignores the
+local room; disconnecting restores it, because from that moment nobody is handing a file over and
+the local store is what standalone means. **Nothing is thrown away either way**: the gig's afternoon
+is in the gig's file and the standalone afternoon is where it always was.
+
+**The alternative was keeping the gig's room on screen and persisting it locally on the next edit.**
+Rejected twice over: it copies a handed file into the store the rule says exists only when nothing
+was handed over, and it silently replaces whatever standalone work was there. **This supersedes the
+old comment on `clearGigFolder`** — *the assignments stay in the project, they are authored work* —
+whose intent is served better by the mirror, since both afternoons survive rather than one.
+
+### A file naming another gig is refused, not loaded
+
+Copying last month's gig folder to start the next one and not re-mapping gives **a mapping of the
+wrong room that renders perfectly with nothing reporting it**. Pregonero already refuses exactly
+this on exactly this field; the two now agree. The refusal is named in the status line, in the fail
+colour, and the canvas is **empty rather than falling back to the local room** — an empty canvas
+beside a named refusal is a state somebody can act on, and the fix is in the folder.
+
+A `visualsVersion` this build does not write is refused the same way.
+
+**Everything read goes through `migrateProject`**, which is already the single enforcement point for
+arbitrary JSON on load and on import. A gig folder is a folder somebody can edit, and a ring under
+the three-point floor would otherwise paint as a degenerate polygon with no visible cause at a
+projector.
+
+### Two smaller consequences
+
+- **The deal's signal is one read now, not two.** It used to `GET` the gig's `visuals.json` when
+  hosted and check the local store standalone. The gig's file is loaded by the time the question is
+  asked, so *are there shapes* answers both — **and the two can no longer disagree**, which is
+  exactly how round one shipped a deal that said *you have done this before* over an empty canvas.
+- **Reloading discards unsaved edits to the room, and the button says so.** `Reload gig.json`
+  stopped being true the moment the room came back with it; it reads **`Reload from the gig
+  folder`**. Re-reading the folder means taking what the folder says, which is the rule rather than
+  a side effect.
+
+### What is verified, and what is not
+
+Walked in real headed Chrome against a served gig folder: a gig with a room and no local mapping
+loads the room; a gig with a room and a *different* local mapping loads the gig's and leaves the
+local store untouched; an edit inside a gig writes nothing to `localStorage`; a `visuals.json`
+naming another gig is refused by name with an empty canvas; standalone with no gig reads and writes
+the local store exactly as before.
+
+**`clearGigFolder`'s restore is code-verified only.** Reaching it needs `showDirectoryPicker`, which
+no browser automation can drive — the same limit this repo already records for the media and gig
+folders. The round trip only a person can run is: pick a gig folder, look at its room, press
+`Clear`, and see the standalone room come back.
+
 ## Where the state actually lives
 
-The working venue mappings are not in git. They live in the browser's `localStorage`, under the key
+The working venue mappings are not in git. **Since 2026-09-03 there are two homes, and which one is
+in use is decided by whether a gig was handed over** — see the section above. With no gig they live
+in the browser's `localStorage`, under the key
 `wallmapper.project.v1` (deliberately not renamed during the 2026-08-20 rename — see the "Do NOT
 rename these" table above). Exported venue JSONs sit in `mapper/media/`, alongside the gitignored
 video assets. This file and the repo's committed code describe the tool; the actual state of any

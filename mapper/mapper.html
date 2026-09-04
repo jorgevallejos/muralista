@@ -158,133 +158,16 @@
 
            What is left on this screen is the photograph and the page's own footer. -->
       <aside class="sidebar" id="shapes-sidebar">
-        <!-- One list, because there is one kind of thing on the wall. A
-             shape that holds black is a shape whose layer type is "fill", so
-             it lives here with everything else and takes part in the same
-             paint order. See SHAPES in mapper.js. -->
-        <div class="sidebar-header">
-          <h2>Shapes</h2>
-          <button id="btn-add-shape" type="button">+ Add shape</button>
-        </div>
-        <ul id="shape-list" class="surface-list"></ul>
-        <!-- A refusal about a shape, said where the shapes are: deleting one that
-             something depends on names the dependents rather than silently
-             dropping their conditions. -->
-        <p id="shape-status" class="shape-status" hidden></p>
-        <!-- CAD's constraint overlay, on request. **The anti-pattern is node
-             editors**: permanent wires are right on a dedicated graph surface and
-             wrong on a photograph of a wall with overlapping quads. The permanent
-             mark is the per-shape badge; this is the whole picture when asked. -->
-        <div class="backdrop-controls">
-          <button id="btn-show-dependencies" type="button" aria-pressed="false">Show dependencies</button>
-        </div>
-
-        <div class="sidebar-section">
-          <div class="sidebar-header">
-            <h2>Shape</h2>
-          </div>
-          <div id="layer-panel" class="layer-panel"></div>
-        </div>
-
-        <!-- Gig: the folder Pregonero wrote gig.json into, and the folder
-             Muralista writes visuals.json back into. ADDITIVE - with no gig
-             connected the tool maps a wall exactly as it always has, and the
-             four song-aware shape types simply are not offered. Muralista
-             reads `songs` and `venue` out of gig.json and nothing else, ever,
-             and never writes it. See GIG in mapper.js. -->
-        <div class="sidebar-section" id="gig-section" hidden>
-          <div class="sidebar-header">
-            <h2>Gig</h2>
-          </div>
-          <div class="backdrop-controls">
-            <button id="btn-gig-folder" type="button">Choose gig folder&hellip;</button>
-            <button id="btn-gig-folder-reconnect" type="button" hidden>Reconnect gig folder</button>
-            <!-- P6b: `Reload from the gig folder` IS A STANDALONE CONTROL (Jorge, 2026-09-04).
-                 Hosted, you arrived here from the gig flow, which had just read the folder — a
-                 button to re-read it is a leftover from the tool being pointed at a folder by hand.
-                 It stays standalone, where the folder can change under you. -->
-            <!-- **It reloads BOTH files since 2026-09-03**, because the handed-in
-                 visuals.json is the record for this gig and re-reading the folder
-                 means re-reading the folder. The label says so: `Reload gig.json`
-                 stopped being true the moment the room came back with it. -->
-            <button id="btn-gig-reload" type="button" hidden>Reload from the gig folder</button>
-            <button id="btn-gig-folder-clear" type="button" hidden>Clear</button>
-          </div>
-          <p id="gig-status" class="media-folder-status"></p>
-          <p id="gig-error" class="media-folder-failures" hidden></p>
-
-          <div id="gig-setup" hidden>
-            <!-- B1: ONE SELECTOR, AND `All` IS THE ROOM (Jorge, 2026-09-04). It replaced a
-                 mode picker plus a song picker — two controls saying one thing — and it starts at
-                 `All`, which is full editing exactly as before.
-
-                 **PICKING A SONG SWITCHES TO ASSIGNMENT ONLY.** The handles disappear, because you
-                 cannot drag what has no handle, and the header says so: a canvas that behaves
-                 differently depending on a dropdown is a silent mode otherwise.
-
-                 **NEVER PER-SONG GEOMETRY.** A song holding its own coordinates is silently wrong
-                 on stage the moment the room is remapped. Standing ruling, not a preference — what
-                 a song sets is what it PUTS IN a shape, never where the shape is. -->
-            <div class="assignment-row" id="visual-setup-song-row" hidden>
-              <label for="select-visual-setup-song">Song</label>
-              <select id="select-visual-setup-song"></select>
-            </div>
-
-            <!-- Gig visual setup: which shape of each kind serves every song. -->
-            <div id="gig-assignments" class="setup-rows" hidden></div>
-
-            <!-- Song visual setup: what this song puts in each shape. Empty is the default and
-                 means that shape stays dark for this song — a song with no animation sets nothing,
-                 and setting nothing is free. -->
-            <div id="song-setup" class="song-setup" hidden>
-              <p class="song-setup-mode" id="song-setup-mode"></p>
-              <div id="song-assignments"></div>
-            </div>
-
-            <p id="visual-setup-hint" class="layer-hint"></p>
-
-            <!-- THE SAVE MOVED TO THE OUTPUT SCREEN (2026-09-03), and this is why it is
-                 not also here: two controls with the same name doing the same
-                 thing is how a screen stops being readable. The STATUS line
-                 stays, because it is a fact about the folder rather than a
-                 second way to act on it. -->
-            <p id="visuals-status" class="visuals-status"></p>
-          </div>
-
-        </div>
-
-        <!-- Media folder: where the layer sources above are actually read
-             from. Hidden until mapper.js confirms showDirectoryPicker exists
-             (Chrome only) - without it every name falls back to the served
-             directory silently, and a dead control is worse than no control.
-             See MEDIA FOLDER in mapper.js. -->
-        <!-- P6b: THE MEDIA FOLDER IS A STANDALONE QUESTION (Jorge, 2026-09-04). Hosted, the
-             visuals folder was answered at first run and Pregonero resolves every name through it;
-             asking again here is a second answer to a settled question. Standalone it is the only
-             way a name becomes bytes, so it stays. -->
-        <div class="sidebar-section" id="media-folder-section" hidden>
-          <div class="sidebar-header">
-            <h2>Media folder</h2>
-          </div>
-          <div class="backdrop-controls">
-            <button id="btn-media-folder" type="button">Choose folder&hellip;</button>
-            <button id="btn-media-folder-reconnect" type="button" hidden>Reconnect media folder</button>
-            <button id="btn-media-folder-clear" type="button" hidden>Clear</button>
-          </div>
-          <p id="media-folder-status" class="media-folder-status"></p>
-          <p id="media-folder-failures" class="media-folder-failures" hidden></p>
-        </div>
-
-        <div class="sidebar-section">
-          <div class="sidebar-header">
-            <h2>Backdrop</h2>
-          </div>
+        <!-- ITEM 2: BACKDROP SITS AT THE TOP, ONE LINE, EXPANDABLE (Jorge, 2026-09-04). His words:
+             more important than the mode. A `<details>` is the platform's own one-line-until-asked
+             control and needs no state of ours. -->
+        <details class="sidebar-fold" id="backdrop-fold">
+          <summary>Backdrop <span class="fold-value" id="backdrop-summary"></span></summary>
           <div class="backdrop-controls">
             <label class="backdrop-mode">Source
-              <!-- The stage capture is offered ONLY when the connected gig's
-                   folder holds one - an option that is always there and
-                   usually does nothing is a control you have to try to
-                   understand. See THE STAGE CAPTURE's reader in mapper.js. -->
+              <!-- The stage capture is offered ONLY when the connected gig's folder holds one — an
+                   option that is always there and usually does nothing is a control you have to try
+                   in order to understand. -->
               <select id="select-backdrop-mode">
                 <option value="photo">Photo</option>
                 <option value="stage" hidden>Stage capture</option>
@@ -304,13 +187,12 @@
           <div id="backdrop-camera-controls" hidden>
             <div class="backdrop-controls">
               <button id="btn-camera-toggle" type="button">Enable camera</button>
+              <!-- The white plate stays: camera CALIBRATION raises it so the projector's lit
+                   rectangle can be seen while its corners are placed. `Adopt boundaries` was
+                   removed on 2026-09-04 and this was never its control. -->
               <button id="btn-white-field" type="button" title="Make the output window paint a full white frame, so the projector&#39;s lit rectangle is visible">Show white</button>
             </div>
             <div class="backdrop-controls">
-              <!-- Populated whether or not a stream is running (see
-                   populateCameraDeviceList): without a granted permission the
-                   labels are blank, which is still a menu you can pick from
-                   and still a way out of a remembered camera that has gone. -->
               <select id="select-camera-device" disabled>
                 <option value="">Looking for cameras&hellip;</option>
               </select>
@@ -321,10 +203,88 @@
             </div>
             <p id="camera-status" class="camera-status"></p>
           </div>
+        </details>
+
+        <!-- ITEM 1: SCOPE AT THE TOP, ONE LINE, THE DROPDOWN ALONE (Jorge, 2026-09-04).
+             **It is the mode switch and everything below changes meaning with it**, and it used to
+             sit below the things it governs. `All` is the room — full editing. Picking a song is
+             assignment only.
+
+             **The label is on the control and the mode is on the CANVAS** (item 8): a panel that
+             changes is not a mode you notice, because you are looking at the wall. -->
+        <div class="scope-row" id="scope-row" hidden>
+          <label for="select-visual-setup-song">Scope</label>
+          <select id="select-visual-setup-song"></select>
         </div>
+
+        <!-- ITEM 3: THE `LYRICS / VIDEO / INTRO / CONTACT` BLOCK IS GONE, and `song-intro` and
+             `gig-contact` are ordinary shapes in the default room instead. That DELETES the
+             type-to-shape concept rather than hiding it, and removes a block that read as a
+             duplicate of the list above it. `#gig-assignments` and `renderGigAssignments` went
+             with it; `songVisuals.defaults` is still written, from the shapes themselves.
+
+             ITEM 4: THE `Gig` PROSE BLOCK IS GONE in a gig — the header already names it. The
+             folder controls survive for STANDALONE, where connecting one is the only way in. -->
+        <div class="sidebar-section" id="gig-section" hidden>
+          <div class="backdrop-controls">
+            <button id="btn-gig-folder" type="button">Choose gig folder&hellip;</button>
+            <button id="btn-gig-folder-reconnect" type="button" hidden>Reconnect gig folder</button>
+            <button id="btn-gig-reload" type="button" hidden>Reload from the gig folder</button>
+            <button id="btn-gig-folder-clear" type="button" hidden>Clear</button>
+          </div>
+          <p id="gig-status" class="media-folder-status"></p>
+          <p id="gig-error" class="media-folder-failures" hidden></p>
+          <p id="visuals-status" class="visuals-status"></p>
+        </div>
+
+        <!-- One list, because there is one kind of thing on the wall. A shape that holds black is a
+             shape whose layer type is "fill", so it lives here with everything else and takes part
+             in the same paint order. **The Shape accordion opens under its own row** (item 5). -->
+        <div class="sidebar-header">
+          <h2>Shapes</h2>
+          <button id="btn-add-shape" type="button">+ Add shape</button>
+        </div>
+        <ul id="shape-list" class="surface-list"></ul>
+        <p id="shape-status" class="shape-status" hidden></p>
+        <div class="backdrop-controls">
+          <button id="btn-show-dependencies" type="button" aria-pressed="false">Show dependencies</button>
+        </div>
+
+        <!-- P6b: THE MEDIA FOLDER IS A STANDALONE QUESTION (Jorge, 2026-09-04). Hosted, the visuals
+             folder was answered at first run and Pregonero resolves every name through it. -->
+        <details class="sidebar-fold" id="media-folder-section" hidden>
+          <summary>Media folder <span class="fold-value" id="media-folder-summary"></span></summary>
+          <div class="backdrop-controls">
+            <button id="btn-media-folder" type="button">Choose folder&hellip;</button>
+            <button id="btn-media-folder-reconnect" type="button" hidden>Reconnect media folder</button>
+            <button id="btn-media-folder-clear" type="button" hidden>Clear</button>
+          </div>
+          <p id="media-folder-status" class="media-folder-status"></p>
+          <p id="media-folder-failures" class="media-folder-failures" hidden></p>
+        </details>
       </aside>
 
       <main class="preview-area">
+        <!-- ITEM 8: THE MODE IS ON THE CANVAS, BECAUSE THAT IS WHERE YOU ARE LOOKING (Jorge,
+             2026-09-04). Jorge picked a song, could not move a shape, added one and could not move
+             that either, and concluded the app was broken. **The header sentence that was supposed
+             to prevent exactly that sat mid-panel, in the fail colour, in a sidebar he was not
+             looking at.** A panel that changes is not a mode you notice.
+
+             ITEM 10: it is NOT in the fail colour. It is a state, like `manual only`. -->
+        <div class="canvas-band" id="canvas-band" hidden>
+          <span class="canvas-band-song" id="canvas-band-song"></span>
+          <span class="canvas-band-mode" id="canvas-band-mode"></span>
+        </div>
+
+        <!-- ITEM 19: `Previewing:` — ONE TOGGLE PER CONDITION, derived from the conditions actually
+             present. **A VIEW, NEVER A SETTING**: it writes nothing and never reaches visuals.json,
+             the same relationship the dummy text has to real lyrics and the backdrop has to the
+             output. It is named `Previewing:` precisely because the one real risk is that it reads
+             as having changed the file. **Absent in Mode B**, where the song's own assignment
+             already decides which face is drawn. -->
+        <div class="canvas-preview-toggles" id="canvas-preview-toggles" hidden></div>
+
         <div class="preview-box">
           <!-- THE PHOTOGRAPH, AND IT IS THE WHOLE OF `2 OUTPUT`. The capture is a picture of the
                shapes lit on the actual wall, taken through the calibration — the one screen in this
@@ -339,11 +299,7 @@
                this element exists in the control role and nowhere else. -->
           <video id="preview-camera" class="preview-camera" autoplay muted playsinline hidden></video>
           <svg id="preview-svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid meet"></svg>
-          <!-- Countdown for "Adopt boundaries", shown here as well as on the
-               wall: the performer reads it off the wall, but whoever is still
-               at the desk should see the same number. -->
-          <div id="preview-countdown" class="preview-countdown" hidden></div>
-        </div>
+                  </div>
       </main>
     </div>
 
@@ -385,15 +341,7 @@
          raise, so the projector's lit rectangle is visible while the camera
          backdrop's calibration corners are placed. -->
     <div id="output-white" class="output-white" hidden></div>
-    <!-- Countdown plate, and the dark plate: one element, because they are one
-         thing - what the wall shows while somebody walks into place. Opaque and
-         above the white field, so it covers both the plate and the mapped
-         content, and the sequence can swap what is underneath without a frame
-         of video reaching the wall. Removed outright before the second capture:
-         neither captured frame may contain it, which is what the settle after
-         it exists for. -->
-    <div id="output-countdown" class="output-countdown" hidden></div>
-  </div>
+      </div>
 
   <!-- mapper.js is injected by the build-token bootstrap in <head>. -->
 </body>

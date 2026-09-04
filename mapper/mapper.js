@@ -1563,7 +1563,9 @@ function setLayerType(id, type) {
   // what "the authoring UI offers one shape per type for now" looks like from
   // the hand's side. A type that already has a default is left alone: the
   // second lyrics shape is an alternative to pick, not a silent replacement.
-  if (isSongAwareType(type)) adoptGigDefaultIfUnset(type, shape.id);
+  // **Every shape of a song-aware type is that type's default** (item 3): the assignment block is
+  // gone, so the defaults are derived from the shapes rather than authored beside them.
+  if (isSongAwareType(type)) syncGigDefaultsFromShapes();
   // A type that carries content needs a frame to warp it onto, and a shape
   // that has only ever been a fill has none. The outline's bounding box is the
   // only frame the tool can honestly propose - see outlineBoundingQuad. A
@@ -1608,17 +1610,6 @@ function setGigDefault(type, shapeIds) {
   commitProjectChange();
 }
 
-// Called from setLayerType. Does NOT commit - its caller is mid-mutation and
-// commits once for the whole change.
-function adoptGigDefaultIfUnset(type, shapeId) {
-  const sv = ensureSongVisuals();
-  const existing = sanitizeShapeIdList(sv.defaults[type]).filter((id) => findShape(id));
-  if (existing.length) {
-    sv.defaults[type] = existing;
-    return;
-  }
-  sv.defaults[type] = [shapeId];
-}
 
 // A song's deviation for one type. An empty list REMOVES the entry, which is
 // how "back to whatever the gig says" is expressed - there is no third state
@@ -1809,13 +1800,7 @@ function toggleWhiteField() {
   renderControl();
 }
 
-// Control -> output: a big number on the wall itself, so the countdown for
-// "Adopt boundaries" can be read from where the performer is standing rather
-// than from the laptop they just walked away from. `value` is the
-// seconds remaining, or null to clear it. Nonce per project convention.
-function broadcastCountdown(value) {
-  channel.postMessage({ kind: "countdown", value, nonce: Date.now() });
-}
+
 
 // Output -> control: report the output window's actual pixel size so arrow-
 // key nudges (control-side) can be expressed in real output pixels. Sent on
@@ -1839,7 +1824,6 @@ function handleControlMessage(event) {
     broadcastMedia();
     broadcastState();
     broadcastWhiteField(); // a reopened output must not come back with a stale plate
-    broadcastCountdown(adoptCountdownValue); // nor with a stale countdown
     if (lastTransport) {
       // Bring a late joiner up to speed on playback too - without this, an
       // output opened after Play was already pressed sits frozen on its
@@ -1869,8 +1853,6 @@ function handleOutputMessage(event) {
     applyMediaMessage(msg.entries);
   } else if (msg.kind === "whiteField" && typeof msg.on === "boolean") {
     setOutputWhiteField(msg.on);
-  } else if (msg.kind === "countdown") {
-    setOutputCountdown(typeof msg.value === "number" ? msg.value : null);
   } else if (msg.kind === "transport" && typeof msg.action === "string") {
     applyTransportAction(msg.action);
   }
@@ -3138,10 +3120,36 @@ const DEFAULT_FOOT = [
   [0, 1],
 ];
 
+/**
+ * **`song-intro` AND `gig-contact` ARE ORDINARY SHAPES IN THE DEFAULT ROOM** (item 3, Jorge,
+ * 2026-09-04). They used to be reachable only through the `LYRICS / VIDEO / INTRO / CONTACT` block,
+ * which is what made the type-to-shape concept feel necessary. **Put them in the room and the
+ * concept has nothing left to do.**
+ *
+ * Both are locked templates that read the song file or the gig, so they need no content set here —
+ * they need a place on the wall, which is what a shape is. They start in a corner rather than on
+ * the frame, because two more frame-filling quads would make the overlap item 12 exists for worse.
+ */
+const DEFAULT_CORNER = [
+  [0.06, 0.06],
+  [0.44, 0.06],
+  [0.44, 0.3],
+  [0.06, 0.3],
+];
+
+const DEFAULT_CONTACT = [
+  [0.62, 0.7],
+  [0.94, 0.7],
+  [0.94, 0.94],
+  [0.62, 0.94],
+];
+
 const DEFAULT_LAYOUT = [
   { type: "song-video", name: "Frame", key: "video" },
   { type: "song-lyrics", name: "Lyrics at the foot", corners: DEFAULT_FOOT, when: "filled" },
   { type: "song-lyrics", name: "Lyrics across the frame", when: "empty" },
+  { type: "song-intro", name: "Intro", corners: DEFAULT_CORNER },
+  { type: "gig-contact", name: "Contact", corners: DEFAULT_CONTACT },
 ];
 
 // Which screen is showing. Never persisted: it is a fact about this sitting,
@@ -3203,7 +3211,7 @@ function goToFlowStep(step) {
 
 /**
  * SEEDING THE DEFAULT. Two shapes at the projector's frame, typed, and the gig
- * defaults adopt them for free (`adoptGigDefaultIfUnset` runs on typing).
+ * defaults are derived from the shapes (`syncGigDefaultsFromShapes` runs on typing).
  *
  * IT ONLY EVER SEEDS AN EMPTY ROOM. A room that already has shapes is somebody's
  * afternoon, and replacing it is not what `keep the default` means - so the
@@ -3228,20 +3236,12 @@ function seedDefaultLayout() {
     if (when && videoId) setShapeCondition(shape.id, videoId, when);
   });
 
-  // **BOTH LYRICS SHAPES ARE THE GIG'S DEFAULT FOR THE TYPE, AND THE CONDITION IS
-  // WHAT SEPARATES THEM.** `adoptGigDefaultIfUnset` takes the FIRST shape of a
-  // type and stops — right for hand authoring, and wrong here: it left the
-  // second lyrics shape assigned to nothing, so Pregonero never resolved it and
-  // **a song without an animation had no words at all.** Caught by reading the
-  // file this tool actually wrote with the parser that consumes it.
-  //
-  // The resolver returns a SET and lights every member, which is exactly what
-  // makes this correct rather than a trick: both are gig-level shapes for the
-  // type, and their mutually exclusive conditions mean one shows per song.
-  const lyricsIds = project.surfaces
-    .filter((shape) => shapeType(shape) === "song-lyrics")
-    .map((shape) => shape.id);
-  if (lyricsIds.length) setGigDefault("song-lyrics", lyricsIds);
+  // **EVERY SHAPE OF A SONG-AWARE TYPE IS THAT TYPE'S DEFAULT** (item 3, 2026-09-04). The
+  // assignment block that used to author this is gone, and `syncGigDefaultsFromShapes` derives it
+  // from the shapes — which also fixes the thing that caught us on 09-04: `adoptGigDefaultIfUnset`
+  // took the FIRST shape of a type and stopped, so the second lyrics shape was assigned to nothing
+  // and **a song without an animation had no words at all.**
+  syncGigDefaultsFromShapes();
   selectedShapeId = null;
   clearShapeSubselection();
   commitProjectChange();
@@ -3740,6 +3740,12 @@ async function initFlow() {
 
 function renderControl() {
   renderFlow();
+  // **Scope is rendered by `renderControl`, not by `renderGigControls`.** That function returns
+  // early in a gig now (item 4) and took the mode switch with it — the one control the whole screen
+  // is governed by, hidden by the removal of a prose block beside it.
+  renderScope();
+  renderCanvasBand();
+  renderPreviewToggles();
   renderShapeList();
   renderPreview();
   renderBackdrop();
@@ -3747,7 +3753,6 @@ function renderControl() {
   renderBackdropControls();
   renderMediaFolderControls();
   renderGigControls();
-  renderLayerPanel();
 }
 
 // The media folder's whole sidebar section: which buttons are live, what the
@@ -3811,7 +3816,11 @@ function renderMediaFolderControls() {
 // simpler thing to be correct about.
 function renderGigControls() {
   const section = document.getElementById("gig-section");
-  if (gigFolderState === "unsupported") {
+  // **ITEM 4: THE `Gig` BLOCK GOES IN A GIG** (Jorge, 2026-09-04). **The header already names it** —
+  // Pregonero's own chrome, one line above this frame — and every control in here is about
+  // CONNECTING a folder, which hosted has already happened and cannot be undone from in here.
+  // Standalone it stays: there it is the only way in.
+  if (gigFolderState === "unsupported" || isHostedGig()) {
     section.hidden = true;
     return;
   }
@@ -3852,9 +3861,6 @@ function renderGigControls() {
   error.hidden = !gigError;
   error.textContent = gigError || "";
 
-  const setup = document.getElementById("gig-setup");
-  setup.hidden = !gigConnected();
-  if (gigConnected()) renderVisualSetup();
 
   const written = document.getElementById("visuals-status");
   const where = hosted ? "beside " + GIG_FILE_NAME : "into " + label;
@@ -3873,16 +3879,20 @@ function renderGigControls() {
   written.classList.toggle("visuals-status-bad", !!(visualsReadError || visualsWriteError));
 }
 
-function renderVisualSetup() {
-  const songRow = document.getElementById("visual-setup-song-row");
+/**
+ * **SCOPE: one line, one control, at the top** (item 1, Jorge, 2026-09-04).
+ *
+ * **It is the mode switch and everything below changes meaning with it**, and it used to sit below
+ * the things it governs. `All` is the room — full editing. Picking a song is assignment only.
+ */
+function renderScope() {
+  const row = document.getElementById("scope-row");
   const songSelect = document.getElementById("select-visual-setup-song");
-  const gigBlock = document.getElementById("gig-assignments");
-  const songBlock = document.getElementById("song-setup");
-
-  // The list is the gig's own, which this tool already reads. `All` first, because `All` is the
-  // room and the room is what you arrive to work on.
   const songs = gigConnected() ? gig.songs : [];
-  songRow.hidden = songs.length === 0;
+  row.hidden = songs.length === 0;
+  if (songs.length === 0) return;
+
+  const current = previewSongId() || "";
   songSelect.innerHTML = "";
   const all = document.createElement("option");
   all.value = "";
@@ -3894,67 +3904,47 @@ function renderVisualSetup() {
     opt.textContent = song.title;
     songSelect.appendChild(opt);
   });
-  songSelect.value = previewSongId() || "";
-
-  const inSong = previewSongId() !== null;
-  gigBlock.hidden = inSong;
-  songBlock.hidden = !inSong;
-
-  if (inSong) renderSongSetup(songBlock);
-  else renderGigAssignments(gigBlock);
-}
-
-function renderGigAssignments(container) {
-  container.innerHTML = "";
-  SONG_AWARE_TYPES.forEach((type) => {
-    container.appendChild(
-      buildAssignmentRow(type, "None", resolveShapesForType(project, type, null), (ids) =>
-        setGigDefault(type, ids)
-      )
-    );
-  });
+  songSelect.value = current;
 }
 
 /**
- * **WHAT THIS SONG PUTS IN EACH SHAPE**, one row per shape the song can fill.
+ * **`renderGigAssignments` AND `buildAssignmentRow` WENT WITH THE BLOCK** (item 3, 2026-09-04).
  *
- * **Assignment only**, which the header says out loud: the canvas has no handles in this mode, so
- * a row here can never move a quad. **Never per-song geometry** — a song holding its own
- * coordinates is silently wrong on stage after the room is remapped.
+ * The `LYRICS / VIDEO / INTRO / CONTACT` rows asked *which shape serves this type for the gig* —
+ * **a type-to-shape mapping authored separately from the shapes themselves**, which read as a
+ * duplicate of the list above it and was one more place a room could disagree with itself.
  *
- * **A `song-video` shape offers the visuals folder; a `song-lyrics` shape needs nothing chosen** —
- * the words come from the song file at render time through Pregonero, and Muralista never sees
- * them. **Empty means that shape stays dark for this song**, and empty is the default: a song with
- * no animation sets nothing, and this screen has to make that the effortless case rather than a
- * form to be cleared.
+ * **`songVisuals.defaults` is still written**, and is now derived from the shapes rather than typed
+ * in: every shape of a song-aware type is that type's default. **`song-intro` and `gig-contact`
+ * become ordinary shapes in the default room instead**, which is what makes the block unnecessary
+ * rather than merely hidden.
  */
-function renderSongSetup(container) {
-  const songId = previewSongId();
-  const mode = document.getElementById("song-setup-mode");
-  const song = gigSongById(songId);
-  mode.textContent = song
-    ? `Assignment only — what ${song.title} puts in each shape. The room's shapes are not moved here.`
-    : "";
-
-  const rows = document.getElementById("song-assignments");
-  rows.innerHTML = "";
-  if (!songId) return;
-
-  const fillable = project.surfaces.filter((shape) => {
-    const type = shapeType(shape);
-    return type === "song-video" || type === "song-lyrics";
+function syncGigDefaultsFromShapes() {
+  const sv = ensureSongVisuals();
+  let changed = false;
+  SONG_AWARE_TYPES.forEach((type) => {
+    const ids = project.surfaces.filter((shape) => shapeType(shape) === type).map((s) => s.id);
+    const before = sanitizeShapeIdList(sv.defaults[type]).join(",");
+    if (ids.length) {
+      if (before !== ids.join(",")) { sv.defaults[type] = ids; changed = true; }
+    } else if (sv.defaults[type]) {
+      delete sv.defaults[type];
+      changed = true;
+    }
   });
-  if (fillable.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "layer-hint";
-    empty.textContent = "No song shapes in this room yet.";
-    rows.appendChild(empty);
-    return;
-  }
-  fillable.forEach((shape) => rows.appendChild(buildSongAssetRow(shape, songId)));
+  return changed;
 }
 
-/** One shape, and what this song puts in it. A picker for a video; a statement for lyrics. */
+/**
+ * **`renderSongSetup` WENT WITH THE PANEL** (items 5, 7 and 11, 2026-09-04).
+ *
+ * It drew one row per fillable shape in a block of its own, below the Shapes list — **the same
+ * shapes, listed twice, on one screen.** What it said is said in two better places now: the
+ * **Shapes rows annotate** with what the song puts there and whether it lights, and the **Shape
+ * accordion's Content section** is where it is changed. `buildSongAssetRow` survives because that
+ * is the control, and it is now built inside the accordion.
+ */
+
 function buildSongAssetRow(shape, songId) {
   const row = document.createElement("div");
   row.className = "assignment-row";
@@ -4013,65 +4003,29 @@ function buildSongAssetRow(shape, songId) {
 // remove, so there is none anywhere, and a hand-edited visuals.json naming two
 // shapes already works and already lights both. Real files just happen to
 // contain sets of size one until the day a corner or a translation needs two.
-function buildAssignmentRow(type, emptyLabel, current, onChange) {
-  const row = document.createElement("div");
-  row.className = "assignment-row";
-
-  const id = `assign-${type}`;
-  const label = document.createElement("label");
-  label.setAttribute("for", id);
-  label.textContent = type.replace(/^(song|gig)-/, "");
-
-  const select = document.createElement("select");
-  select.id = id;
-
-  const none = document.createElement("option");
-  none.value = "";
-  none.textContent = emptyLabel;
-  select.appendChild(none);
-
-  const candidates = shapesOfType(project, type);
-  candidates.forEach((shape) => {
-    const opt = document.createElement("option");
-    opt.value = shape.id;
-    opt.textContent = shape.name;
-    select.appendChild(opt);
-  });
-
-  if (!candidates.length) {
-    none.textContent = `No ${type} shape yet`;
-    select.disabled = true;
-  }
-
-  // A set of two or more can only have come from a hand-edited file, and this
-  // one-shape picker cannot express it. Saying so beats silently showing the
-  // first of them and then overwriting the rest on the next change.
-  if (current.length > 1) {
-    const many = document.createElement("option");
-    many.value = "__many__";
-    many.textContent = `${current.length} shapes (edited by hand)`;
-    select.appendChild(many);
-    select.value = "__many__";
-  } else {
-    select.value = current.length ? current[0].id : "";
-  }
-
-  select.addEventListener("change", () => {
-    if (select.value === "__many__") return;
-    onChange(select.value ? [select.value] : []);
-  });
-
-  row.append(label, select);
-  return row;
-}
 
 // ONE LIST, because there is one kind of thing in it. Row order is paint
 // order (later = on top), and since v8 that includes fill shapes - the rule
 // that used to pin black above everything is gone, and the ▲ / ▼ buttons work
 // on every row.
+/**
+ * **SHAPES: one row per shape, and the row is the whole of the list's chrome.**
+ *
+ * **Items 15 and 18 (Jorge, 2026-09-04):** drag-to-reorder replaces the up/down arrows, and the
+ * duplicate and eye icons come off. What is left on a row is its **handle**, its **name**, what it
+ * says in Mode B, a **pencil** that opens the Shape accordion under it, and a **bin**.
+ *
+ * **No dependency was added for the drag** — see `wireRowDrag`. This tool has none and gains none.
+ *
+ * **Item 11: the rows annotate in Mode B** with what that song puts there and whether it lights, so
+ * the whole song is readable without opening anything.
+ */
 function renderShapeList() {
   const list = document.getElementById("shape-list");
   list.innerHTML = "";
+
+  const songId = previewSongId();
+  const modeB = songId !== null;
 
   const status = document.getElementById("shape-status");
   status.hidden = !shapeStatus;
@@ -4083,6 +4037,9 @@ function renderShapeList() {
   // an empty set is a button that does nothing, twice.
   depsButton.parentElement.hidden = !project.surfaces.some((s) => shapeCondition(s) !== null);
 
+  // Item 7: `+ Add shape` is Mode A's. A song does not add shapes to the room.
+  document.getElementById("btn-add-shape").hidden = modeB;
+
   if (project.surfaces.length === 0) {
     const empty = document.createElement("li");
     empty.className = "surface-list-empty";
@@ -4091,112 +4048,291 @@ function renderShapeList() {
     return;
   }
 
-  project.surfaces.forEach((shape, index) => {
+  project.surfaces.forEach((shape) => {
     const row = document.createElement("li");
     row.className = "surface-row";
+    row.dataset.shapeId = shape.id;
     if (shape.id === selectedShapeId) row.classList.add("selected");
     if (!shape.visible) row.classList.add("hidden-surface");
-
     row.addEventListener("click", () => selectShape(shape.id));
+    // Item 12: hovering a row reads the room the same way selecting does, temporarily.
+    row.addEventListener("pointerenter", () => setHoveredShape(shape.id));
+    row.addEventListener("pointerleave", () => setHoveredShape(null));
+
+    const head = document.createElement("div");
+    head.className = "surface-row-head";
+
+    // **The drag handle, and it is only a handle in Mode A.** Reordering is paint order, which is
+    // the room's; a song does not restack the wall.
+    if (!modeB) {
+      const grip = document.createElement("span");
+      grip.className = "surface-grip";
+      grip.title = "Drag to reorder (later in the list paints on top)";
+      grip.textContent = "⠿";
+      grip.draggable = true;
+      wireRowDrag(grip, row, shape.id);
+      head.appendChild(grip);
+    }
 
     const nameSpan = document.createElement("span");
     nameSpan.className = "surface-name";
-    // The outline's point count rides in the row: it is the one number that
-    // says whether a shape is still the square it started as or has been
-    // traced, and it is the same number on every row now.
-    nameSpan.textContent = `${shape.name} \u00b7 ${shape.outline.length}`;
-    row.appendChild(nameSpan);
+    nameSpan.textContent = shape.name;
+    head.appendChild(nameSpan);
+
+    if (modeB) {
+      const note = document.createElement("span");
+      note.className = "surface-note";
+      note.textContent = songRowAnnotation(shape, songId);
+      if (note.textContent.startsWith("dark")) note.classList.add("is-dark");
+      head.appendChild(note);
+    }
 
     const actions = document.createElement("div");
     actions.className = "surface-actions";
 
-    // Z-order: moves the shape within project.surfaces, which is the
-    // render/stacking order in both preview and output (later = on top).
-    // Disabled at the ends of the list rather than hidden, so the row's
-    // button layout stays stable as shapes reorder around it.
-    const upBtn = document.createElement("button");
-    upBtn.type = "button";
-    upBtn.className = "icon-btn";
-    upBtn.title = "Move up the list (render earlier / further back)";
-    upBtn.textContent = "▲";
-    upBtn.disabled = index === 0;
-    upBtn.addEventListener("click", (e) => {
+    // **The pencil opens the Shape accordion under this row** (item 5). It was a rename prompt; the
+    // name is a field inside the accordion now, where the rest of the shape is.
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "icon-btn";
+    openBtn.title = openShapeId === shape.id ? "Close" : "Edit this shape";
+    openBtn.setAttribute("aria-expanded", String(openShapeId === shape.id));
+    openBtn.textContent = "✏️";
+    openBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      moveShapeUp(shape.id);
+      toggleShapeAccordion(shape.id);
     });
-    actions.appendChild(upBtn);
+    actions.appendChild(openBtn);
 
-    const downBtn = document.createElement("button");
-    downBtn.type = "button";
-    downBtn.className = "icon-btn";
-    downBtn.title = "Move down the list (render later / on top)";
-    downBtn.textContent = "▼";
-    downBtn.disabled = index === project.surfaces.length - 1;
-    downBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      moveShapeDown(shape.id);
-    });
-    actions.appendChild(downBtn);
+    if (!modeB) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "icon-btn danger";
+      deleteBtn.title = "Delete shape";
+      deleteBtn.textContent = "\u{1F5D1}\uFE0F"; // trash
+      deleteBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        // **Refused before being asked.** Confirming a deletion and then being told
+        // it cannot happen is two presses for one refusal.
+        const blocked = deleteBlocker(shape.id);
+        if (blocked) {
+          setShapeStatus(blocked);
+          renderControl();
+          return;
+        }
+        if (window.confirm(`Delete "${shape.name}"?`)) removeShape(shape.id);
+      });
+      actions.appendChild(deleteBtn);
+    }
 
-    const visBtn = document.createElement("button");
-    visBtn.type = "button";
-    visBtn.className = "icon-btn";
-    visBtn.title = shape.visible ? "Hide shape" : "Show shape";
-    visBtn.textContent = shape.visible ? "\u{1F441}" : "\u{1F648}"; // eye / eye-blocked-ish
-    visBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleShapeVisible(shape.id);
-    });
-    actions.appendChild(visBtn);
+    head.appendChild(actions);
+    row.appendChild(head);
 
-    // Duplicate: the one-gesture way to register an overlay exactly onto an
-    // existing shape (same geometry, same layer, dropped in right after the
-    // original so it renders on top - see duplicateShape()).
-    const dupBtn = document.createElement("button");
-    dupBtn.type = "button";
-    dupBtn.className = "icon-btn";
-    dupBtn.title = "Duplicate shape (same outline, frame and layer, for exact registration)";
-    dupBtn.textContent = "⧉";
-    dupBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      duplicateShape(shape.id);
-    });
-    actions.appendChild(dupBtn);
+    // **THE ACCORDION, UNDER ITS OWN ROW** (item 5). Not a panel further down the sidebar: the
+    // thing being edited and the controls that edit it are one block, so there is nothing to
+    // scroll between and nothing to lose track of.
+    if (openShapeId === shape.id) {
+      const panel = document.createElement("div");
+      panel.className = "shape-accordion";
+      buildShapeAccordion(panel, shape, songId);
+      row.appendChild(panel);
+    }
 
-    const renameBtn = document.createElement("button");
-    renameBtn.type = "button";
-    renameBtn.className = "icon-btn";
-    renameBtn.title = "Rename shape";
-    renameBtn.textContent = "✏️"; // pencil
-    renameBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const next = window.prompt("Rename shape", shape.name);
-      if (next !== null) renameShape(shape.id, next);
-    });
-    actions.appendChild(renameBtn);
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "icon-btn danger";
-    deleteBtn.title = "Delete shape";
-    deleteBtn.textContent = "\u{1F5D1}\uFE0F"; // trash
-    deleteBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      // **Refused before being asked.** Confirming a deletion and then being told
-      // it cannot happen is two presses for one refusal.
-      const blocked = deleteBlocker(shape.id);
-      if (blocked) {
-        setShapeStatus(blocked);
-        renderControl();
-        return;
-      }
-      if (window.confirm(`Delete "${shape.name}"?`)) removeShape(shape.id);
-    });
-    actions.appendChild(deleteBtn);
-
-    row.appendChild(actions);
     list.appendChild(row);
   });
+}
+
+/**
+ * **Item 11: what this song puts in this shape, and whether it lights.**
+ *
+ * `Frame · cerdo.mp4` · `Lyrics across · dark — Frame is empty`. **The whole song readable without
+ * opening anything**, which is the point: Mode B is a reading screen, not an editing one.
+ */
+function songRowAnnotation(shape, songId) {
+  const asset = songAssetFor(project, songId, shape.id);
+  const cond = shapeCondition(shape);
+  if (cond) {
+    const target = findShape(cond.shape);
+    const targetName = target ? target.name : cond.shape;
+    const targetFilled = songAssetFor(project, songId, cond.shape) !== null;
+    const shows = cond.is === "filled" ? targetFilled : !targetFilled;
+    if (!shows) {
+      return `dark — ${targetName} is ${targetFilled ? "filled" : "empty"}`;
+    }
+  }
+  if (typeTakesSongAsset(shapeType(shape))) {
+    return asset ? asset : "dark — nothing assigned";
+  }
+  // A lyrics shape needs nothing chosen: the words come from the song file at render time, through
+  // Pregonero, and this tool never sees them.
+  return shapeType(shape) === "song-lyrics" ? "the song's words" : "";
+}
+
+/**
+ * **DRAG TO REORDER, ON NATIVE HTML5 DRAG AND DROP. NO DEPENDENCY WAS ADDED** (item 15).
+ *
+ * @dnd-kit is a React library and could not be used here whatever its state in the sibling repo:
+ * **this tool has no framework, no build step and no dependencies at all**, and adding the first
+ * one to move a list is a cost with no ceiling — a bundler, a version to track, and a second way
+ * this page can fail to load. The platform's own drag events are three handlers and no bytes.
+ *
+ * The handle is what is draggable, not the row: a row that drags from anywhere fights every other
+ * gesture on it, and the grip says where to take hold.
+ */
+let draggingShapeId = null;
+
+function wireRowDrag(grip, row, shapeId) {
+  grip.addEventListener("dragstart", (e) => {
+    draggingShapeId = shapeId;
+    row.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    // Firefox refuses to start a drag without data on the transfer.
+    e.dataTransfer.setData("text/plain", shapeId);
+  });
+  grip.addEventListener("dragend", () => {
+    draggingShapeId = null;
+    row.classList.remove("dragging");
+    renderControl();
+  });
+  row.addEventListener("dragover", (e) => {
+    if (draggingShapeId === null || draggingShapeId === shapeId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    row.classList.add("drop-target");
+  });
+  row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
+  row.addEventListener("drop", (e) => {
+    e.preventDefault();
+    row.classList.remove("drop-target");
+    if (draggingShapeId === null || draggingShapeId === shapeId) return;
+    moveShapeBefore(draggingShapeId, shapeId);
+    draggingShapeId = null;
+  });
+}
+
+/**
+ * Moves `id` to sit where `beforeId` is. **Paint order is list order, so this restacks the wall** —
+ * which is why it is a real edit and commits.
+ *
+ * Removed first and re-found second: splicing by an index taken before the removal is off by one
+ * whenever the shape moves down the list, and that is a bug that only shows on half the drags.
+ */
+function moveShapeBefore(id, beforeId) {
+  const from = project.surfaces.findIndex((s) => s.id === id);
+  if (from === -1 || id === beforeId) return;
+  const [moved] = project.surfaces.splice(from, 1);
+  const to = project.surfaces.findIndex((s) => s.id === beforeId);
+  if (to === -1) project.surfaces.splice(from, 0, moved);
+  else project.surfaces.splice(to, 0, moved);
+  commitProjectChange();
+}
+
+/** Which shape's accordion is open, or null. A view state: never persisted, never in the file. */
+let openShapeId = null;
+
+function toggleShapeAccordion(id) {
+  openShapeId = openShapeId === id ? null : id;
+  if (openShapeId !== null) selectedShapeId = id;
+  renderControl();
+}
+
+/**
+ * **Item 12: the row you are pointing at reads like the one you selected**, briefly. Hover is a
+ * question — *which of these overlapping quads is that?* — and the answer is the same drawing the
+ * selection gives, so there is one way the canvas answers it.
+ */
+let hoveredShapeId = null;
+
+function setHoveredShape(id) {
+  if (hoveredShapeId === id) return;
+  hoveredShapeId = id;
+  renderPreview();
+}
+
+/** Whether this type takes a per-song file. Only the video shape does; lyrics arrive from the song. */
+function typeTakesSongAsset(type) {
+  return type === "song-video";
+}
+
+/**
+ * **ITEM 19: THE PREVIEW TOGGLES — one per condition, derived from what is there.**
+ *
+ * **The canvas in `All` draws a room that will never exist**: Frame and *Lyrics across* occupy
+ * nearly the same rectangle and are mutually exclusive by construction, so both faces are drawn at
+ * once. One toggle per condition draws it as it will look in one branch.
+ *
+ * **Rejected: making the branches Scope entries.** Scope answers *who am I doing this for*, and that
+ * governs what may be edited; *with video* is a state of the room, not a who — and they do not
+ * scale: two entries for one condition, four for two, eight for three. **One toggle per condition
+ * scales linearly.**
+ *
+ * **A VIEW, NEVER A SETTING.** `previewFilled` is module state, is never persisted and never reaches
+ * `visualsDocument()`. The name says so.
+ */
+const previewFilled = new Map();
+
+function conditionTargetIds() {
+  const ids = [];
+  project.surfaces.forEach((shape) => {
+    const cond = shapeCondition(shape);
+    if (cond && !ids.includes(cond.shape)) ids.push(cond.shape);
+  });
+  return ids;
+}
+
+/** Whether a target reads as filled right now — the song's assignment in Mode B, the toggle in A. */
+function targetReadsFilled(targetId) {
+  const songId = previewSongId();
+  if (songId !== null) return songAssetFor(project, songId, targetId) !== null;
+  return previewFilled.get(targetId) === true;
+}
+
+/** Whether this shape shows on the canvas as drawn. Unconditional shapes always do. */
+function shapeShowsInPreview(shape) {
+  const cond = shapeCondition(shape);
+  if (!cond) return true;
+  return cond.is === "filled" ? targetReadsFilled(cond.shape) : !targetReadsFilled(cond.shape);
+}
+
+function renderPreviewToggles() {
+  const bar = document.getElementById("canvas-preview-toggles");
+  const targets = previewSongId() === null ? conditionTargetIds() : [];
+  bar.hidden = targets.length === 0;
+  bar.innerHTML = "";
+  if (targets.length === 0) return;
+
+  const label = document.createElement("span");
+  label.className = "preview-toggles-label";
+  label.textContent = "Previewing:";
+  bar.appendChild(label);
+
+  targets.forEach((id) => {
+    const target = findShape(id);
+    const filled = targetReadsFilled(id);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "preview-toggle";
+    btn.dataset.target = id;
+    btn.setAttribute("aria-pressed", String(filled));
+    btn.textContent = `${target ? target.name : id} ${filled ? "filled" : "empty"}`;
+    btn.addEventListener("click", () => {
+      previewFilled.set(id, !filled);
+      renderControl();
+    });
+    bar.appendChild(btn);
+  });
+}
+
+/** ITEM 8: the band above the canvas, naming the song and stating the mode. */
+function renderCanvasBand() {
+  const band = document.getElementById("canvas-band");
+  const songId = previewSongId();
+  band.hidden = songId === null;
+  if (songId === null) return;
+  const song = gigSongById(songId);
+  document.getElementById("canvas-band-song").textContent = song ? song.title : songId;
+  document.getElementById("canvas-band-mode").textContent =
+    "Assignment only — what this song puts in each shape. The room is not edited here.";
 }
 
 function renderPreview() {
@@ -4224,7 +4360,12 @@ function renderPreview() {
     return;
   }
 
-  project.surfaces.filter((shape) => shape.visible).forEach((shape) => renderShapePreview(svg, shape));
+  // **ITEM 19: the canvas draws ONE face of the room, not both.** A conditional shape whose branch
+  // is not the one being previewed is not drawn at all — that is the whole of what the toggle buys,
+  // and drawing it dimmed instead would be the overlap it exists to remove.
+  project.surfaces
+    .filter((shape) => shape.visible && shapeShowsInPreview(shape))
+    .forEach((shape) => renderShapePreview(svg, shape));
 
   // **A `show dependencies` TOGGLE, DRAWING EVERY LINK AT ONCE WHEN ASKED.**
   //
@@ -4362,9 +4503,22 @@ function renderShapePreview(svg, shape) {
   // work on the shape this song is not using.
   const dark = shapeIsDarkForPreview(project, shape, previewSongId()) ? " dark-for-song" : "";
 
+  /**
+   * **ITEM 12: THE SELECTED SHAPE IS DRAWN CLEARLY AND EVERY OTHER IS DIMMED**, with no labels on
+   * the dimmed ones. **This is the fix for overlapping shapes**, which the three-shape default
+   * makes unavoidable: Frame and *Lyrics across* share a rectangle by design, and until now the
+   * only way to tell which was which was to drag one and see what moved.
+   *
+   * **Hovering a row does the same, temporarily**, so the list and the canvas answer the same
+   * question the same way.
+   */
+  const focusId = hoveredShapeId ?? selectedShapeId;
+  const focused = focusId !== null && shape.id === focusId;
+  const muted = focusId !== null && !focused ? " muted" : "";
+
   const body = document.createElementNS(SVG_NS, "polygon");
   body.setAttribute("points", points);
-  body.setAttribute("class", "preview-shape-body" + (selected ? " selected" : "") + dark);
+  body.setAttribute("class", "preview-shape-body" + (selected ? " selected" : "") + dark + muted);
   if (type === "fill") {
     // Painted the way the output paints it - the fill colour, plus a stroke of
     // the same colour carrying the margin - so what gets tuned on screen is
@@ -4390,12 +4544,67 @@ function renderShapePreview(svg, shape) {
   }
   svg.appendChild(body);
 
+  /**
+   * **ITEM 9: OUTLINES DRAW LOCKED IN MODE B** — thinner and dashed — so a shape you cannot drag
+   * does not look identical to one you can. **The handles disappearing then reads as a consequence
+   * of something visible** rather than as the app being broken, which is exactly how it read.
+   */
+  const locked = previewSongId() !== null ? " locked" : "";
   const edge = document.createElementNS(SVG_NS, "polygon");
   edge.setAttribute("points", points);
-  edge.setAttribute("class", "preview-shape-outline" + (selected ? " selected" : "") + dark);
+  edge.setAttribute("class", "preview-shape-outline" + (selected ? " selected" : "") + dark + muted + locked);
   svg.appendChild(edge);
 
-  if (type !== "pattern" && type !== "fill") {
+  /**
+   * **ITEM 13: THE STAND-IN RENDERS ON THE CANVAS, AND IT WAS NOT RENDERING AT ALL.**
+   *
+   * Reported before building, as asked: the canvas drew the word `lyrics` on a badge, and the
+   * string only ever reached the OUTPUT window. **So `maxSize` and `aspect` — the two controls that
+   * exist to be tuned against the worst case — were tuned blind.**
+   *
+   * **IT IS THE OUTPUT'S OWN RENDERER, NOT A SECOND ONE.** `createTextLayerElement`,
+   * `applyTextLayer` and the auto-fit inside it are the same functions the wall runs, mounted in a
+   * `foreignObject` over the preview's own viewBox and warped by `frameMatrix3d` exactly as the
+   * output warps it. **A second implementation is what this suite has a rule against** — the
+   * boundary between the two tools is asserted rather than shared precisely because two
+   * implementations drift — and it would drift here in the one place it must not: the size a person
+   * tunes against.
+   *
+   * So the canvas shows the auto-fit shrinking a line that beats the boundary, which is the fact
+   * `maxSize` is for.
+   */
+  const frame = shapeFrame(shape);
+  const warp = frame ? frameMatrix3d(frame, PREVIEW_W, PREVIEW_H) : null;
+  if (typeTakesTextFormatting(type) && warp) {
+    const holder = document.createElementNS(SVG_NS, "foreignObject");
+    holder.setAttribute("x", "0");
+    holder.setAttribute("y", "0");
+    holder.setAttribute("width", String(PREVIEW_W));
+    holder.setAttribute("height", String(PREVIEW_H));
+    holder.setAttribute("class", "preview-slot-text" + dark + muted);
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "surface-wrapper";
+    wrapper.style.width = `${UNIT_SIZE}px`;
+    wrapper.style.height = `${UNIT_SIZE}px`;
+    wrapper.style.transform = warp;
+
+    const box = createTextLayerElement(layer, shape);
+    wrapper.appendChild(box);
+    holder.appendChild(wrapper);
+    svg.appendChild(holder);
+    // Applied after mounting: the auto-fit measures, and an unmounted box measures nothing.
+    applyTextLayer(box, layer, textLayoutBoxWidth(shape, sanitizeTextLayer(layer), PREVIEW_W, PREVIEW_H));
+  }
+
+  /**
+   * **ITEM 14: only the focused shape shows its name and its dependency badge**, or every shape
+   * when `show dependencies` is on. With the text rendering, permanent labels on every shape are a
+   * third layer of overlap on quads that already share a rectangle.
+   */
+  const labelled = focused || showDependencies;
+
+  if (labelled && type !== "pattern" && type !== "fill") {
     const isAlphaOverlay = type === "image" && /\.webm$/i.test(layer.src || "");
     const [cx, cy] = ringCentroidNormalized(outline);
     const badge = document.createElementNS(SVG_NS, "text");
@@ -4423,7 +4632,7 @@ function renderShapePreview(svg, shape) {
    * which is most of them.
    */
   const cond = shapeCondition(shape);
-  if (cond) {
+  if (cond && labelled) {
     const target = findShape(cond.shape);
     const [bx, by] = ringCentroidNormalized(outline);
     const mark = document.createElementNS(SVG_NS, "text");
@@ -4538,668 +4747,27 @@ function releasePointerSafely(el, pointerId) {
 }
 
 // =========================================================================
-// ADOPT BOUNDARIES
+// ADOPT BOUNDARIES — REMOVED 2026-09-04
 // =========================================================================
-// Raise a white plate, photograph the empty wall, count the thing into place
-// on the wall itself, photograph it again, and keep the region that got
-// DARKER. Then trace that region and make it the shape's OUTLINE.
+// **Jorge: it did not prove its value.** It was never run against a real wall —
+// this repo's own notes said so from the day it landed — and the venue session
+// that could have proved it did not reach for it.
 //
-// AVAILABLE ON EVERY SHAPE, and that is v8's doing rather than a new feature:
-// on a fill shape this is the performer mask, and on a video shape it clips an
-// animation to the silhouette of a real object on the stage. It was only ever
-// a keep-out's gesture because a keep-out was the only thing with an outline.
+// **WHAT WENT, NAMED RATHER THAN LEFT AS A SILENCE:** the gesture; the
+// **two-photograph difference** that kept what got darker between a lit wall and
+// a blocked one, with its exposure-gain estimate and its blob finder; the
+// **convex hull** and the RDP simplification that turned those pixels into a
+// ring of 8-14 points; the threshold knob; and the **countdown** — its value,
+// its broadcast, the preview plate and the output plate it raised.
 //
-// IT WRITES THE OUTLINE, and what the content does about that is the count
-// rule's business rather than this function's (see shapeFrame). Which lands in
-// the right place on both of the cases that turn up at a wall: a silhouette
-// comes back with more than four points, so the content stays warped where it
-// was and starts being clipped by the shape; a flat rectangular thing - a
-// placed box, a panel - comes back as a quad, and a quad is precisely
-// something content can be warped ONTO, so it is. Adopt the boundaries of a
-// box on a video shape and the video lands on the box.
+// `stageCapture.js` is untouched: the STAGE CAPTURE is a different gesture that
+// shares only the calibration, and `2 OUTPUT` is built on it.
 //
-// IT DETECTS A DIFFERENCE, so the thing must be ABSENT FROM ONE OF THE TWO
-// FRAMES. It finds a person who walks into the beam, or an object placed and
-// then removed. It cannot find a painting that hung on that wall the whole
-// time - there is nothing to difference against, and no threshold setting
-// changes that. Said out loud in the panel too, because it is the one thing
-// about this gesture that surprises people.
-//
-// AND THE SHADOW RULE IS UNCHANGED: for anything standing out from the wall,
-// trace the SHADOW, not the thing. The camera and the lens do not stand in the
-// same place, so they disagree about where a body is; they cannot disagree
-// about where its shadow falls, because the shadow lands on the wall plane,
-// which is exactly where the existing calibration is exact.
-//
-// ACCURACY IS EXPLICITLY NOT THE GOAL. A coarse blob roughly the right shape
-// is the CORRECT output here: the margin slider has to inflate it anyway (a
-// performer sways), and a few points get pushed by hand afterwards. So there
-// is no smoothing pass, no morphological cleanup and no adaptive
-// thresholding - just enough to get one blob instead of noise, with a single
-// threshold slider where a guess would otherwise go.
-//
-// Out of scope, deliberately: following the performer live. A mask that
-// flickers on a dark stage is worse than no mask.
-
-// ~320px wide is plenty for a shape that is about to be inflated by a margin
-// and tidied by hand, and it keeps the whole pass well inside one frame.
-const SHADOW_CAPTURE_WIDTH = 320;
-
-// Long enough for the plate to reach the wall AND for the camera's auto
-// exposure to finish stopping down for it. Both frames are then taken under
-// the same exposure, which matters more than either being taken quickly.
-const SHADOW_PLATE_SETTLE_MS = 900;
-
-// THE INVARIANT, and everything else in this section serves it:
-//
-//   FRAMES A AND B MUST BE PHOTOGRAPHS OF THE SAME PLAIN WHITE PLATE AND
-//   NOTHING ELSE. The only difference between them is the thing that walked
-//   into the room.
-//
-// It binds at the two CAPTURE INSTANTS and nowhere else. What the wall does in
-// between is free, and v1.2.3 spends that freedom: the plate comes DOWN for
-// the whole countdown, because a shadow only exists where projected light is
-// being blocked, and nothing is being photographed while somebody walks into
-// place. Standing in a full white field for ten seconds hurts, and it bought
-// nothing.
-//
-// Anything the TOOL paints - the countdown, a status plate, a focus ring - has
-// to be off the output before either shutter, with a settle elapsing
-// afterwards. The difference is signed, so anything that darkens the plate
-// between the two captures is read as the thing being traced; a countdown
-// still on the wall at capture time does not corrupt the shape a little, it
-// becomes the shape.
-//
-// AND A DOM IS NOT A CAMERA, which is what the v1.2.1 build got wrong. Taking
-// the countdown off the output and then sleeping 300ms looks like it honours
-// the invariant, and in the tool's own timeline it does - measured on
-// 2026-08-23, the projector showed a clean plate for 286ms before the shutter.
-// But a camera does not report the present. Between the projector painting a
-// frame and drawImage(video) yielding it there is the display's own latency,
-// the sensor's exposure window, the camera's internal pipeline, USB transport
-// and Chrome's decode - 100-200ms on an ordinary webcam and LONGER IN A DIM
-// ROOM, because a darker room means a longer exposure. That total is the
-// number this settle has to beat, and 300ms sat squarely inside it. So a run
-// came back tracing the whole lit rectangle: frame B was a photograph of a
-// countdown that had already left the screen.
-//
-// WHAT THIS SETTLE NOW HAS TO ABSORB, since v1.2.3 leaves the wall DARK for
-// the whole countdown (see the sequence in adoptShapeBoundaries), is more than
-// the pipeline: the camera has spent ten seconds looking at an unlit wall and
-// its auto exposure has opened up to suit. Raising the plate again asks it to
-// close back down, and that takes appreciably longer than a frame or two.
-// 2000ms buys the pipeline latency AND that recovery, and it costs a person
-// two seconds once per capture - against standing in a full white beam for the
-// entire countdown, which is what it buys them out of.
-//
-// IT MUST STAY LONGER THAN SHADOW_PLATE_SETTLE_MS, and that inequality is
-// load-bearing rather than incidental: frame A is only clean if the camera's
-// latency is under the plate settle, and frame B is only contaminated if that
-// latency is over this one. Keeping this the larger of the two makes "frame A
-// clean AND frame B dirty" an empty set at every possible camera latency.
-//
-// It is still a GUESS - the camera's latency cannot be measured from here -
-// which is exactly why the failsafe below exists rather than being belt to
-// this brace. Under v1.2.3 the failsafe is also what catches a re-light that
-// did not finish in time, which is the new way this can go wrong.
-const SHADOW_RELIGHT_SETTLE_MS = 2000;
-
-// Anything smaller than this fraction of the frame is noise, not a person.
-const SHADOW_MIN_BLOB_FRACTION = 0.002;
-
-// THE FAILSAFE. If more than this fraction of the LIT RECTANGLE got darker
-// between the two photographs, the plate was not clean and the difference is
-// not a thing standing in front of it. A performer's shadow is a fraction of
-// the wall; half of the whole lit area is the plate itself changing.
-//
-// This exists because the failure it catches produced a plausible-looking
-// GARBAGE OUTLINE rather than an error - a shape, with the right number of
-// points, that simply was not the performer. This repo's whole discipline is
-// that failures are visible, and a wrong shape that looks like a shape is the
-// worst thing this gesture can hand back. It also catches the other way the
-// plate stops being clean, which no settle can fix: the camera's auto exposure
-// drifting between two photographs taken ten seconds apart.
-const ADOPT_MAX_DARKENED_FRACTION = 0.5;
-
-// A HANDFUL OF POINTS, NOT A TRACING. Thirty points around a real silhouette
-// came back jagged - every wrinkle of a jacket and every gap under an arm
-// faithfully recorded - and jagged is the wrong answer here twice over. It is
-// not what the shape is FOR: the margin slider has to inflate it anyway, and a
-// mask has to be generously bigger than the thing, so detail at the outline is
-// detail that gets swallowed. And it is not editable: a dozen points can be
-// pushed by hand at a wall, thirty cannot.
-//
-// Simple and generous is the goal, and the convex hull below is what delivers
-// it - see shadowRingFromFrames.
-const SHADOW_TARGET_MIN_POINTS = 8;
-const SHADOW_TARGET_MAX_POINTS = 14;
-
-// Control-local, never persisted and never broadcast. These are capture
-// settings for one gesture against one room's light, not geometry: putting
-// them in the venue file would ship a transient camera parameter inside the
-// artifact this tool exists to produce.
-let adoptThreshold = 22; // 0-255 luminance drop
-let adoptCountdownSeconds = 10;
-let adoptRunning = false;
-let adoptCountdownValue = null;
-
-function delay(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-// Why the button is disabled, or null if it is not. Said out loud in the
-// panel rather than left as a dead control.
-function adoptBoundariesBlocker() {
-  if (!isCameraMode()) return "Set Backdrop \u2192 Source to Live camera first.";
-  if (!isCameraEnabled()) return "Enable the camera first.";
-  if (!isValidQuad(project.cameraQuad)) {
-    return "Calibrate the camera first. The capture maps what it traces into output space through that calibration, so without it there is nothing to map through.";
-  }
-  return null;
-}
-
-// One frame of the RAW camera feed as luminance, downscaled. Raw is the
-// right space: project.cameraQuad's points were placed on the untransformed
-// feed, so normalized raw-frame coordinates and normalized camera-space
-// coordinates are the same thing. drawImage reads the video's own frame and
-// ignores the CSS rectification transform, which is what we want.
-function grabCameraFrameLuma(video) {
-  if (!video || !video.videoWidth || !video.videoHeight) return null;
-  const w = SHADOW_CAPTURE_WIDTH;
-  const h = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * w));
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(video, 0, 0, w, h);
-  const { data } = ctx.getImageData(0, 0, w, h);
-  const luma = new Uint8ClampedArray(w * h);
-  for (let i = 0, p = 0; i < luma.length; i++, p += 4) {
-    // Rec.601 luma in integer arithmetic.
-    luma[i] = (data[p] * 77 + data[p + 1] * 150 + data[p + 2] * 29) >> 8;
-  }
-  return { w, h, luma };
-}
-
-// Keeps only the largest 8-connected component. 8-connectivity rather than
-// 4 because a silhouette pinched to a diagonal thread at a wrist or an ankle
-// should stay ONE blob - splitting a person into a body and a detached hand
-// is the failure this is guarding against, and it costs nothing.
-function largestBlob(mask, w, h) {
-  const label = new Int32Array(w * h);
-  const stack = new Int32Array(w * h);
-  let next = 0, best = 0, bestSize = 0;
-
-  for (let seed = 0; seed < mask.length; seed++) {
-    if (!mask[seed] || label[seed]) continue;
-    next++;
-    let top = 0, size = 0;
-    stack[top++] = seed;
-    label[seed] = next;
-    while (top > 0) {
-      const i = stack[--top];
-      size++;
-      const x = i % w, y = (i / w) | 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (!dx && !dy) continue;
-          const nx = x + dx, ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          const j = ny * w + nx;
-          if (mask[j] && !label[j]) {
-            label[j] = next;
-            stack[top++] = j;
-          }
-        }
-      }
-    }
-    if (size > bestSize) { bestSize = size; best = next; }
-  }
-
-  if (bestSize < w * h * SHADOW_MIN_BLOB_FRACTION) return null;
-  const out = new Uint8Array(w * h);
-  for (let i = 0; i < out.length; i++) out[i] = label[i] === best ? 1 : 0;
-  return out;
-}
-
-// THE CONVEX HULL OF THE BLOB, and the hull is the whole of the simplification
-// rather than a step in it.
-//
-// What was here before walked the blob's boundary pixel by pixel (Moore
-// neighbours) and then thinned the result. That is a faithful tracing, and
-// faithful is exactly wrong for this: it keeps every concavity - the gap
-// between an arm and a body, the notch under a chin - and a mask is supposed
-// to COVER those, not follow them into their corners. Hulling removes concave
-// noise by construction, with no threshold and nothing to tune, and it can
-// only ever make the shape bigger, which is the direction a mask is allowed to
-// be wrong in.
-//
-// It also lands close to the coffin-ish shape sketched in the design session,
-// which is what a standing person's shadow actually is once you stop
-// pretending to trace fingers.
-//
-// ONE PASS PER ROW is all the input the hull needs. Any pixel strictly between
-// the leftmost and rightmost set pixel of its own row lies on the segment
-// joining them, so it is inside the hull and cannot be a vertex of it.
-// Discarding those turns tens of thousands of candidate points into at most
-// two per row, exactly, with no approximation anywhere.
-function blobExtremePoints(mask, w, h) {
-  const pts = [];
-  for (let y = 0; y < h; y++) {
-    let lo = -1, hi = -1;
-    for (let x = 0; x < w; x++) {
-      if (mask[y * w + x]) {
-        if (lo < 0) lo = x;
-        hi = x;
-      }
-    }
-    if (lo < 0) continue;
-    pts.push([lo, y]);
-    if (hi !== lo) pts.push([hi, y]);
-  }
-  return pts;
-}
-
-// Andrew's monotone chain. Returns the hull in clockwise order for a
-// y-downward raster - which is the same winding the rest of this file uses for
-// a ring, so the result drops straight into shape.outline.
-function convexHull(points) {
-  if (points.length < 3) return points.slice();
-  const pts = points.slice().sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]));
-  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-
-  const half = (source) => {
-    const out = [];
-    for (const p of source) {
-      // <= 0 drops collinear points too: three points in a line make a vertex
-      // that is not a corner, and every one of them costs a handle at the wall.
-      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop();
-      out.push(p);
-    }
-    out.pop(); // the shared endpoint, contributed by the other half
-    return out;
-  };
-
-  const hull = half(pts).concat(half(pts.slice().reverse()));
-  return hull.length >= 3 ? hull : points.slice();
-}
-
-// Ramer-Douglas-Peucker on an open polyline. The contour is a closed ring
-// walked from one point back to it, so running it open keeps that point
-// pinned, which is harmless for a shape about to be edited by hand.
-function rdp(points, eps) {
-  if (points.length < 3) return points.slice();
-  const [ax, ay] = points[0];
-  const [bx, by] = points[points.length - 1];
-  const dx = bx - ax, dy = by - ay;
-  const len = Math.hypot(dx, dy);
-
-  let maxD = -1, idx = -1;
-  for (let i = 1; i < points.length - 1; i++) {
-    const [x, y] = points[i];
-    const d = len < 1e-9
-      ? Math.hypot(x - ax, y - ay)
-      : Math.abs(dy * x - dx * y + bx * ay - by * ax) / len;
-    if (d > maxD) { maxD = d; idx = i; }
-  }
-
-  if (maxD > eps) {
-    const left = rdp(points.slice(0, idx + 1), eps);
-    const right = rdp(points.slice(idx), eps);
-    return left.slice(0, -1).concat(right);
-  }
-  return [points[0], points[points.length - 1]];
-}
-
-// Binary-searches RDP's tolerance for a ring in the target point range. A
-// fixed epsilon cannot do this: the right tolerance depends on how big the
-// person came out in frame, which is a property of the room. If the contour
-// is too short to reach the minimum, the tightest result is the honest
-// answer - there was simply not that much shape there.
-function simplifyRingToRange(contour, minPts, maxPts) {
-  let lo = 0.05, hi = Math.max(contour.length, 64);
-  const finest = rdp(contour, lo);
-  if (finest.length <= maxPts) return finest;
-
-  let best = finest;
-  for (let i = 0; i < 40; i++) {
-    const mid = (lo + hi) / 2;
-    const out = rdp(contour, mid);
-    if (out.length > maxPts) {
-      lo = mid;
-    } else if (out.length < minPts) {
-      hi = mid;
-      best = out;
-    } else {
-      return out;
-    }
-  }
-  return best;
-}
-
-// =========================================================================
-// TAKING THE CAMERA'S OWN BRIGHTNESS OUT OF THE COMPARISON
-// =========================================================================
-// A SHADOW IS A LOCAL DARKENING; AUTO EXPOSURE IS A GLOBAL GAIN. Two
-// photographs of the same wall taken ten seconds apart are almost never at the
-// same brightness - the camera opens up while the plate is down for the
-// countdown and has not finished closing again when the second one is taken -
-// and until v1.2.4 that difference went straight into the signed difference
-// and darkened every pixel at once. Measured with a simulated auto exposure:
-// gain 1.30 at frame A against 0.59 at frame B, the whole field reading as
-// changed, and the failsafe refusing every time. Locking the camera's exposure
-// made it work at any latency, which made a camera setting a PRECONDITION for
-// the feature. This is that precondition removed.
-//
-// Estimate what the camera did, divide it out, then difference as before.
-//
-// FROM THE BRIGHT END, NOT THE MIDDLE. The obvious robust statistic is the
-// median, and a median breaks down once the darkened part covers half the lit
-// rectangle. But the thing being estimated is the brightness of the PLATE, and
-// everything this gesture is looking for is DARKER than the plate - a shadow,
-// an object, a countdown that should not be there. So the estimate should come
-// from as far up the bright side as noise allows, where the contaminant never
-// is. The 90th percentile holds while nine tenths of the wall is covered,
-// where the median gives up at half.
-//
-// That margin is what keeps the failsafe's teeth, which a median would have
-// pulled. With a median, something opaque covering 70% of the field drags the
-// estimate onto the covered part, normalises it back to "correct", and the
-// tool traces nothing instead of refusing. Taken from the bright end the
-// estimate stays on the uncovered plate, the 70% still reads as darkened, and
-// the failsafe fires - which is the answer that sends somebody to go and look
-// at their projector. Everything between the failsafe's 50% and this
-// estimator's 90% is refused rather than quietly explained away.
-//
-// The one thing no percentile can see through is a plate that went dark
-// EVERYWHERE by the same factor: that is arithmetically indistinguishable from
-// the camera stopping down, in two frames that carry nothing else. It comes
-// back as "nothing traced" rather than a wrong shape, which is the safe way to
-// be unable to tell.
-const ADOPT_GAIN_PERCENTILE = 0.9;
-
-// A gain this far from 1 is not an exposure adjustment, it is a broken frame,
-// and dividing by it would turn noise into a silhouette.
-const ADOPT_GAIN_MIN = 0.125;
-const ADOPT_GAIN_MAX = 8;
-
-// A frame whose plate has clipped carries no information about how much
-// brighter it "really" is - 255 is 255 whether the true value was 260 or 600 -
-// so a ratio taken across a clipped percentile is a number made up out of the
-// clamp. Measured: a plate at 220 with the camera 1.6x and 2.2x brighter both
-// estimate as 1.159, which is the clamp talking. When either side is clipped
-// the honest answer is to not normalise at all.
-const ADOPT_CLIPPED = 255;
-
-// The value at which `p` of the population sits at or below, straight off a
-// 256-bin histogram. Exact, and cheaper than sorting 57,600 samples.
-function percentileFromHistogram(hist, count, p) {
-  if (count <= 0) return 0;
-  const target = count * p;
-  let seen = 0;
-  for (let v = 0; v < 256; v++) {
-    seen += hist[v];
-    if (seen >= target) return v;
-  }
-  return 255;
-}
-
-// How much brighter frame B is than frame A, as one number. 1 means the camera
-// did not move. Falls back to 1 - no normalisation at all - whenever the
-// answer is not usable, which is the conservative direction: it leaves the
-// comparison exactly as v1.2.3 did it.
-function estimateGlobalGain(histA, histB, litCount) {
-  const a = percentileFromHistogram(histA, litCount, ADOPT_GAIN_PERCENTILE);
-  const b = percentileFromHistogram(histB, litCount, ADOPT_GAIN_PERCENTILE);
-  if (!(a > 0) || !(b > 0)) return 1;
-  if (a >= ADOPT_CLIPPED || b >= ADOPT_CLIPPED) return 1; // see ADOPT_CLIPPED
-  const gain = b / a;
-  if (!isFinite(gain) || gain < ADOPT_GAIN_MIN || gain > ADOPT_GAIN_MAX) return 1;
-  return gain;
-}
-
-// A -> B, in normalized OUTPUT space. Everything above, wired together.
-//
-// Returns { ring } on success, or { reason } saying which way it failed -
-// "nothing" and "dirty-plate" are different things to tell somebody standing
-// at a wall, and collapsing them into a null would put the failure this
-// release exists to catch back into the same bucket as "you were not in shot".
-function shadowRingFromFrames(frameA, frameB, threshold, H) {
-  if (!frameA || !frameB || frameA.w !== frameB.w || frameA.h !== frameB.h) return { reason: "nothing" };
-  const { w, h } = frameA;
-
-  // Pass one: which pixels are inside the LIT RECTANGLE, and how bright each
-  // photograph is there. Everything downstream is measured over that rectangle
-  // rather than the whole camera frame - the camera sees the room as well as
-  // the wall, and somebody walking about outside the projector's throw is not
-  // what this is measuring. H maps normalized camera space onto the unit
-  // output square, so "inside the lit rectangle" is just "lands in [0,1] on
-  // both axes" - the same mapping the traced ring goes through further down,
-  // asked a cheaper question. The answer is kept rather than recomputed,
-  // because pass two needs it again.
-  const lit = new Uint8Array(w * h);
-  const histA = new Uint32Array(256);
-  const histB = new Uint32Array(256);
-  let litCount = 0;
-  for (let y = 0, i = 0; y < h; y++) {
-    for (let x = 0; x < w; x++, i++) {
-      const u = applyHomography(H, [(x + 0.5) / w, (y + 0.5) / h]);
-      if (!u || u[0] < 0 || u[0] > 1 || u[1] < 0 || u[1] > 1) continue;
-      lit[i] = 1;
-      litCount++;
-      histA[frameA.luma[i]]++;
-      histB[frameB.luma[i]]++;
-    }
-  }
-
-  const gain = estimateGlobalGain(histA, histB, litCount);
-  // Whether the estimate had to give up because a plate was blown out. Not a
-  // refusal on its own - two frames that clip the SAME way still difference
-  // perfectly well - but if the comparison goes on to fail, this is almost
-  // always why, and it is the one cause with a remedy on the camera rather
-  // than on the wall.
-  const clipped =
-    percentileFromHistogram(histA, litCount, ADOPT_GAIN_PERCENTILE) >= ADOPT_CLIPPED ||
-    percentileFromHistogram(histB, litCount, ADOPT_GAIN_PERCENTILE) >= ADOPT_CLIPPED;
-
-  const mask = new Uint8Array(w * h);
-  let darkenedInsideLit = 0;
-  for (let i = 0; i < mask.length; i++) {
-    // SIGNED, on purpose: a shadow is a DROP in light, so only pixels that got
-    // darker count, and everything that got brighter is discarded for free.
-    //
-    // NORMALISED, since v1.2.4: frame B is divided back onto frame A's scale
-    // before the comparison, so what is measured here is how much darker a
-    // pixel got THAN THE REST OF THE FRAME. The threshold keeps its meaning -
-    // it is still luma units on the plate's own scale - and the slider that
-    // sets it still means what it said.
-    const darker = frameA.luma[i] - frameB.luma[i] / gain > threshold;
-    mask[i] = darker ? 1 : 0;
-    if (darker && lit[i]) darkenedInsideLit++;
-  }
-
-  // The failsafe, now AFTER normalisation. It has stopped being an
-  // auto-exposure detector - that is the one thing it should never have had to
-  // be - and is back to what it was for: the plate was not clean. Anything
-  // that survives having the global gain divided out of it is a real local
-  // change, and half the lit rectangle changing locally is not a person
-  // standing in front of a wall.
-  const darkenedFraction = litCount > 0 ? darkenedInsideLit / litCount : 0;
-  if (darkenedFraction > ADOPT_MAX_DARKENED_FRACTION) {
-    return { reason: "dirty-plate", darkenedFraction, gain, clipped };
-  }
-
-  const blob = largestBlob(mask, w, h);
-  if (!blob) return { reason: "nothing", gain, clipped };
-
-  // Hull first, thin second. RDP only ever removes points, and removing a
-  // vertex from a convex polygon leaves a convex polygon, so what comes out of
-  // here is still convex and still covers the blob's own extremes.
-  const hull = convexHull(blobExtremePoints(blob, w, h));
-  if (!hull || hull.length < SHAPE_MIN_POINTS) return { reason: "nothing" };
-
-  const simplified = simplifyRingToRange(hull, SHADOW_TARGET_MIN_POINTS, SHADOW_TARGET_MAX_POINTS);
-
-  // Camera space -> output space, through the EXISTING calibration. The
-  // stored points must be in output space, so the outline stays valid long
-  // after the camera is unplugged.
-  const ring = [];
-  for (const [x, y] of simplified) {
-    const p = applyHomography(H, [(x + 0.5) / w, (y + 0.5) / h]);
-    if (p) ring.push(p);
-  }
-  return ring.length >= SHAPE_MIN_POINTS ? { ring, gain, clipped } : { reason: "nothing", gain, clipped };
-}
-
-function setAdoptStatus(text) {
-  const el = document.getElementById("shape-adopt-status");
-  if (el) el.textContent = text || "";
-}
-
-// The big number in the control window, so the countdown is readable from
-// the desk as well as from the wall.
-function setPreviewCountdown(value) {
-  const el = document.getElementById("preview-countdown");
-  if (!el) return;
-  if (value == null) {
-    el.hidden = true;
-    el.textContent = "";
-  } else {
-    el.textContent = String(value);
-    el.hidden = false;
-  }
-}
-
-function showCountdown(value) {
-  adoptCountdownValue = value;
-  broadcastCountdown(value);
-  setPreviewCountdown(value);
-}
-
-// The sequence, and its order is the whole design. See the section comment.
-async function adoptShapeBoundaries(shapeId) {
-  if (adoptRunning) return;
-  const shape = findShape(shapeId);
-  if (!shape) return;
-  if (adoptBoundariesBlocker()) return;
-
-  const H = computeHomography(project.cameraQuad, UNIT_SQUARE_CORNERS);
-  if (!H) {
-    setAdoptStatus("The camera calibration is degenerate - recalibrate before capturing.");
-    return;
-  }
-
-  const video = document.getElementById("preview-camera");
-  // If the plate was already up, leave it up afterwards: this gesture should
-  // give the output back exactly as it found it.
-  const plateWasUp = whiteFieldOn;
-  adoptRunning = true;
-  renderControl();
-
-  try {
-    // 1. Raise the white plate, and let the room settle under it.
-    if (!whiteFieldOn) {
-      whiteFieldOn = true;
-      broadcastWhiteField();
-    }
-    setAdoptStatus("Lighting the wall\u2026");
-    await delay(SHADOW_PLATE_SETTLE_MS);
-
-    // 2. Frame A: the wall WITHOUT the thing. Taken BEFORE the countdown
-    //    exists, so it cannot contain one.
-    const frameA = grabCameraFrameLuma(video);
-    if (!frameA) {
-      setAdoptStatus("No camera frame to capture - is the feed running?");
-      return;
-    }
-
-    // 3. Count the thing into place, on the wall and at the desk - and take
-    //    the light off the wall while it happens. The countdown plate is
-    //    opaque and dark (see .output-countdown), so raising it BEFORE
-    //    dropping the white one means the mapped content never flashes up in
-    //    the gap between two broadcasts.
-    showCountdown(adoptCountdownSeconds);
-    if (whiteFieldOn) {
-      whiteFieldOn = false;
-      broadcastWhiteField();
-    }
-    for (let t = adoptCountdownSeconds; t > 0; t--) {
-      showCountdown(t);
-      setAdoptStatus(`Get into the beam \u2014 ${t}\u2026`);
-      await delay(1000);
-    }
-
-    // 4. Light the wall again, THEN take the countdown off it, then settle,
-    //    then capture. That order matters for the same reason as step 3's: the
-    //    white plate goes up underneath the dark countdown plate, so what the
-    //    wall shows changes exactly once, from dark to white, with no frame of
-    //    mapped content in between.
-    //
-    //    The settle has to outlast the camera's end-to-end latency AND the
-    //    auto exposure closing back down after ten seconds of darkness - see
-    //    SHADOW_RELIGHT_SETTLE_MS for why that is a much bigger number than it
-    //    looks like it should be.
-    whiteFieldOn = true;
-    broadcastWhiteField();
-    showCountdown(null);
-    setAdoptStatus("Lighting the wall again\u2026");
-    await delay(SHADOW_RELIGHT_SETTLE_MS);
-    setAdoptStatus("Capturing\u2026");
-    const frameB = grabCameraFrameLuma(video);
-
-    // 5/6. Difference, blob, hull, simplify, and map into output space.
-    const result = shadowRingFromFrames(frameA, frameB, adoptThreshold, H);
-    if (result.reason === "dirty-plate") {
-      const pct = Math.round(result.darkenedFraction * 100);
-      // The camera's own brightness has already been divided out by the time
-      // this fires (see estimateGlobalGain), so it is no longer a suspect and
-      // is not offered as one. What is left is the wall.
-      setAdoptStatus(
-        result.clipped
-          ? `The first photograph was blown out - the plate came back pure white, so there is no brightness left in it to compare against and ${pct}% of the field reads as darker. Nothing traced. Turn the camera's exposure down, or lock it, and try again.`
-          : `The plate was not clean - ${pct}% of the lit field went darker relative to the rest of it, which is something covering the projection rather than a thing standing in front of it. Nothing traced. Check that nothing else is being projected onto that wall, and try again.`
-      );
-      return;
-    }
-    if (!result.ring) {
-      setAdoptStatus(
-        "Nothing changed between the two frames. Lower the threshold, or check that the thing was in the beam, inside the camera's view, and absent from the first frame."
-      );
-      return;
-    }
-    const ring = result.ring;
-
-    // The OUTLINE only. A shape's content frame is not this gesture's to
-    // touch: on a video shape the animation goes on being warped exactly as
-    // it was, and starts being clipped to what was just traced.
-    if (setShapeOutline(shapeId, ring)) {
-      setAdoptStatus(
-        `Traced ${ring.length} points into the outline. Push any point that reads wrong; on a fill shape, raise the margin until the shape is comfortably bigger than the thing.`
-      );
-    } else {
-      setAdoptStatus("The traced shape came out unusable - try again with a different threshold.");
-    }
-  } catch (err) {
-    console.warn("Muralista: adopting boundaries failed.", err);
-    setAdoptStatus(`The capture failed: ${(err && err.message) || err}`);
-  } finally {
-    // 7. Give the output back as we found it, whatever happened above. Both
-    //    directions, now that the sequence lowers the plate as well as raising
-    //    it: an abort mid-countdown has to put a plate that was already up
-    //    back up, not just take down one we raised.
-    showCountdown(null);
-    if (whiteFieldOn !== plateWasUp) {
-      whiteFieldOn = plateWasUp;
-      broadcastWhiteField();
-    }
-    adoptRunning = false;
-    selectedShapeId = shapeId; // leave it selected and editable
-    const status = document.getElementById("shape-adopt-status");
-    const carried = status ? status.textContent : "";
-    renderControl();
-    setAdoptStatus(carried); // renderControl rebuilds the panel; keep the message
-  }
-}
+// **THE WHITE PLATE STAYS, and that is not an oversight.** It belongs to camera
+// CALIBRATION — it is raised so the projector's lit rectangle is visible while
+// its four corners are placed — and that calibration is what every capture in
+// this tool is taken through. Removing it here would have taken the calibration
+// with it.
 
 // =========================================================================
 // SHAPE EDITING (preview)
@@ -5280,6 +4848,18 @@ function applyMarginStroke(polygon, margin, scale) {
 // Everything draggable on the selected shape. Called once, after every shape's
 // body has been painted, so no handle can end up buried under a shape that
 // paints later.
+/**
+ * One point, inserted where the boundary was double-clicked, and left selected so the very next
+ * arrow key or drag moves the thing that was just made.
+ */
+function insertOutlinePointAt(shape, index, event, svg) {
+  if (selectedShapeId !== shape.id) selectedShapeId = shape.id;
+  // The same insert the drag gesture uses, so a point added either way is the same point.
+  insertShapePoint(shape.id, index, svgPointerToNormalized(event, svg));
+  selectedPointIndex = index;
+  renderControl();
+}
+
 function renderShapeHandles(svg, shape) {
   if (!isValidPointRing(shape.outline)) return;
   renderShapeEdgeTargets(svg, shape);
@@ -5308,6 +4888,14 @@ function renderShapeEdgeTargets(svg, shape) {
     // to point 0, and index n is the correct insert position for it: it
     // still leaves the new point between point n-1 and point 0.
     line.addEventListener("pointerdown", (e) => startShapeEdgeInsert(e, svg, shape, i + 1));
+    // **ITEM 16: DOUBLE-CLICK A BOUNDARY TO ADD** (Jorge, 2026-09-04). Dragging an edge already
+    // inserts and pulls in one gesture, which is better when you know where the point goes; this
+    // is the discoverable half, for when you only know that you want one there. **No menu**, and
+    // `buildOutlineControls` — the panel that held `Add point` and `Delete point` — went with it.
+    line.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      insertOutlinePointAt(shape, i + 1, e, svg);
+    });
     svg.appendChild(line);
   }
 }
@@ -5779,6 +5367,9 @@ function renderCamera() {
 // Sidebar backdrop controls, rebuilt from state on every render so the
 // buttons can never disagree with what the preview is actually doing.
 function renderBackdropControls() {
+  // ITEM 7: **Mode B loses Backdrop.** A song does not choose what is behind the room, and the
+  // fold is one more thing to read on a screen whose job in Mode B is to be read.
+  document.getElementById("backdrop-fold").hidden = previewSongId() !== null;
   const camera = isCameraMode();
   const select = document.getElementById("select-backdrop-mode");
   // **Offered only when the gig's folder holds one.** Hiding the option rather
@@ -5885,54 +5476,19 @@ function renderCameraCalibrationHandles(svg) {
 // re-renders instead just refresh field values, skipping whichever field
 // currently has focus.
 
-let layerPanelKey = null;
 
-function renderLayerPanel() {
-  const container = document.getElementById("layer-panel");
-  const shape = getSelectedShape();
+/**
+ * **`renderLayerPanel` WENT WITH THE `Shape` PANEL** (item 5, 2026-09-04). The controls it built
+ * are the accordion's now, and the accordion is built by `renderShapeList` under the row it is
+ * about — so there is no key to keep in step and no panel to scroll to. `updateLayerPanelValues`
+ * survives for the fields that refresh without a rebuild.
+ */
 
-  if (!shape) {
-    layerPanelKey = null;
-    container.innerHTML = '<p class="layer-panel-empty">Select a shape to edit it.</p>';
-    return;
-  }
-
-  shape.layer = shape.layer || { type: "pattern", src: null, opacity: 1 };
-  const layer = shape.layer;
-  // The connected folder is part of the key, not just of the values: it
-  // changes the src field's LABEL and what "Pick file…" writes, and both of
-  // those are built in buildLayerPanel. Without it, connecting a folder would
-  // leave the panel still saying "relative to mapper/media/".
-  // The gig is part of the key too: it decides which types the picker offers,
-  // and that list is built in buildLayerPanel. Without it, connecting a gig
-  // would leave a panel whose Type menu still has no song-aware types in it.
-  // The outline flag is in here because the outline-width control is BUILT
-  // only when the outline is on, rather than built-and-disabled - so the toggle
-  // is a structural change to the panel, not a value change in it.
-  // The condition is in the key because the sentence is BUILT rather than
-  // updated: picking a target adds the `is [ … ]` half, and clearing it takes
-  // that half away. A value-only refresh would leave the wrong sentence.
-  const cond = shapeCondition(shape);
-  const key = `${shape.id}:${layer.type}:${mediaFolderState}:${mediaFolderLabel() || ""}:${gigConnected()}:${
-    typeTakesTextFormatting(layer.type) ? sanitizeTextLayer(layer).outline : ""
-  }:${cond ? cond.shape + ">" + cond.is : ""}:${dependentsOf(shape.id).length}`;
-
-  if (key !== layerPanelKey) {
-    layerPanelKey = key;
-    buildLayerPanel(container, shape, layer);
-  } else {
-    updateLayerPanelValues(container, shape, layer);
-  }
-}
-
-// WHICH TYPES THE PICKER OFFERS. The four song-aware ones appear only while a
-// gig is connected: they resolve through a song, and a lyrics slot in a project
-// with no songs is a shape nothing can light.
-//
-// A shape that ALREADY HAS one keeps it in the list even with no gig, and that
-// is not a courtesy - a <select> whose value is not among its options shows the
-// wrong thing, silently, and this shape's type is a fact whether or not the
-// folder is connected right now.
+/**
+ * Which types this shape may become. **Song-aware types need a gig**, because a shape that says it
+ * carries a song's words on a tool with no songs is a promise about nothing — except the one the
+ * shape already is, which stays offered so a type is never silently unpickable.
+ */
 function offeredShapeTypes(shape) {
   if (gigConnected()) return SHAPE_TYPES;
   const current = shapeType(shape);
@@ -6031,45 +5587,132 @@ function buildConditionRow(container, shape) {
   }
 }
 
-function buildLayerPanel(container, shape, layer) {
-  container.innerHTML = "";
+/**
+ * **THE SHAPE ACCORDION: Type · Content · Visibility · Format** (item 5, Jorge, 2026-09-04).
+ *
+ * It opens **under the row it is about**, not in a panel further down the sidebar — so the thing
+ * being edited and the controls that edit it are one block, with nothing to scroll between.
+ *
+ * **MODE B KEEPS TYPE AND CONTENT AND LOSES THE REST** (item 7). Type is shown, not changeable.
+ * **Visibility is Mode A only, because a condition belongs to the shape and not to a song** — and
+ * that also kills a second mechanism, since assigning nothing is already how a shape goes dark for
+ * one song. Format and all outline editing go with it.
+ */
+function buildShapeAccordion(container, shape, songId) {
+  const modeB = songId !== null;
+  const layer = shape.layer || {};
 
-  // Type selector. "fill" sits in the same list as everything else on purpose:
-  // a shape that holds a colour is a shape with a type, not a second kind of
-  // object with a section of its own.
-  const typeRow = document.createElement("div");
-  typeRow.className = "layer-field";
-  const typeLabel = document.createElement("label");
-  typeLabel.textContent = "Type";
-  typeLabel.setAttribute("for", "layer-type-select");
-  const typeSelect = document.createElement("select");
-  typeSelect.id = "layer-type-select";
-  offeredShapeTypes(shape).forEach((t) => {
-    const opt = document.createElement("option");
-    opt.value = t;
-    opt.textContent = t;
-    typeSelect.appendChild(opt);
-  });
-  typeSelect.value = shapeType(shape);
-  typeSelect.addEventListener("change", () => setLayerType(shape.id, typeSelect.value));
-  typeRow.append(typeLabel, typeSelect);
-  container.appendChild(typeRow);
-
-  buildConditionRow(container, shape);
-
-  // A file is only a file for the two types that read one. Everything below is
-  // built INSIDE this branch, so "Pick file…" is not merely disabled on a
-  // pattern, a text or a fill layer - it is not there, and cannot be.
-  if (layer.type === "video" || layer.type === "image") {
-    buildMediaSourceControls(container, shape, layer);
+  // The name lives here now. The pencil used to open a `window.prompt`, which is a modal for one
+  // field on a screen that has a place for fields.
+  if (!modeB) {
+    const nameRow = document.createElement("div");
+    nameRow.className = "layer-field";
+    const nameLabel = document.createElement("label");
+    nameLabel.textContent = "Name";
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.value = shape.name;
+    nameInput.addEventListener("change", () => renameShape(shape.id, nameInput.value));
+    nameRow.append(nameLabel, nameInput);
+    container.appendChild(nameRow);
   }
 
-  if (typeTakesTextFormatting(layer.type)) buildTextLayerControls(container, shape, layer);
-  if (layer.type === "fill") buildFillLayerControls(container, shape, layer);
-  if (layer.type === "gig-contact") buildContactLayerControls(container, shape, layer);
-  if (layer.type === "song-intro" || layer.type === "song-video") buildLockedTypeNote(container, layer.type);
+  // ---- TYPE ----
+  panelDivider(container, "Type");
+  const typeRow = document.createElement("div");
+  typeRow.className = "layer-field";
+  if (modeB) {
+    // **Shown, not changeable.** What a shape is for belongs to the room; a song only fills it.
+    const said = document.createElement("span");
+    said.className = "layer-static-value";
+    said.textContent = shapeType(shape);
+    typeRow.appendChild(said);
+  } else {
+    const typeSelect = document.createElement("select");
+    typeSelect.id = "layer-type-select";
+    offeredShapeTypes(shape).forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t;
+      typeSelect.appendChild(opt);
+    });
+    typeSelect.value = shapeType(shape);
+    typeSelect.addEventListener("change", () => setLayerType(shape.id, typeSelect.value));
+    typeRow.appendChild(typeSelect);
+  }
+  container.appendChild(typeRow);
 
-  // Opacity (all layer types).
+  // ---- CONTENT ----
+  buildContentSection(container, shape, layer, songId);
+
+  if (modeB) return;
+
+  // ---- VISIBILITY ----
+  panelDivider(container, "Visibility");
+  buildConditionRow(container, shape);
+  buildOpacityRow(container, shape, layer);
+
+  // ---- FORMAT ----
+  if (typeTakesTextFormatting(layer.type) || layer.type === "fill") {
+    panelDivider(container, "Format");
+    if (typeTakesTextFormatting(layer.type)) buildTextLayerControls(container, shape, layer);
+    if (layer.type === "fill") buildFillLayerControls(container, shape, layer);
+  }
+
+  updateLayerPanelValues(container, shape, layer);
+}
+
+/**
+ * **CONTENT, AND IT IS WHAT MAKES SCOPE MEAN ONE THING THROUGHOUT** (item 6).
+ *
+ * **In `All` it is the file this shape holds for the whole gig** — a contact QR, a logo, a line of
+ * text. **In a song it is what that song puts there.** One section, two scopes, and the difference
+ * is the scope rather than a different place to look.
+ *
+ * **It appears only for types that take content, and says why when it does not** — the rule this
+ * repo has for a control with an unmet precondition, applied to a section: a heading with nothing
+ * under it reads as something failing to load.
+ */
+function buildContentSection(container, shape, layer, songId) {
+  panelDivider(container, "Content");
+  const type = shapeType(shape);
+  const modeB = songId !== null;
+
+  const say = (text) => {
+    const p = document.createElement("p");
+    p.className = "layer-hint";
+    p.textContent = text;
+    container.appendChild(p);
+  };
+
+  if (modeB) {
+    if (typeTakesSongAsset(type)) {
+      container.appendChild(buildSongAssetRow(shape, songId));
+      return;
+    }
+    if (type === "song-lyrics") return say("The song's own words, at render time. Nothing to choose.");
+    if (type === "song-intro") return say("The song's title and tagline, at render time.");
+    return say("This shape holds the same thing for every song. Set it in All.");
+  }
+
+  if (type === "video" || type === "image") return buildMediaSourceControls(container, shape, layer);
+  if (type === "gig-contact") return buildContactLayerControls(container, shape, layer);
+  if (type === "text") {
+    // The string itself is content; how it is SET is Format.
+    return buildTextStringRow(container, shape, layer);
+  }
+  if (type === "song-lyrics") {
+    // **The stand-in is content on this screen even though it never ships**, because tuning is
+    // done against it and the field has to be where the tuning is.
+    buildTextStringRow(container, shape, layer);
+    return
+  }
+  if (type === "song-video") return say("What plays here is per song. Pick a song in Scope to set it.");
+  if (type === "song-intro") return say("The playing song's title and tagline. A locked template.");
+  say("This type holds no content of its own.");
+}
+
+function buildOpacityRow(container, shape, layer) {
   const opacityRow = document.createElement("div");
   opacityRow.className = "layer-field";
   const opacityLabel = document.createElement("label");
@@ -6092,14 +5735,10 @@ function buildLayerPanel(container, shape, layer) {
   });
   opacityRow.append(opacityLabel, opacityInput, opacityValue);
   container.appendChild(opacityRow);
-
-  buildOutlineControls(container, shape);
-  buildAdoptBoundariesControls(container, shape);
-  updateLayerPanelValues(container, shape, layer);
 }
 
 // Video / image: src name field + file-pick convenience. Lifted out of
-// buildLayerPanel so the one call site above is the only thing that decides
+// the accordion so the one call site there is the only thing that decides
 // whether a file is even a concept for this layer.
 function buildMediaSourceControls(container, shape, layer) {
   // With a folder connected, a name is looked up INSIDE it and the old label
@@ -6206,126 +5845,16 @@ function buildFillLayerControls(container, shape, layer) {
 
 }
 
-// The outline every shape has. Identical controls on every type, which is the
-// point of v8 - there is no second panel left to behave differently.
-function buildOutlineControls(container, shape) {
-  panelDivider(container, "Outline");
-
-  const pointRow = document.createElement("div");
-  pointRow.className = "layer-field";
-  const deletePointBtn = document.createElement("button");
-  deletePointBtn.type = "button";
-  deletePointBtn.id = "shape-delete-point";
-  deletePointBtn.textContent = "Delete point";
-  deletePointBtn.addEventListener("click", () => deleteShapePoint(shape.id, selectedPointIndex));
-  const pointCount = document.createElement("span");
-  pointCount.id = "shape-point-count";
-  pointCount.className = "layer-opacity-value";
-  pointRow.append(deletePointBtn, pointCount);
-  container.appendChild(pointRow);
+/**
+ * **`buildOutlineControls` WENT: OUTLINE POINTS ARE EDITED ON THE SHAPE** (item 16, 2026-09-04).
+ *
+ * It was a panel row saying `point 3 of 7` with `Add point` and `Delete point` beside it — **a menu
+ * for a gesture**, and one that made you look away from the wall to use. Double-click a boundary to
+ * add, drag a corner to move, select one and press Delete to remove. All three were already on the
+ * canvas or the keyboard except the first.
+ */
 
 
-  // Said only where it is true - see updateOutlinePanelValues. On a fill shape
-  // there is no content to be warped and nothing here to explain.
-  const refitRow = document.createElement("div");
-  refitRow.className = "layer-field";
-  const refitBtn = document.createElement("button");
-  refitBtn.type = "button";
-  refitBtn.id = "shape-refit";
-  refitBtn.textContent = "Re-fit content to this shape";
-  refitBtn.addEventListener("click", () => refitShapeContent(shape.id));
-  refitRow.appendChild(refitBtn);
-  container.appendChild(refitRow);
-}
-
-// "Adopt boundaries" and the two knobs it needs. Both knobs are control-local
-// (see adoptThreshold): they describe this room's light and how long it takes
-// to walk to the wall, not the venue's geometry, and a transient camera
-// setting has no business inside the artifact this tool exists to produce.
-function buildAdoptBoundariesControls(container, shape) {
-  panelDivider(container, "Adopt boundaries");
-
-  const row = document.createElement("div");
-  row.className = "layer-field";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.id = "shape-adopt";
-  btn.textContent = "Adopt boundaries…";
-  btn.addEventListener("click", () => adoptShapeBoundaries(shape.id));
-  row.appendChild(btn);
-  container.appendChild(row);
-
-  const status = document.createElement("p");
-  status.id = "shape-adopt-status";
-  status.className = "adopt-status";
-  container.appendChild(status);
-
-  const hint = document.createElement("p");
-  hint.id = "shape-adopt-hint";
-  hint.className = "layer-hint";
-  container.appendChild(hint);
-
-  // The two facts that decide whether this gesture can work at all, said
-  // before it is pressed rather than after it comes back empty.
-
-
-  const secsRow = document.createElement("div");
-  secsRow.className = "layer-field";
-  const secsLabel = document.createElement("label");
-  secsLabel.textContent = "Countdown (s)";
-  secsLabel.setAttribute("for", "shape-adopt-countdown-input");
-  const secsInput = document.createElement("input");
-  secsInput.type = "number";
-  secsInput.id = "shape-adopt-countdown-input";
-  secsInput.min = "3";
-  secsInput.max = "60";
-  secsInput.step = "1";
-  secsInput.value = String(adoptCountdownSeconds);
-  secsInput.addEventListener("change", () => {
-    const n = Math.round(Number(secsInput.value));
-    adoptCountdownSeconds = isFinite(n) ? Math.max(3, Math.min(60, n)) : 10;
-    secsInput.value = String(adoptCountdownSeconds);
-  });
-  secsRow.append(secsLabel, secsInput);
-  container.appendChild(secsRow);
-
-  const thrRow = document.createElement("div");
-  thrRow.className = "layer-field";
-  const thrLabel = document.createElement("label");
-  thrLabel.textContent = "Threshold";
-  thrLabel.setAttribute("for", "shape-adopt-threshold-input");
-  const thrInput = document.createElement("input");
-  thrInput.type = "range";
-  thrInput.id = "shape-adopt-threshold-input";
-  thrInput.min = "4";
-  thrInput.max = "120";
-  thrInput.step = "1";
-  thrInput.value = String(adoptThreshold);
-  const thrValue = document.createElement("span");
-  thrValue.id = "shape-adopt-threshold-value";
-  thrValue.className = "layer-opacity-value";
-  thrValue.textContent = String(adoptThreshold);
-  thrInput.addEventListener("input", () => {
-    adoptThreshold = Number(thrInput.value);
-    thrValue.textContent = String(adoptThreshold);
-  });
-  thrRow.append(thrLabel, thrInput, thrValue);
-  container.appendChild(thrRow);
-
-}
-
-// The text layer's own controls. Kept plain on purpose - the brutalist
-// restyle is a separate build and will style whatever is here.
-//
-// Every field commits on 'input' rather than on 'change': tuning by eye at
-// the wall, with the projector on, is the actual workflow for this layer, and
-// a size that only lands when you let go of the slider cannot be tuned by
-// eye. The same-key re-render path (updateTextLayerPanelValues) skips
-// whichever control has focus, so committing per keystroke does not clobber
-// an edit in progress.
-// ICONS. Monochrome line glyphs on a 16x16 grid, stroked in currentColor with
-// no fill anywhere - see the FORMAT BAR block in mapper.css for why the house
-// style is this strict and where the one exception lives.
 function formatIcon(paths) {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", "0 0 16 16");
@@ -6369,13 +5898,16 @@ function formatIconButton(iconKey, title, onClick) {
 // The panel this replaces was eight labelled rows deep and had four hints
 // under it. Everything those hints said now lives in a `title`, on the control
 // it was about, where it is read at the moment the hand is on it.
-function buildTextLayerControls(container, shape, layer) {
+/**
+ * **The string itself, which is CONTENT rather than Format** (item 6, 2026-09-04).
+ *
+ * A slot's string is a PREVIEW of what Pregonero will put here; a plain text layer's string is the
+ * content itself. Two different promises, and the label is where the difference is visible.
+ */
+function buildTextStringRow(container, shape, layer) {
   const fields = sanitizeTextLayer(layer);
   const isSlot = shape.layer.type === "song-lyrics";
 
-  // Content. A slot's string is a PREVIEW of what Pregonero will put here; a
-  // plain text layer's string is the content itself. Two different promises,
-  // and the label is where the difference is visible.
   const textRow = document.createElement("div");
   textRow.className = "layer-field";
   const textLabel = document.createElement("label");
@@ -6397,6 +5929,10 @@ function buildTextLayerControls(container, shape, layer) {
   // — is a fact about this tool and belongs in this comment, not on the screen.
   textHint.textContent = isSlot ? "Stand-in text — Pregonero fills this on the night." : "";
   container.appendChild(textHint);
+}
+
+function buildTextLayerControls(container, shape, layer) {
+  const fields = sanitizeTextLayer(layer);
 
   // --- the bar ---
   const bar = document.createElement("div");
@@ -6502,7 +6038,7 @@ function buildTextLayerControls(container, shape, layer) {
   // Built only when the outline is on. Not disabled-when-off: a control that
   // changes nothing on the wall is a control that lies, and the honest version
   // of "inert" is "absent". The panel rebuilds on the toggle for this reason -
-  // see renderLayerPanel's key.
+  // see the accordion's Format section.
   if (fields.outline) {
     const outlineWidthRow = document.createElement("div");
     outlineWidthRow.className = "layer-field";
@@ -6595,7 +6131,7 @@ function formatTextAspect(multiplier) {
   return `\u00d7${multiplier.toFixed(2)}`;
 }
 
-// Refreshes field values without rebuilding the DOM (see renderLayerPanel).
+// Refreshes field values without rebuilding the DOM (the accordion builds once per open).
 // Skips whichever field is currently focused so an in-progress edit isn't
 // clobbered by the re-render its own commit triggered.
 function updateLayerPanelValues(container, shape, layer) {
@@ -6616,8 +6152,6 @@ function updateLayerPanelValues(container, shape, layer) {
   if (layer.type === "fill") updateFillLayerPanelValues(container, layer, active);
   if (layer.type === "gig-contact") updateContactLayerPanelValues(container, layer, active);
 
-  updateOutlinePanelValues(container, shape);
-  updateAdoptPanelValues(container, active);
 }
 
 // Same contract as above: refresh, never rebuild, and never touch the control
@@ -6683,50 +6217,6 @@ function updateFillLayerPanelValues(container, layer, active) {
   if (marginValue) marginValue.textContent = fields.margin.toFixed(3);
 }
 
-function updateOutlinePanelValues(container, shape) {
-  const count = shape.outline.length;
-
-  const pointCount = container.querySelector("#shape-point-count");
-  if (pointCount) {
-    pointCount.textContent =
-      selectedPointIndex == null ? `${count} points` : `point ${selectedPointIndex + 1} of ${count}`;
-  }
-
-  const deletePointBtn = container.querySelector("#shape-delete-point");
-  if (deletePointBtn) deletePointBtn.disabled = selectedPointIndex == null || count <= SHAPE_MIN_POINTS;
-
-  // Nothing to re-fit onto a shape that is still its own frame, and nothing to
-  // re-fit at all on a fill. Disabled rather than hidden, so the row does not
-  // appear and disappear under the pointer as points are added and removed.
-  const refitBtn = container.querySelector("#shape-refit");
-  if (refitBtn) refitBtn.disabled = !shapeCarriesContent(shape) || shapeOutlineIsFrame(shape);
-}
-
-function updateAdoptPanelValues(container, active) {
-  // The capture needs a calibrated, running camera. Disabled with the reason
-  // said out loud, rather than left as a dead control.
-  const blocker = adoptBoundariesBlocker();
-  const adoptBtn = container.querySelector("#shape-adopt");
-  if (adoptBtn) {
-    adoptBtn.disabled = !!blocker || adoptRunning;
-    adoptBtn.textContent = adoptRunning ? "Capturing…" : "Adopt boundaries…";
-  }
-  // THE REASON A CONTROL IS SHUT SURVIVES; THE EXPLANATION OF WHAT IT DOES DOES
-  // NOT (Jorge, 2026-09-04). That is the line the whole left-hand side was cut
-  // on: a sentence that reports a fact about right now stays, a sentence that
-  // teaches goes.
-  const adoptHint = container.querySelector("#shape-adopt-hint");
-  if (adoptHint) {
-    adoptHint.textContent = blocker || "";
-    adoptHint.classList.toggle("blocked", !!blocker);
-  }
-  const thrInput = container.querySelector("#shape-adopt-threshold-input");
-  if (thrInput && active !== thrInput) thrInput.value = String(adoptThreshold);
-  const thrValue = container.querySelector("#shape-adopt-threshold-value");
-  if (thrValue) thrValue.textContent = String(adoptThreshold);
-  const secsInput = container.querySelector("#shape-adopt-countdown-input");
-  if (secsInput && active !== secsInput) secsInput.value = String(adoptCountdownSeconds);
-}
 
 // =========================================================================
 // CALIBRATION (arrow-key nudge)
@@ -8201,20 +7691,6 @@ function setOutputWhiteField(on) {
   document.getElementById("output-white").hidden = !on;
 }
 
-// The countdown plate, above the white field so it is legible on it. It is
-// REMOVED before the second capture, not merely faded: the whole point of
-// the settle that follows is that neither captured frame contains it, so a
-// countdown still on the wall would difference into the traced shape.
-function setOutputCountdown(value) {
-  const el = document.getElementById("output-countdown");
-  if (value == null) {
-    el.hidden = true;
-    el.textContent = "";
-    return;
-  }
-  el.textContent = String(value);
-  el.hidden = false;
-}
 
 function toggleFullscreen() {
   if (!document.fullscreenElement) {

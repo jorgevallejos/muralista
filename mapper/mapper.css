@@ -776,6 +776,32 @@ button.danger:hover {
 /* `2 OUTPUT` IS THE PHOTOGRAPH. It sits in the same box the canvas uses, at the output's own
    aspect, so nothing about the layout moves between the two steps — and everything belonging to
    the mapping is hidden under it rather than drawn on top of a picture of the finished wall. */
+/* A3: SMALLER THAN THE CANVAS. It is a low-resolution capture and the detail is not the point —
+   where the shapes landed is. `.preview-area` centres it, so shrinking the box is the whole of it. */
+.preview-box.showing-photo {
+  max-width: 760px;
+}
+
+/* The annotation's ink: the app's accent, over a dark photograph, with the name in the middle of
+   the shape it names. Sized in the preview's own user units (1600x900), so it scales with the box. */
+.photo-outline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.photo-outline-name {
+  fill: var(--accent);
+  font-family: var(--font-label, ui-monospace, monospace);
+  font-size: 26px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.75);
+  stroke-width: 5;
+}
+
 .flow-photo {
   position: absolute;
   inset: 0;
@@ -785,10 +811,24 @@ button.danger:hover {
   background: #000;
 }
 
-.preview-box.showing-photo #preview-svg,
+/* A3: THE OUTLINES ARE DRAWN ON THE PHOTOGRAPH (Jorge, 2026-09-04). **Naming the shapes in a list
+   would say they exist, which he already knows; drawing them on the picture says WHERE THEY LANDED
+   ON HIS ACTUAL WALL**, which is the only thing this screen is for. It is geometrically honest:
+   the capture is taken through the same calibration the shapes' coordinates live in, so an outline
+   sits exactly where that shape's light does.
+
+   **It does not break *nothing is simulated here***. An outline over a photograph is annotation;
+   the light in the picture is still real light. Nothing is rendered INTO the shapes.
+
+   The backdrop and the live camera do go: the photograph is the backdrop on this screen. */
 .preview-box.showing-photo #preview-backdrop,
 .preview-box.showing-photo #preview-camera {
   display: none;
+}
+
+/* Annotation, so it takes no clicks: `2 OUTPUT` has nothing to select and nothing to drag. */
+.preview-box.showing-photo #preview-svg {
+  pointer-events: none;
 }
 
 .preview-box {
@@ -1425,13 +1465,31 @@ body.role-output {
    IT SPENDS NO NEW COLOUR. The palette above is the whole budget - one
    accent, one live, one fail - and a step bar is not a reason to widen it. */
 
+/* A2: ONE ROW, THE STEPS ON THE LEFT AND THE TOOLBAR ON THE RIGHT (Jorge, 2026-09-04). With the
+   name gone in a gig the toolbar's own band carried four buttons and nothing else, so it rides
+   here instead — and a whole band of chrome disappears with the label. */
+.flow-bar {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 16px;
+  flex: none;
+  padding-right: 20px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.flow-bar .header-actions {
+  align-self: center;
+  flex-shrink: 0;
+}
+
 .flow-steps {
   display: flex;
   align-items: stretch;
   flex: none;
   padding: 0 20px;
   background: var(--bg-raised);
-  border-bottom: 1px solid var(--border);
 }
 
 .flow-step {
@@ -1502,11 +1560,16 @@ body.role-output {
    every step of this flow and of Pregonero's — so the eye learns one place instead of hunting the
    foot of whichever column is tallest. The problem was never *left*: Bombista's `Process song →` is
    bottom-left and has never been missed. It was that the control sat INSIDE a panel. */
+/* A1: BOTTOM-LEFT (Jorge, 2026-09-04, reversing the round before on sight). **The problem was
+   never *left*** — Bombista's `Process song →` is bottom-left and has never been missed. It was
+   that the control sat INSIDE a panel, at the foot of a tall column, and read as one more item in
+   it. **The divider is what fixes that**, and it is already here: `border-top`, full width, with
+   the control below every panel rather than inside one. */
 .flow-footer {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 16px;
   padding: 10px 16px;
   border-top: 1px solid var(--border);
@@ -1514,7 +1577,7 @@ body.role-output {
 }
 
 /* The outcome of the control beside it, and the only place left for it now that `2 OUTPUT` has no
-   panel. It takes the slack so the control stays pinned right whatever the sentence's length. */
+   panel. It takes the slack to the right of the control, which is pinned left. */
 .flow-footer-status {
   flex: 1;
   min-width: 0;

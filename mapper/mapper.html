@@ -81,11 +81,34 @@
 
   <!-- ============ CONTROL ROLE (plain URL) ============ -->
   <div id="control-root" class="control-root" hidden>
-    <header class="header-bar">
+    <!-- A2: THE NAME BAND IS STANDALONE'S, AND IT IS A WHOLE BAND (Jorge, 2026-09-04).
+         **Hosted, this label is the tool introducing itself to somebody who did not choose it** —
+         the same argument that removed Bombista's header on 02/09, and Jorge pressed
+         `To the visuals`, not `open Muralista`. **Standalone it stays**, because there the tool
+         WAS chosen: same rule as `--no-header`, decided by who is asking rather than by taste.
+         `Export` and `Import` stay in it because they are standalone's own controls anyway. -->
+    <header class="header-bar" id="header-bar">
       <h1>Muralista</h1>
-      <!-- P6c: THE TOOLBAR BELONGS TO `1 SHAPES` ONLY (Jorge, 2026-09-04). There is nothing to
-           play and nothing to open on the deal or on the output — the output is a photograph, and
-           entering it closes the output window rather than offering to open one. -->
+      <div class="standalone-group" id="standalone-actions" hidden>
+        <button id="btn-export" type="button">Export</button>
+        <button id="btn-import" type="button">Import</button>
+        <input type="file" id="file-import" accept="application/json" hidden>
+      </div>
+    </header>
+
+    <!-- THE FLOW. The bar is always present so the deal stays reachable, which is the rule
+         Bombista's flow already follows. See THE FLOW in mapper.js.
+
+         **THE TOOLBAR RIDES ON THIS ROW** (A2). It was a band of its own under the name; with the
+         name gone in a gig there was a band carrying four buttons and nothing else. **Not in the
+         canvas's black space**: that is where shapes are dragged, so controls would compete with
+         the work, and the black area moves with the frame's aspect.
+
+         P6c: it belongs to `1 SHAPES` only. There is nothing to play and nothing to open on the
+         deal or on the output — the output is a photograph, and entering it closes the window the
+         toolbar would have opened. -->
+    <div class="flow-bar">
+      <nav id="flow-steps" class="flow-steps" aria-label="Visual setup"></nav>
       <div class="header-actions" id="header-actions">
         <div class="transport-group">
           <button id="btn-play" type="button" title="Play all video layers">&#9654; Play</button>
@@ -93,28 +116,8 @@
           <button id="btn-restart" type="button" title="Restart all video layers from the top">&#8635; Restart</button>
         </div>
         <button id="btn-open-output" type="button">Open output window</button>
-        <!-- EXPORT AND IMPORT ARE STANDALONE'S ONLY PORTABILITY, AND THEY ARE OFF IN A GIG
-             (Jorge, 2026-09-04). In a gig context an import would silently override the gig's
-             own visuals.json, which contradicts *the handed-in file always wins* — so they are
-             not there to be pressed. Standalone with no gig folder they are the whole of how a
-             room moves between machines: the local store is a browser's, and `visuals.json` is
-             the emitted room rather than the project, so it carries no camera calibration and
-             no backdrop. `Identify` came off outright: not useful.
-             `Play`, `Pause`, `Restart` and `Open output window` stay — they are how the room is
-             actually seen. -->
-        <div class="standalone-group" id="standalone-actions" hidden>
-          <button id="btn-export" type="button">Export</button>
-          <button id="btn-import" type="button">Import</button>
-          <input type="file" id="file-import" accept="application/json" hidden>
-        </div>
       </div>
-    </header>
-
-    <!-- THE FLOW. Four steps over the tool that was always here: the canvas is
-         step 2 and is untouched. The bar is always present so the deal stays
-         reachable, which is the rule Bombista's flow already follows. See
-         THE FLOW in mapper.js. -->
-    <nav id="flow-steps" class="flow-steps" aria-label="Visual setup"></nav>
+    </div>
 
     <!-- THE DEAL. Shown once, on the signal that no mapping exists yet. The
          copy is argued clause by clause in tramoya-integration's
@@ -342,7 +345,6 @@
          **The status sits beside it rather than in a panel**, because with `2 OUTPUT`'s sidebar
          gone there is nowhere else for the outcome of the control next to it to be said. -->
     <footer class="flow-footer" id="flow-footer">
-      <p class="flow-footer-status" id="flow-footer-status"></p>
       <div class="flow-footer-actions">
         <button id="btn-flow-deal-next" type="button" hidden>Continue &rarr;</button>
         <button id="btn-flow-to-output" type="button" hidden>To the output &rarr;</button>
@@ -354,6 +356,7 @@
         <button id="btn-flow-save-gig" type="button" hidden>Save to gig</button>
         <button id="btn-flow-download" type="button" hidden>Download visuals.json</button>
       </div>
+      <p class="flow-footer-status" id="flow-footer-status"></p>
     </footer>
   </div>
 

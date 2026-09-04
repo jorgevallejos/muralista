@@ -90,10 +90,20 @@
           <button id="btn-restart" type="button" title="Restart all video layers from the top">&#8635; Restart</button>
         </div>
         <button id="btn-open-output" type="button">Open output window</button>
-        <button id="btn-identify" type="button">Identify</button>
-        <button id="btn-export" type="button">Export</button>
-        <button id="btn-import" type="button">Import</button>
-        <input type="file" id="file-import" accept="application/json" hidden>
+        <!-- EXPORT AND IMPORT ARE STANDALONE'S ONLY PORTABILITY, AND THEY ARE OFF IN A GIG
+             (Jorge, 2026-09-04). In a gig context an import would silently override the gig's
+             own visuals.json, which contradicts *the handed-in file always wins* — so they are
+             not there to be pressed. Standalone with no gig folder they are the whole of how a
+             room moves between machines: the local store is a browser's, and `visuals.json` is
+             the emitted room rather than the project, so it carries no camera calibration and
+             no backdrop. `Identify` came off outright: not useful.
+             `Play`, `Pause`, `Restart` and `Open output window` stay — they are how the room is
+             actually seen. -->
+        <div class="standalone-group" id="standalone-actions" hidden>
+          <button id="btn-export" type="button">Export</button>
+          <button id="btn-import" type="button">Import</button>
+          <input type="file" id="file-import" accept="application/json" hidden>
+        </div>
       </div>
     </header>
 
@@ -131,46 +141,24 @@
       </div>
     </section>
 
-    <!-- 1 LAYOUT. Keep the default, or adjust it. Custom does not start empty:
-         it starts as the default, already placed. -->
-    <section id="flow-layout" class="flow-screen" hidden>
-      <h2 class="flow-title">The layout</h2>
-      <p class="flow-lede">The default fills the projector's frame: the video across the whole
-        frame, and the lyrics over it. It costs nothing and it works. Adjusting it is where the
-        room comes in &mdash; and it starts from the default, already placed.</p>
-      <div class="flow-choices">
-        <div class="flow-choice">
-          <h3>Keep the default</h3>
-          <p>Muralista writes the room now, and you go straight to the output.</p>
-          <button id="btn-flow-keep-default" type="button">Keep the default</button>
-          <p id="flow-keep-default-why" class="flow-why" hidden></p>
-        </div>
-        <div class="flow-choice">
-          <h3>Adjust it</h3>
-          <p>The same layout, on the canvas, where you mark out the surfaces you actually have.</p>
-          <button id="btn-flow-adjust" type="button">Adjust it</button>
-        </div>
-      </div>
-    </section>
-
     <div class="main-layout">
-      <!-- 3 OUTPUT. Named for doing: the preview on the left uses MURALISTA'S OWN
+      <!-- 2 OUTPUT. Named for doing: the preview on the left uses MURALISTA'S OWN
            DUMMY CONTENT and never reaches for the setlist, and the actions here
-           are the capture and the save. -->
+           are the capture and the save.
+
+           THE LEDES CAME OFF (Jorge, 2026-09-04): "they are making more noise than anything".
+           Labels only, on this panel and in the sidebar beside it, adding back only what proves
+           necessary. What survives is a sentence that reports a FACT ABOUT RIGHT NOW — a status,
+           or the reason a control is shut. What went is every sentence that explained how
+           something works. -->
       <aside class="sidebar flow-output-panel" id="flow-output" hidden>
         <div class="sidebar-header">
           <h2>Output</h2>
         </div>
-        <p class="flow-lede">What is beside this is Muralista's own stand-in content, never a song
-          from the gig. Tuning is judged against the worst case, which is what the stand-in is.</p>
-
         <div class="sidebar-section">
           <div class="sidebar-header">
             <h2>Stage capture</h2>
           </div>
-          <p class="flow-lede">A photograph of the stage, taken through the calibrated camera and
-            saved with the gig. It is what lets you map at the venue and move things around from
-            home. Authoring only &mdash; it never reaches the output window.</p>
           <div class="backdrop-controls">
             <button id="btn-flow-capture" type="button">Capture the stage</button>
           </div>
@@ -231,7 +219,7 @@
           <p id="gig-error" class="media-folder-failures" hidden></p>
 
           <div id="gig-setup" hidden>
-            <!-- GIG LEVEL ONLY (2026-09-03). 2 SHAPES is the room's shapes and
+            <!-- GIG LEVEL ONLY (2026-09-03). 1 SHAPES is the room's shapes and
                  each one's type; song visual setup is deferred entirely, so the
                  mode picker and the song half below are shut rather than
                  removed - the machinery is still right and is not being torn
@@ -260,7 +248,7 @@
 
             <p id="visual-setup-hint" class="layer-hint"></p>
 
-            <!-- THE SAVE MOVED TO 3 OUTPUT (2026-09-03), and this is why it is
+            <!-- THE SAVE MOVED TO THE OUTPUT SCREEN (2026-09-03), and this is why it is
                  not also here: two controls with the same name doing the same
                  thing is how a screen stops being readable. The STATUS line
                  stays, because it is a fact about the folder rather than a
@@ -268,7 +256,6 @@
             <p id="visuals-status" class="visuals-status"></p>
           </div>
 
-          <p class="layer-hint">Muralista owns <code>visuals.json</code> and writes it into this folder beside <code>gig.json</code>, which it only ever reads &mdash; song ids, song titles and the venue, and nothing below that line. Lyrics preview with a fixed dummy line, which is what keeps the line there.</p>
         </div>
 
         <!-- Media folder: where the layer sources above are actually read
@@ -287,7 +274,6 @@
           </div>
           <p id="media-folder-status" class="media-folder-status"></p>
           <p id="media-folder-failures" class="media-folder-failures" hidden></p>
-          <p class="layer-hint">Layer sources are looked up inside this folder, by name &mdash; the mapping stores the name, never the folder. A name the folder does not have falls back to the served directory, so a mapping made elsewhere still opens.</p>
         </div>
 
         <div class="sidebar-section">
@@ -314,7 +300,6 @@
               <button id="btn-backdrop-clear" type="button">Clear</button>
               <input type="file" id="file-backdrop" accept="image/*" hidden>
             </div>
-            <p class="layer-hint">Authoring aid only (planning canvas) &mdash; shown at reduced opacity under the surface outlines, never sent to the output.</p>
           </div>
 
           <div id="backdrop-camera-controls" hidden>
@@ -336,7 +321,21 @@
               <button id="btn-camera-calibrate-clear" type="button">Clear</button>
             </div>
             <p id="camera-status" class="camera-status"></p>
-            <p class="layer-hint">A webcam mounted beside the projector lens, rectified into output space and shown under the surface outlines &mdash; authoring aid only, never sent to the output. Exact on the wall plane; anything standing out from the wall reads displaced, so trace a performer&#39;s <em>shadow</em>, never the performer.</p>
+          </div>
+        </div>
+        <!-- THE WAY OUT OF 1 SHAPES, and it had to be built with `1 LAYOUT` gone
+             (2026-09-04). `Keep the default` was the only thing that ever advanced
+             `flowReached` to the output; `Adjust it` left it at the shapes with the
+             output cell dimmed, which nobody hit because nobody took that branch to
+             the end. With one path left, that dead end is the only path.
+
+             A CONTROL, NOT AN ENABLED BAR CELL. Pregonero's gig flow learned the same
+             thing on the walk before this one: clicking a step's name is too subtle to
+             be the way through a flow. Same arrow, same vocabulary, and the deal's
+             `Continue` is the sibling of it one screen up. -->
+        <div class="sidebar-section flow-actions-section">
+          <div class="flow-actions">
+            <button id="btn-flow-to-output" type="button">To the output &rarr;</button>
           </div>
         </div>
       </aside>
@@ -381,9 +380,6 @@
          neither captured frame may contain it, which is what the settle after
          it exists for. -->
     <div id="output-countdown" class="output-countdown" hidden></div>
-    <!-- Identify overlay: unwarped screen-space labels at each surface's
-         centroid, shown briefly in response to a broadcast 'identify'. -->
-    <div id="output-identify" class="output-identify"></div>
   </div>
 
   <!-- mapper.js is injected by the build-token bootstrap in <head>. -->

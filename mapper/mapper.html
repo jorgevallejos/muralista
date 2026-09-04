@@ -109,12 +109,11 @@
          toolbar would have opened. -->
     <div class="flow-bar">
       <nav id="flow-steps" class="flow-steps" aria-label="Visual setup"></nav>
+      <!-- THE GLOBAL TRANSPORT IS GONE FROM HERE (Jorge, 2026-09-04, walking `v0.61.0`). Three
+           buttons that played *every video layer on the output at once* sat beside the flow at all
+           times, including on the deal and on the photograph, where there is nothing to play. They
+           live in the canvas band now, where a song is named. -->
       <div class="header-actions" id="header-actions">
-        <div class="transport-group">
-          <button id="btn-play" type="button" title="Play all video layers">&#9654; Play</button>
-          <button id="btn-pause" type="button" title="Pause all video layers">&#9208; Pause</button>
-          <button id="btn-restart" type="button" title="Restart all video layers from the top">&#8635; Restart</button>
-        </div>
         <button id="btn-open-output" type="button">Open output window</button>
       </div>
     </div>
@@ -158,10 +157,17 @@
 
            What is left on this screen is the photograph and the page's own footer. -->
       <aside class="sidebar" id="shapes-sidebar">
-        <!-- ITEM 2: BACKDROP SITS AT THE TOP, ONE LINE, EXPANDABLE (Jorge, 2026-09-04). His words:
-             more important than the mode. A `<details>` is the platform's own one-line-until-asked
-             control and needs no state of ours. -->
-        <details class="sidebar-fold" id="backdrop-fold">
+        <!-- BACKDROP SITS AT THE TOP, ONE LINE, EXPANDABLE (Jorge, 2026-09-04). His words: more
+             important than the mode. A `<details>` is the platform's own one-line-until-asked
+             control and needs no state of ours.
+
+             **AND IT STARTS EXPANDED** (Jorge, 2026-09-04, walking `v0.61.0`). Choosing what the
+             room looks like is the first thing done in a new mapping and the last thing thought
+             about afterwards, so the fold opens with the page and closes itself once focus has
+             been inside it and left — see `wireBackdropFold` in mapper.js. `open` is the whole of
+             the first half; a control that has to be found before it can be used is a control that
+             does not get used on the first run, which is the only run that matters here. -->
+        <details class="sidebar-fold" id="backdrop-fold" open>
           <summary>Backdrop <span class="fold-value" id="backdrop-summary"></span></summary>
           <div class="backdrop-controls">
             <label class="backdrop-mode">Source
@@ -217,11 +223,12 @@
           <select id="select-visual-setup-song"></select>
         </div>
 
-        <!-- ITEM 3: THE `LYRICS / VIDEO / INTRO / CONTACT` BLOCK IS GONE, and `song-intro` and
-             `gig-contact` are ordinary shapes in the default room instead. That DELETES the
-             type-to-shape concept rather than hiding it, and removes a block that read as a
+        <!-- THE `LYRICS / VIDEO / INTRO / CONTACT` BLOCK IS GONE, which DELETED the
+             type-to-shape concept rather than hiding it and removed a block that read as a
              duplicate of the list above it. `#gig-assignments` and `renderGigAssignments` went
              with it; `songVisuals.defaults` is still written, from the shapes themselves.
+             `song-intro` and `gig-contact` briefly became ordinary shapes in the default room
+             here; on 2026-09-04 they stopped being shape types at all.
 
              ITEM 4: THE `Gig` PROSE BLOCK IS GONE in a gig — the header already names it. The
              folder controls survive for STANDALONE, where connecting one is the only way in. -->
@@ -275,6 +282,14 @@
         <div class="canvas-band" id="canvas-band" hidden>
           <span class="canvas-band-song" id="canvas-band-song"></span>
           <span class="canvas-band-mode" id="canvas-band-mode"></span>
+          <!-- THE TRANSPORT, TIED TO THE SONG NAMED ON THIS ROW. Shown only when that song has a
+               video to play, because a Play button with nothing behind it is the thing that made
+               the old one unreadable — see `renderCanvasBand` in mapper.js. -->
+          <div class="transport-group" id="canvas-transport" hidden>
+            <button id="btn-play" type="button" title="Play this song's video on the output">&#9654; Play</button>
+            <button id="btn-pause" type="button" title="Pause it">&#9208; Pause</button>
+            <button id="btn-restart" type="button" title="Play it again from the top">&#8635; Restart</button>
+          </div>
         </div>
 
         <!-- ITEM 19: `Previewing:` — ONE TOGGLE PER CONDITION, derived from the conditions actually

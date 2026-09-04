@@ -120,7 +120,7 @@ html, body {
    output window too - and the output window is not a UI, it is the projection.
    `color` and `font-family` therefore stay pinned to the literal values the
    output has always inherited, rather than following the chrome tokens: a
-   layer note and the countdown plate both take their type from here, and the
+   layer note takes its type from here, and the
    projector's pixels are not the restyle's to change.
    `background` is safe to tokenise - body.role-output overrides it to #000. */
 body {
@@ -304,10 +304,12 @@ button.danger:hover {
   gap: 4px;
 }
 
+/* A COLUMN, because the row may carry its accordion under it (item 5). The head is the flex line
+   it used to be; everything below it is the shape being edited, in the same block. */
 .surface-row {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 0;
   padding: 8px 10px;
   border-radius: var(--radius);
   background: var(--bg-row);
@@ -764,9 +766,13 @@ button.danger:hover {
 
 /* ===== Preview area ===== */
 
+/* A COLUMN, because the canvas now has things ABOVE it: the mode band (item 8) and the preview
+   toggles (item 19). Both belong to the canvas rather than to the sidebar — **that is the whole
+   point of them** — so they stack with it and centre with it. */
 .preview-area {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 24px;
@@ -998,20 +1004,6 @@ button.danger:hover {
   color: #d9a441;
 }
 
-/* Countdown in the control window. Big, because it is read at a glance from
-   across the room on the way back from the wall. */
-.preview-countdown {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 22vh;
-  font-weight: 800;
-  color: rgba(255, 255, 255, 0.85);
-  text-shadow: 0 0 24px rgba(0, 0, 0, 0.9);
-  pointer-events: none;
-}
 
 /* Invisible thick line over each edge of the SELECTED shape's outline:
    clicking one inserts a point there. pointer-events:all for the same reason
@@ -1431,29 +1423,6 @@ body.role-output {
    swap the plate underneath it without a frame of video flashing up on the
    wall (see steps 3 and 4 of adoptShapeBoundaries).
 
-   Light glyphs on black, inverted from the dark-on-white this used to be. A
-   performer stood in the beam for the whole count, and a full white field for
-   ten seconds is unpleasant enough that Jorge asked whether it was needed. It
-   is not: the shadow only exists at the two capture instants, and the
-   countdown sits between them. The glyphs cover a few percent of the frame,
-   which is enough to read from inside the beam and nothing like enough to
-   hurt. */
-.output-countdown {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 60vh;
-  font-weight: 800;
-  line-height: 1;
-  background: #000;
-  color: #e6dfd1;
-  pointer-events: none;
-}
 
 
 /* ============================================================
@@ -1660,3 +1629,234 @@ body.role-output {
   flex-shrink: 0;
 }
 
+
+/* ================================================================================================
+   `1 SHAPES` REDESIGNED (Jorge, 2026-09-04, after walking v0.59.0)
+   ================================================================================================
+   **What triggered it: the mode was invisible.** A selected song is assignment-only and the handles
+   go on purpose; the sentence that said so sat mid-panel, in the fail colour, in a sidebar nobody
+   was looking at. **A panel that changes is not a mode you notice.** Everything below is about
+   putting the mode where the eye is — on the canvas — and making the room readable when shapes
+   overlap, which the three-shape default makes unavoidable. */
+
+/* --- Backdrop and Media folder: one line until asked (items 2 and the same treatment) --- */
+.sidebar-fold {
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+}
+
+.sidebar-fold > summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-family: var(--font-label);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  list-style: none;
+}
+
+.sidebar-fold > summary::-webkit-details-marker { display: none; }
+
+.sidebar-fold > summary::before {
+  content: "▸ ";
+  color: var(--text-dim);
+}
+
+.sidebar-fold[open] > summary::before { content: "▾ "; }
+
+.fold-value {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+/* --- Scope: the mode switch, one line, at the top (item 1) --- */
+.scope-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.scope-row label {
+  font-family: var(--font-label);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.scope-row select { flex: 1; min-width: 0; }
+
+/* --- The Shapes rows (items 11, 15, 18) --- */
+.surface-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.surface-grip {
+  cursor: grab;
+  color: var(--text-dim);
+  flex: none;
+  user-select: none;
+}
+
+.surface-row.dragging { opacity: 0.45; }
+
+/* The line a drop would land above. One border, not a moving placeholder row: the list is short
+   and a shifting layout under a dragged item is harder to aim at than a line. */
+.surface-row.drop-target { box-shadow: inset 0 2px 0 0 var(--accent); }
+
+/* Item 11: what this song puts there, and whether it lights. */
+.surface-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+/* **Dark is a state, not a fault** (item 10's rule, applied here too): a song with no animation is
+   the commonest case there is, and its rows say `dark` on every one of them. */
+.surface-note.is-dark { font-style: italic; }
+
+/* --- The Shape accordion, under its own row (item 5) --- */
+.shape-accordion {
+  margin: 8px 0 4px;
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--border);
+}
+
+.layer-static-value {
+  font-family: var(--font-label);
+  color: var(--text);
+}
+
+/* --- The canvas band: the mode where the eye is (items 8 and 10) --- */
+.canvas-band {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  background: var(--bg-raised);
+}
+
+.canvas-band-song {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ITEM 10: **out of the fail colour.** It is a state, like `manual only` — the repo made this call
+   once already and it is the same call. */
+.canvas-band-mode {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* --- The preview toggles: a view, never a setting (item 19) --- */
+.canvas-preview-toggles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto 8px;
+}
+
+.preview-toggles-label {
+  font-family: var(--font-label);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.preview-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* --- Reading the room (items 9, 12, 13, 14) --- */
+
+/* ITEM 12: everything that is not the focused shape recedes. Not hidden — the room is still the
+   room — but far enough back that the one being pointed at is unambiguous. */
+.preview-shape-body.muted { opacity: 0.12; }
+.preview-shape-outline.muted { opacity: 0.28; }
+.preview-slot-text.muted { opacity: 0.18; }
+
+/* ITEM 9: a shape you cannot drag must not look like one you can. Thinner and dashed, so the
+   missing handles read as a consequence of something visible. */
+.preview-shape-outline.locked {
+  stroke-width: 1;
+  stroke-dasharray: 7 5;
+  opacity: 0.7;
+}
+
+/* ITEM 13: the stand-in, rendered by the OUTPUT'S OWN renderer in a foreignObject — same element,
+   same auto-fit, same warp — so the canvas shows what the wall will show rather than an impression
+   of it. Nothing here styles the text: every number is the layer's. */
+.preview-slot-text {
+  pointer-events: none;
+  overflow: visible;
+}
+
+.preview-slot-text .surface-wrapper {
+  transform-origin: 0 0;
+  position: absolute;
+}
+
+.preview-slot-text.dark-for-song { opacity: 0.25; }
+
+
+/* The accordion's own fields: a label above its control, because the sidebar is narrow and a row of
+   label-then-control wraps into something unreadable at this width. */
+.shape-accordion .layer-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 8px;
+  cursor: default;
+}
+
+.shape-accordion .layer-field > label {
+  font-family: var(--font-label);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.shape-accordion .layer-field input[type="text"],
+.shape-accordion .layer-field select,
+.shape-accordion .layer-field textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.shape-accordion .layer-hint {
+  margin: 0 0 8px;
+}
+
+.shape-accordion .panel-divider {
+  margin-top: 10px;
+}
+
+/* The condition sentence keeps its own row shape: it IS a sentence and reads across, not down. */
+.shape-accordion .condition-row {
+  flex-direction: column;
+}

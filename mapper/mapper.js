@@ -3140,6 +3140,10 @@ function renderFlow() {
   // P6c: the toolbar belongs to `1 SHAPES` only — there is nothing to play or open on the deal or
   // on the output, and the output has just closed the window the toolbar would have opened.
   document.getElementById("header-actions").hidden = !onShapes;
+  // A2: **THE NAME BAND IS STANDALONE'S** (Jorge, 2026-09-04). Hosted, this label is the tool
+  // introducing itself to somebody who did not choose it — the same argument that took Bombista's
+  // header off on 02/09. Decided by who is asking, exactly like `--no-header`, and not by taste.
+  document.getElementById("header-bar").hidden = isEmbedded();
 
   renderFlowFooter();
   renderStandaloneActions();
@@ -3780,12 +3784,51 @@ function renderPreview() {
   // other shape instead of being pinned above them. The browser's own
   // hit-testing then picks the topmost polygon under the pointer with no
   // extra bookkeeping.
+  // A3: `2 OUTPUT` IS AN ANNOTATED PHOTOGRAPH, not the canvas. Outlines and names, no bodies to
+  // click, no handles to drag — there is nothing to edit on a picture of what already happened.
+  if (flowStep === FLOW_OUTPUT) {
+    renderPhotoOutlines(svg);
+    return;
+  }
+
   project.surfaces.filter((shape) => shape.visible).forEach((shape) => renderShapePreview(svg, shape));
 
   // Handles for the selected shape go last, so they sit above every shape's
   // body rather than being buried under whatever paints after it.
   const selected = getSelectedShape();
   if (selected) renderShapeHandles(svg, selected);
+}
+
+/**
+ * **WHERE EACH SHAPE LANDED ON THE ACTUAL WALL.**
+ *
+ * The capture is taken through the calibration into output space, and shape coordinates are
+ * normalised in that same space — so a shape's own outline, drawn at the preview's viewBox scale,
+ * sits exactly over its own light in the photograph. **No transform is applied and none is
+ * correct**: any correction here would be a second opinion about a calibration that already ran.
+ *
+ * Outline and name, and nothing else. A fill's margin is not drawn: it is a property of the mask,
+ * and this is a picture of what the wall did.
+ */
+function renderPhotoOutlines(svg) {
+  project.surfaces
+    .filter((shape) => shape.visible)
+    .forEach((shape) => {
+      const outline = shapeOutline(shape);
+      if (!outline) return;
+      const poly = document.createElementNS(SVG_NS, "polygon");
+      poly.setAttribute("points", ringPointsAttr(outline, PREVIEW_W, PREVIEW_H));
+      poly.setAttribute("class", "photo-outline");
+      svg.appendChild(poly);
+
+      const [nx, ny] = ringCentroidNormalized(outline);
+      const label = document.createElementNS(SVG_NS, "text");
+      label.setAttribute("x", String(nx * PREVIEW_W));
+      label.setAttribute("y", String(ny * PREVIEW_H));
+      label.setAttribute("class", "photo-outline-name");
+      label.textContent = shape.name;
+      svg.appendChild(label);
+    });
 }
 
 function ringPointsAttr(points, w, h) {

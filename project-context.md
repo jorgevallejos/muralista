@@ -1566,6 +1566,12 @@ Three angles, none decided:
 
 ## Song-aware shape types (v1.3.0, 2026-08-24)
 
+> **TWO OF THESE FOUR TYPES NO LONGER EXIST** (v1.18.0, 2026-09-04). `song-intro` and `gig-contact`
+> were retired; see *Two types left, and the vocabulary shrank back toward shapes on a wall* below.
+> Everything in this section about the intro template, its stand-ins, its proportions and the QR
+> file is **history of a thing that was here**, kept because the reasoning still explains why the
+> template looks the way it does — Pregonero draws it now, unchanged.
+
 **The design is not this file's.** It was decided in the integration design sessions and lives in
 `projects/tramoya-integration/project-context.md` — "Song-aware shape types, and two levels of visual
 setup", "The `song-intro` template", "The lookup returns a set", and "Muralista's boundary does not
@@ -2202,6 +2208,50 @@ saying it is there.
 appears and picking it puts the capture behind the shapes as a downscaled JPEG dataURL — the photo
 path's own output, which is the evidence it went down that path and not a second one. With the file
 removed the option is hidden.
+
+## Two types left, and the vocabulary shrank back toward shapes on a wall (v1.18.0, 2026-09-04)
+
+`song-intro` and `gig-contact` stopped being shape types. **Pregonero renders the intro card and the
+contact panel into a shape that already exists — the video frame or the song lyrics shape — and
+decides which.** The ruling is Jorge's, from his walk of Pregonero `v0.61.0`; the full text is in
+`projects/tramoya-integration/project-context.md`, *The intro and the contact leave Muralista*.
+
+**THE LINE: Muralista owns where things are, Pregonero owns what is showing when.** An intro is a
+*when* — before the cue — and a contact panel is a *when* — after the last song. Neither needs a
+place of its own.
+
+**The photographs settled it.** On the canvas both looked like neat rectangles of equal standing. On
+the wall the intro landed on the whiteboard and the contact on bare planks, dim and low-contrast, on
+a surface that is not the surface — because a shape that is up only when nothing else is still had
+to claim its own territory. Under this ruling it needs none.
+
+**This reversed two decisions and both were named.** 24/08 gave the intro its own shape precisely so
+its text could size independently: **the template's auto-fit answers that**, since it sizes itself
+inside whatever shape it lands in. And an earlier round on 04/09 made both ordinary shapes in the
+default room — **that lasted one walk.**
+
+### What left this repo
+
+The two entries in `SHAPE_TYPES`, `SONG_AWARE_TYPES` and `SONG_REASSIGNABLE_TYPES`; the intro
+card's builder, painter, proportions (`INTRO_TITLE_MAX_SIZE`, `INTRO_INSET`) and its three stand-in
+strings (`INTRO_PLACEHOLDER`); the contact layer's schema, its sanitizer, its panel controls and its
+QR field; and their rules in `mapper.css`. **The vocabulary itself did not move to Pregonero** —
+Pregonero already had it in `control.css`, and this stylesheet was always the copy.
+
+`SONG_REASSIGNABLE_TYPES` now equals `SONG_AWARE_TYPES`, and is kept as a separate name because the
+questions differ: what a song may point somewhere else is not what a shape may be.
+
+### What Pregonero was left to decide, and deliberately did not
+
+**Which of the two shapes hosts them** is performance design and was explicitly out of scope for this
+round. It has one address — `introContactHostShapes` in Pregonero's `App.tsx` — which returns
+nothing, so neither card paints until the rule is written. Everything that decides *when* they show
+is untouched on that side.
+
+**And the contact panel's content has no home at all.** Its line of text and its QR file name were
+fields on the Muralista layer, and they went with the type. The intro has no such gap: all three of
+its parts come from the song file. So the contact needs somewhere for a gig to write its line before
+it needs a host, and that is a decision about what a gig owns rather than about layout.
 
 ## Where the state actually lives
 

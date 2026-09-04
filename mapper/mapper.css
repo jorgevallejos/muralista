@@ -242,12 +242,13 @@ button.danger:hover {
   gap: 8px;
 }
 
+/* The transport lives in the canvas band now, tied to the song named there — it was a global
+   Play/Pause/Restart in the flow bar until 2026-09-04. Pushed to the end of the band's row, so the
+   song's name and the mode sentence keep the left edge they have always had. */
 .transport-group {
   display: flex;
   gap: 6px;
-  padding-right: 10px;
-  margin-right: 4px;
-  border-right: 1px solid var(--border);
+  margin-left: auto;
 }
 
 /* Export and Import, which are standalone's only portability and are hidden the
@@ -1188,28 +1189,24 @@ body.role-output {
 /* =====================================================================
    SONG-AWARE LAYERS (output)
    =====================================================================
-   THE WALL SPEAKS IN THE INSTRUMENT'S VOICE HERE, AND THAT WAS A DECISION.
-   The intro card and the contact panel are drawn in Pregonero's brutalist
-   control vocabulary - ink ground, paper and dim text, one clay accent, no
-   radii, monospace throughout - and control.css states outright that
-   projection typography is deliberately independent of it. Choosing it means
-   the audience sees the instrument's voice rather than the site's. That is a
-   decision about who the wall speaks AS, not a styling detail, and it was made
-   deliberately (2026-08-24).
+   THE WALL SPEAKS IN THE INSTRUMENT'S VOICE HERE, AND THAT WAS A DECISION
+   (2026-08-24) — ink ground, paper and dim text, one clay accent, no radii,
+   monospace throughout, values copied from Pregonero's control.css rather than
+   referenced. What is left of it is the video placeholder's label.
 
-   The values are Pregonero's --app-bg, --text-primary, --text-secondary and
-   --accent, copied rather than referenced: this stylesheet is a different app
-   and a token that silently tracked another repo's redesign would be worse
-   than a number somebody has to change twice.
+   THE INTRO CARD AND THE CONTACT PANEL WERE THE REST OF THIS SECTION AND ARE
+   GONE (2026-09-04). Both stopped being shape types: Pregonero renders them
+   into a shape that already exists and decides which. `.layer-intro`,
+   `.layer-contact` and the eight rules under them went with the painters in
+   mapper.js. **The vocabulary itself did not move to Pregonero** — Pregonero
+   already had it; this stylesheet was the copy.
 
-   Every panel below is laid out at the counter-scaled width and scaled back
-   onto the unit square, exactly like .layer-text - see TEXT ASPECT in
-   mapper.js. mapper.js writes width, height, padding and transform; what is
-   here is everything that does not depend on the quad. */
+   The panel below is laid out at the counter-scaled width and scaled back onto
+   the unit square, exactly like .layer-text - see TEXT ASPECT in mapper.js.
+   mapper.js writes width, height, padding and transform; what is here is
+   everything that does not depend on the quad. */
 
-.layer-song-video,
-.layer-intro,
-.layer-contact {
+.layer-song-video {
   position: absolute;
   top: 0;
   left: 0;
@@ -1244,104 +1241,6 @@ body.role-output {
   color: #8b8478;
   letter-spacing: 0.14em;
   line-height: 1.5;
-}
-
-/* The intro card. Every measure is a multiple of --t, the title size, which is
-   the single number auto-fit searches over - so the proportions variant B1
-   fixed survive at any size the block lands on.
-
-   THIS IS WHERE THE PROPORTIONS LIVE, and the only place. mapper.js keeps two
-   of them (the ceiling the fit searches below, and the inset the layout box is
-   padded by) because JS is the only thing that reads those; everything else
-   would be a number written down twice. The reasoning behind each one is in
-   SONG INTRO TEMPLATE in mapper.js and in project-context.md. */
-.intro-block {
-  --t: 160px; /* replaced by the fit; a sane value for the instant before it */
-  width: 100%;
-}
-
-/* The clay rule and the translation share one line. */
-.intro-head {
-  display: flex;
-  align-items: center;
-  /* The one measure not in the spec: half the annotation's own size, so it
-     scales with the two things it separates rather than being a fixed gap. */
-  gap: calc(var(--t) * 0.1);
-}
-
-.intro-rule {
-  flex: 0 0 auto;
-  width: calc(var(--t) * 0.4);
-  height: calc(var(--t) * 0.04);
-  background: #d98b7a;
-}
-
-/* The translation, as an ANNOTATION above the title rather than a near-equal
-   second headline - which is what it actually is, and what frees the title to
-   be the only large thing on the wall. Case and tracking do the work the
-   italic used to. */
-.intro-annotation {
-  font-size: calc(var(--t) * 0.2);
-  line-height: 1.2;
-  letter-spacing: 0.18em; /* "wide-tracked"; the one tracking value not specified */
-  text-transform: uppercase;
-  color: #8b8478;
-}
-
-.intro-title {
-  margin-top: calc(var(--t) * 0.17);
-  font-size: var(--t);
-  line-height: 0.95;
-  letter-spacing: -0.035em;
-  text-transform: uppercase;
-  color: #e6dfd1;
-}
-
-/* THE FRAGILE PART: smallest on the wall, and carrying the sentence the room
-   is meant to leave with. First thing to check at a real wall. */
-.intro-tagline {
-  margin-top: calc(var(--t) * 0.3);
-  font-size: calc(var(--t) * 0.28);
-  line-height: 1.25;
-  color: #8b8478;
-}
-
-/* The contact panel: one line, and a QR beside it when a file was named. */
-.contact-block {
-  --t: 220px;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: calc(var(--t) * 0.6);
-}
-
-/* Paper ground and real padding, because a QR needs its quiet zone to scan and
-   a code printed straight onto ink does not scan at all. It is square in the
-   layout box, which the counter-scale and the homography together land as a
-   square ON THE WALL - the correction earns its keep here more than anywhere,
-   since a squashed QR is not a style, it is a code that fails. */
-.contact-qr {
-  flex: 0 0 auto;
-  width: calc(var(--t) * 3.4);
-  height: calc(var(--t) * 3.4);
-  box-sizing: border-box;
-  padding: calc(var(--t) * 0.18);
-  background: #e6dfd1;
-  object-fit: contain;
-}
-
-/* ONE LINE, and nowrap is what makes that a promise rather than a description.
-   Without it a long line wraps to two and the "one line plus a QR" shape
-   quietly stops being what was designed; with it, auto-fit shrinks the line
-   until it fits on one, which is the behaviour the whole text layer already
-   has. sanitizeContactLayer collapses a pasted newline for the same reason,
-   one step earlier. */
-.contact-line {
-  font-size: var(--t);
-  line-height: 1.2;
-  letter-spacing: 0.02em;
-  color: #e6dfd1;
-  white-space: nowrap;
 }
 
 /* Media layer box: fills the warped wrapper; holds the <video>/<img> plus
@@ -1763,6 +1662,11 @@ body.role-output {
 .canvas-band-mode {
   color: var(--text-dim);
   font-size: 12px;
+}
+
+.canvas-band .transport-group button {
+  font-size: 12px;
+  padding: 3px 8px;
 }
 
 /* --- The preview toggles: a view, never a setting (item 19) --- */

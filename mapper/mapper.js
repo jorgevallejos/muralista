@@ -72,7 +72,8 @@ const PREVIEW_H = 900;
 // shape: an old keep-out painted above everything, so it arrives at the top of
 // the z-order and a v7 mapping opens looking exactly as it did.
 // v9 (2026-08-24) ADDED the four SONG-AWARE layer types - song-lyrics,
-// song-video, song-intro, gig-contact - REMOVED the text layer's `role`, and
+// song-video, song-intro, gig-contact (the last two were retired on
+// 2026-09-04; see SONG-AWARE SHAPE TYPES) - REMOVED the text layer's `role`, and
 // ADDED the top-level songVisuals table that says which shape of each type a
 // deviating song uses. See SONG-AWARE SHAPE TYPES below. The role/type
 // migration is a RENAMING, not a redesign: `role: "lyrics"` meant "a slot
@@ -265,7 +266,6 @@ function migrateShape(surface) {
   if (layer.type === "text" && layer.role === "lyrics") layer.type = "song-lyrics";
   if (typeTakesTextFormatting(layer.type)) Object.assign(layer, sanitizeTextLayer(layer));
   if (layer.type === "fill") Object.assign(layer, sanitizeFillLayer(layer));
-  if (layer.type === "gig-contact") Object.assign(layer, sanitizeContactLayer(layer));
   delete layer.role;
 
   const corners = isValidQuad(surface.corners)
@@ -550,11 +550,6 @@ function sanitizeTextLayer(layer) {
 //                  framing, and stretch-to-fill is fixed v1 behaviour rather
 //                  than an option. A video that wants to sit differently is a
 //                  different quad, so a different shape.
-//   song-intro   - a locked template: translation, title, tagline. NO
-//                  formatting; position and size of the shape are the only
-//                  decisions. See SONG INTRO TEMPLATE below.
-//   gig-contact  - one line plus an optional QR code. NOT per-song, which is
-//                  why it is not called song-contact.
 //
 // A SHAPE HAS EXACTLY ONE TYPE. There is no shape that is lyrics for one song
 // and video for another. Lyrics and video over the same patch of wall are two
@@ -575,12 +570,30 @@ function sanitizeTextLayer(layer) {
 // CONTENT SITS IS LAYOUT, AND LAYOUT IS HOW. What is playing now and when the
 // next line appears stay entirely Pregonero's, and nothing below knows about
 // tempo, timelines, drive modes or order of play.
-const SONG_AWARE_TYPES = ["song-lyrics", "song-video", "song-intro", "gig-contact"];
+/**
+ * **TWO TYPES LEFT ON 2026-09-04, AND THE VOCABULARY SHRANK BACK TOWARD *SHAPES ON A WALL*.**
+ *
+ * `song-intro` and `gig-contact` were types here. They are not any more: **Pregonero renders both
+ * into a shape that already exists** — the video frame or the song lyrics shape — **and decides
+ * which.**
+ *
+ * **THE LINE: Muralista owns WHERE THINGS ARE, Pregonero owns WHAT IS SHOWING WHEN.** An intro is a
+ * *when* — before the cue — and its *where* is a shape that already exists.
+ *
+ * **This reversed two decisions and both were named.** 24/08 gave the intro its own shape precisely
+ * so its text could size independently; **the template's auto-fit answers that**, since it sizes
+ * itself inside whatever shape it lands in. And the round of 04/09 made both ordinary shapes in the
+ * default room — **that lasted one walk.**
+ *
+ * **The photographs settled it.** On the canvas both looked like neat rectangles of equal standing.
+ * **On the wall the intro landed on the whiteboard and the contact on bare planks** — dim, low
+ * contrast, on a surface that is not the surface — because a shape that is up only when nothing
+ * else is still had to claim its own territory. **Under this ruling it needs none.**
+ */
+const SONG_AWARE_TYPES = ["song-lyrics", "song-video"];
 
-// The three that a deviating song may reassign. gig-contact is missing on
-// purpose and its absence is the whole of the rule: it is defined once, at gig
-// visual setup, and a per-song contact panel is not a thing.
-const SONG_REASSIGNABLE_TYPES = ["song-lyrics", "song-video", "song-intro"];
+/** Both remaining song-aware types are reassignable; there is no gig-level-only type left. */
+const SONG_REASSIGNABLE_TYPES = ["song-lyrics", "song-video"];
 
 // Both types that carry the text-layer fields, in one predicate rather than in
 // the eight places that used to compare against "text". A plain text layer and
@@ -629,171 +642,16 @@ function isSongAwareType(type) {
 const LYRICS_PREVIEW_TEXT =
   '"Wat een lekkernij zul jij zijn," zucht hij,\nen ik proef al het onvermijdelijke afscheid\nvan mijn modderplasherinneringen.';
 
-// =========================================================================
-// SONG INTRO TEMPLATE (numbers; the painting is in the output half)
-// =========================================================================
-// Decided from a mock, 2026-08-24, variant B1. Ink ground, left-aligned, all
-// three parts in the monospace instrument voice, values taken from Pregonero's
-// control.css rather than invented. No radii.
-//
-// Top to bottom: a short clay rule and the TRANSLATION as a small wide-tracked
-// uppercase annotation; then the TITLE, uppercase and dominant; then the
-// TAGLINE.
-//
-// THE TITLE IS NOT A FONT SIZE. It is a fraction of the shape with auto-fit
-// below it, exactly like a text layer's maxSize, and every other measure here
-// is a multiple of it. A hardcoded line count or pixel size breaks on the
-// first title of a different length - in the mock, two of the real titles
-// break to two lines.
-//
-// A FRAME-FILLING VARIANT WAS MOCKED AND REJECTED, and the reason matters to
-// anyone tempted to enlarge this later: the intro shape on a real wall is
-// often small, a panel beside the main area rather than the whole wall. A
-// title sized to fill the frame leaves the tagline microscopic once the shape
-// shrinks. THESE PROPORTIONS ARE THE ENTIRE DESIGN, since there are no
-// formatting controls - if they are wrong for a song the only handle is the
-// shape's size and position, which move all three parts together.
-//
-// THE TAGLINE IS THE FRAGILE PART: smallest on the wall and carrying the
-// sentence the room is meant to keep. It is the first thing to test at a wall.
-// THE NUMBERS LIVE IN THE STYLESHEET, not here, and this is the only note
-// saying so. Every one of them is a multiple of the title size, which is a CSS
-// custom property (`--t`) that auto-fit searches over - so they are calc()
-// expressions in mapper.css and copying them into JS constants would be
-// writing each proportion down twice and waiting for the two to disagree.
-//
-// These two are the exception because JS is the only thing that reads them:
-// the fit needs the ceiling it searches below, and the layout box needs the
-// inset it is padded by. Everything else - the annotation and tagline ratios,
-// the rule, the leading, the tracking, both gaps, and the four colours - is in
-// mapper.css under SONG-AWARE LAYERS, matching the table in project-context.md.
-const INTRO_TITLE_MAX_SIZE = 0.16; // of the shape's height; auto-fit only goes below
-const INTRO_INSET = 0.07; // of the shape's width, left and right
+/**
+ * **`sanitizeContactLayer`, `applyGigContactLayer`, `applySongIntroLayer` AND `INTRO_PLACEHOLDER`
+ * WENT WITH THE TWO TYPES** (2026-09-04). A layer's contact line, its QR name and the intro card's
+ * three stand-in strings all described content this tool no longer has a type for.
+ *
+ * **Pregonero keeps both renderers** — `ShapeIntro` and `ShapeContact` — because they were always
+ * its: what goes inside a shape is Pregonero's and where the shape is is Muralista's, and only the
+ * second half was ever here.
+ */
 
-// WHAT THE INTRO PREVIEWS, AND WHY TWO OF THE THREE PARTS ARE FAKE. The title
-// is real when a gig is connected and a song is being previewed, because song
-// ids and titles are the one thing Muralista is allowed to read out of
-// gig.json. The translation and the tagline live in the SONG FILE, which is
-// below the line - so they are stand-ins, and they say so on the wall rather
-// than pretending. Saying so is a design property, not filler, so it survives
-// everything below: each part still names itself in plain English.
-//
-// THIS IS THE SECOND OF MURALISTA'S TWO INDEPENDENT STAND-INS, and it is the
-// one that carries the whole intro card. LYRICS_PREVIEW_TEXT seeds a
-// song-lyrics slot and has exactly one consumer; this one is everything
-// applySongIntroLayer() ever paints. v1.5.0 held the lyrics stand-in to the
-// real catalogue and it lost. This one was never measured against anything at
-// all - its tagline read "The tagline from the song file goes here, and it is
-// the smallest thing on the wall", which is a DESCRIPTION, not a worst case.
-//
-// MEASURED AGAINST songs/ ON 2026-08-27, same difficultyOf() metric as v1.5.0
-// (length excluding hard breaks; longest whitespace-free run; hard rows), 13
-// song files, _template.json excluded:
-//
-//   part         population                        corpus max (len/run/rows)
-//   title        title                    13 str   23 / 9 / 1
-//   annotation   title_translations.*     52 str   32 / 9 / 1
-//   tagline      intro.*                  52 str   80 / 14 / 1
-//
-// `title` equals `title_translations.es` in all 13 files, so the 13 titles are
-// a subset of the 52 annotations and the title axis is backed by 52 strings
-// too, not 13. THE OLD STAND-IN LOST ON FOUR OF THE NINE COMPARISONS: title on
-// length (20 v 23) and run (5 v 9), annotation on length (26 v 32), tagline on
-// run (8 v 14). These three beat the corpus on every axis of every part.
-//
-// HARD ROWS STAY AT 1 ON PURPOSE. The corpus max is 1, and the intro card has
-// no `white-space: pre-line` - a \n in any of these three renders as a space,
-// so a stand-in carrying one would be claiming a row the template cannot
-// paint. Beating the corpus here means matching it.
-//
-// WHAT IT COSTS THE PREVIEW, tagline in real px at 1920x1080 (shapes recorded
-// beside every number this time - the older set was not, and is lost):
-//
-//   shape                     old      hardest real     new
-//   half wall     960x540    24.19        24.19       24.19   (all at ceiling)
-//   tall panel    346x864    29.36        16.33       10.50
-//   narrow col    192x648    16.29         9.05        5.82
-//   small panel   384x194     8.69         8.69        8.69   (all at ceiling)
-//
-// The middle column is the size of the error: on a side panel the old stand-in
-// previewed the tagline at 29.36 px when the hardest thing the catalogue can
-// actually put there renders at 16.33 - EIGHTY PER CENT too generous, on the
-// part with the least margin on the wall. Same failure as v1.5.0's.
-//
-// THE TITLE IS WHAT BINDS, and that was not obvious. The tagline is the
-// FRAGILE part - smallest on the wall - but it is 0.28 of the title, so an
-// unbreakable run costs it 3.6x less. Fitting each part alone on the tall
-// panel: title 43.39, tagline 97.31, annotation 128.08, whole block 43.39.
-// The title decides the size of all three, every time the fit leaves its
-// ceiling. So a nastier tagline alone would have fixed nothing.
-//
-// NO PROPORTION WAS TOUCHED AND NONE SHOULD BE. 5.82 px on a narrow column is
-// a finding for a real wall, and the agreed answer is a minimum floor in
-// `.intro-tagline`, never a bigger ratio - a bigger ratio inflates the tagline
-// in the large-shape case where it is already fine and costs the title its
-// dominance everywhere.
-//
-// THESE ARE TEST FIXTURES, NOT PROSE IN JORGE'S NAME. `MODDERPLASLIED` and
-// `modderplasherinnering` are deliberately awkward Dutch that nobody would say
-// out loud, carried over from the lyrics stand-in on purpose; his rule about
-// writing Dutch he would actually say governs drafts in his voice, not a
-// string whose only job is to be worse than anything real. The failure mode
-// here is somebody improving the prose and silently loosening the guarantee.
-// Anyone changing these should re-run the measurement over `songs/` first.
-const INTRO_PLACEHOLDER = {
-  annotation: "TRANSLATED TITLE GOES HERE, MODDERPLASLIED",
-  title: "SONG TITLE GOES HERE, MODDERPLASLIED",
-  tagline:
-    "The tagline from the song file goes here, and it is the smallest modderplasherinnering the room takes home.",
-};
-
-// =========================================================================
-// GIG CONTACT LAYER (schema half)
-// =========================================================================
-// One line of text plus an OPTIONAL QR CODE, defined once at gig visual setup.
-// It replaces Pregonero's end card and its logo-when-nothing-is-armed
-// fallback, both of which existed to put something on the wall when no song
-// was presenting - which is what a static-ish shape does properly.
-//
-// THE QR CODE IS A FILE, NOT A GENERATOR. `qrSrc` is a media name resolved
-// through the same folder as every other source, so a QR is a PNG somebody
-// generated and dropped in beside the videos. Muralista has no build step, no
-// dependencies and no network, and a hand-rolled QR encoder in this file would
-// be several hundred lines of error-correction arithmetic whose failure mode
-// is a code that scans as the wrong URL. A file that can be checked with a
-// phone before the doors open is the honest version.
-const CONTACT_LAYER_DEFAULTS = {
-  text: "",
-  qrSrc: null,
-};
-
-// The contact line's maximum size, as a fraction of the shape's height, with
-// auto-fit below it - the same contract as a text layer's maxSize, except that
-// nobody gets to change it. A contact panel is one short line: bigger than a
-// lyric because it is read once and acted on, smaller than an intro title
-// because it is not the thing the room came for. The QR is a multiple of it.
-const CONTACT_MAX_SIZE = 0.22;
-// The QR's size is a multiple of that line and lives in mapper.css with the
-// rest of the proportions - same reason as the intro's numbers above.
-
-// Counterpart of sanitizeTextLayer and sanitizeFillLayer: fully defaulted,
-// never mutates its argument, and it is the single authority on these two
-// fields. The text is collapsed to ONE LINE here rather than in the renderer -
-// "one line of text" is the design, and a paste carrying a newline should be
-// fixed where the value is written, not painted as two lines on a wall.
-function sanitizeContactLayer(layer) {
-  const src = layer && typeof layer === "object" ? layer : {};
-  // The QR name is TRIMMED, and a name that is only whitespace becomes null.
-  // Not cosmetic: a truthy "  " reaches the output as <img src="  ">, which
-  // Chrome resolves to the page itself and paints as a broken image on a wall
-  // with nothing anywhere saying why. The trim also means the media folder and
-  // the renderer key on the same string, since both read it through here.
-  const qr = typeof src.qrSrc === "string" ? src.qrSrc.trim() : "";
-  return {
-    text: typeof src.text === "string" ? src.text.replace(/\s*\n\s*/g, " ") : CONTACT_LAYER_DEFAULTS.text,
-    qrSrc: qr || CONTACT_LAYER_DEFAULTS.qrSrc,
-  };
-}
 
 // =========================================================================
 // SONG VISUALS (which shape a song uses, per type)
@@ -923,9 +781,11 @@ function sanitizeSongVisuals(value) {
   const songs = {};
   Object.keys(songsSrc).forEach((songId) => {
     if (!songId) return;
-    // SONG_REASSIGNABLE_TYPES, not SONG_AWARE_TYPES: a per-song gig-contact
-    // entry is dropped rather than honoured, because the contact panel is a
-    // gig-level fact and a file claiming otherwise is a file to correct.
+    // SONG_REASSIGNABLE_TYPES rather than SONG_AWARE_TYPES, and since 2026-09-04
+    // the two lists are the same list. Kept as two names because the question
+    // they answer is different - what a song may reassign is not what a shape
+    // may be - and the day a gig-level-only type comes back this is where it is
+    // read out of a per-song entry rather than honoured.
     const map = sanitizeAssignmentMap(songsSrc[songId], SONG_REASSIGNABLE_TYPES);
     if (Object.keys(map).length) songs[songId] = map;
   });
@@ -968,14 +828,34 @@ function resolveShapesForType(proj, type, songId) {
     .filter((shape) => shape && shapeType(shape) === type);
 }
 
+/**
+ * **WHETHER A CONDITIONAL SHAPE IS DRAWN, AND IT IS ONE FUNCTION FOR BOTH WINDOWS** (Jorge,
+ * 2026-09-04, walking `v0.61.0`: *the toggle changes the canvas and the output window shows
+ * something else*).
+ *
+ * **It did, and the reason is that the output had no conditions at all.** `renderOutput` filtered
+ * on `visible` and on the previewed song's assignments, and nothing else — so a `visibleWhen` pair
+ * painted BOTH faces on the wall, in Mode A and in Mode B alike. The toggle was never wired to the
+ * output; there was nothing on that side to wire it to.
+ *
+ * `readsFilled` is the one thing that differs between the two roles: the control window answers it
+ * from the song's assignment or the `Previewing:` toggles, the output window from the list of ids
+ * that rode along with the state message. **The rule itself is written once.**
+ */
+function shapeShowsUnderConditions(shape, readsFilled) {
+  const cond = shapeCondition(shape);
+  if (!cond) return true;
+  return cond.is === "filled" ? readsFilled(cond.shape) : !readsFilled(cond.shape);
+}
+
 // Which shapes are lit while `songId` is playing, as a set of ids. Null means
 // GIG VISUAL SETUP, where every shape paints - you cannot place a shape you
 // cannot see, and no song is playing at a desk.
 //
-// gig-contact is dark while a song plays, and that is the decided rule rather
-// than an omission: the wall's attention belongs to the song, and the contact
-// panel is lit when nothing is presenting. Muralista shows the same thing
-// because a preview that flatters is not a preview.
+// EVERY SONG-AWARE TYPE IS LIT OR DARK BY THE SAME RULE now that the two
+// gig-level types are gone: the shapes the previewed song points at are lit and
+// the rest are not. Muralista shows the same thing the wall will, because a
+// preview that flatters is not a preview.
 function litSongAwareShapeIds(proj, songId) {
   if (!songId) return null;
   const ids = new Set();
@@ -1045,8 +925,6 @@ const SHAPE_TYPES = [
   "fill",
   "song-lyrics",
   "song-video",
-  "song-intro",
-  "gig-contact",
 ];
 
 // Fewer than three points is not a polygon. A two-point "ring" would paint
@@ -1353,6 +1231,8 @@ function addShape() {
   const shape = defaultShape(project.surfaces.length + 1);
   project.surfaces.push(shape);
   selectedShapeId = shape.id;
+  openShapeId = shape.id; // a shape you just added is a shape you are about to name
+
   clearShapeSubselection();
   commitProjectChange();
 }
@@ -1556,7 +1436,6 @@ function setLayerType(id, type) {
     if (type === "song-lyrics" && !shape.layer.text) shape.layer.text = LYRICS_PREVIEW_TEXT;
   }
   if (type === "fill") Object.assign(shape.layer, sanitizeFillLayer(shape.layer));
-  if (type === "gig-contact") Object.assign(shape.layer, sanitizeContactLayer(shape.layer));
   // A gig needs one shape of each type it uses, and the overwhelmingly common
   // room has exactly one of each. So the first shape given a song-aware type
   // BECOMES the gig's default for it, with no second gesture - which is also
@@ -1669,6 +1548,9 @@ function loadBackdropPhotoFile(file) {
 
 function selectShape(id) {
   selectedShapeId = id;
+  // Item 3: selecting a shape opens its accordion. One gesture, from anywhere - the list, the
+  // canvas, or adding one - because the alternative was selecting and then hunting for the pencil.
+  openShapeId = id;
   clearShapeSubselection();
   renderControl(); // selection is local UI state, no save/broadcast needed
 }
@@ -1754,15 +1636,21 @@ function postToOutput(message) {
 // somebody was looking at on Tuesday is not a fact about the room, and a
 // mapping that reopened with one song's shapes dark would look broken.
 //
-// The title rides with the id for the same reason gig.json is not sent whole:
-// the output window needs a title to paint into a song-intro shape and has no
-// business being handed the gig to find one in.
+// THE TITLE RIDES WITH THE ID AND NOTHING PAINTS IT TODAY. It was here for the
+// intro card, which stopped being a shape type on 2026-09-04. It stays because
+// the message is the seam's shape, not a parameter list: the output window is
+// entitled to know which song it is previewing by name, and a preview badge or
+// an empty-state line is one field away rather than a protocol change. It is
+// still the ONLY thing out of gig.json that crosses, and gig.json is still never
+// sent whole.
 function broadcastState() {
   const song = gigSongById(previewSongId());
   postToOutput({
     kind: "state",
     project,
     preview: song ? { songId: song.id, songTitle: song.title } : null,
+    // Item 4: `Previewing:` drives the wall, not only the canvas. See `shapeShowsUnderConditions`.
+    filled: filledTargetIds(),
   });
 }
 
@@ -1809,10 +1697,25 @@ function broadcastTransport(action) {
 // until the next transport click. See handleControlMessage.
 let lastTransport = null;
 
-// Wired to the header Play/Pause/Restart buttons.
+// Wired to the canvas band's Play/Pause/Restart buttons - Mode B only, see renderCanvasBand.
 function handleTransportButton(action) {
   lastTransport = action;
   broadcastTransport(action);
+}
+
+/**
+ * **PLAYBACK DOES NOT FOLLOW YOU TO THE NEXT SONG** (2026-09-04, with the transport's move into
+ * the band). The output's transport is one clock over every mounted video, and changing the
+ * previewed song unmounts one set and mounts another — so a `play` sent for the last song would
+ * take effect on the next one's clip the moment it appears, and `lastTransport` would replay it
+ * onto a late-joining output window as well.
+ *
+ * Pausing on the way out is the honest state: nothing is playing because nothing was asked to.
+ */
+function resetTransportForSongChange() {
+  if (lastTransport === null) return;
+  lastTransport = null;
+  broadcastTransport("pause");
 }
 
 // Control -> output: raise or drop a full-frame white plate on the output
@@ -1888,6 +1791,10 @@ function handleOutputMessage(event) {
     project = msg.project;
     // Null in gig visual setup, which is the state where every shape paints.
     outputPreview = msg.preview && typeof msg.preview === "object" ? msg.preview : null;
+    // Item 4. An older control window sends no `filled`, and an empty set is the honest reading of
+    // that: nothing is filled, so every `is: "empty"` branch draws - which is what the wall showed
+    // before conditions reached it at all.
+    outputFilled = new Set(Array.isArray(msg.filled) ? msg.filled : []);
     renderOutput();
   } else if (msg.kind === "media" && Array.isArray(msg.entries)) {
     applyMediaMessage(msg.entries);
@@ -2024,16 +1931,6 @@ function referencedMediaNames() {
     if (layer.type === "video" || layer.type === "image") {
       if (typeof layer.src === "string" && layer.src) names.add(layer.src);
       return;
-    }
-    // A contact panel's QR code is a file like any other, and it resolves
-    // through this same folder - see CONTACT_LAYER_DEFAULTS for why a QR is a
-    // file rather than something this tool generates.
-    if (layer.type === "gig-contact") {
-      // Through the sanitizer, so this key is the same string applyGigContactLayer
-      // asks resolveMediaUrl for. Reading the raw field would let a stray space
-      // put a name in the map that the renderer then never looks up.
-      const qr = sanitizeContactLayer(layer).qrSrc;
-      if (qr) names.add(qr);
     }
   });
   return names;
@@ -3050,12 +2947,16 @@ function previewSongId() {
  */
 function setVisualSetupSong(songId) {
   const found = gigSongById(songId);
+  const changed = (found ? songId : null) !== visualSetupSongId;
   visualSetupSongId = found ? songId : null;
   visualSetupMode = found ? "song" : "gig";
   if (found) {
     selectedShapeId = null;
+    openShapeId = null;
     clearShapeSubselection();
   }
+  // The transport is the named song's, so it does not carry over to the next one.
+  if (changed) resetTransportForSongChange();
   broadcastState();
   renderControl();
 }
@@ -3200,42 +3101,10 @@ const DEFAULT_FOOT = [
   [0, 1],
 ];
 
-/**
- * **`song-intro` AND `gig-contact` ARE ORDINARY SHAPES IN THE DEFAULT ROOM** (item 3, Jorge,
- * 2026-09-04). They used to be reachable only through the `LYRICS / VIDEO / INTRO / CONTACT` block,
- * which is what made the type-to-shape concept feel necessary. **Put them in the room and the
- * concept has nothing left to do.**
- *
- * Both are locked templates that read the song file or the gig, so they need no content set here —
- * they need a place on the wall, which is what a shape is. They start in a corner rather than on
- * the frame, because two more frame-filling quads would make the overlap item 12 exists for worse.
- */
-const DEFAULT_CORNER = [
-  [0.06, 0.06],
-  [0.44, 0.06],
-  [0.44, 0.3],
-  [0.06, 0.3],
-];
-
-const DEFAULT_CONTACT = [
-  [0.62, 0.7],
-  [0.94, 0.7],
-  [0.94, 0.94],
-  [0.62, 0.94],
-];
-
-/**
- * **THE NAMES, AND `Frame` WAS AMBIGUOUS** (Jorge, 2026-09-04): the projector's frame, or the
- * video's? **The pair names itself now** — `Video frame` is the animation and `Video lyrics` are
- * the words at its foot, so reading one tells you what the other is. `Song lyrics` is the words
- * filling the frame when there is no animation. Sentence case, like every other label in the suite.
- */
 const DEFAULT_LAYOUT = [
   { type: "song-video", name: "Video frame", key: "video" },
   { type: "song-lyrics", name: "Video lyrics", corners: DEFAULT_FOOT, when: "filled" },
   { type: "song-lyrics", name: "Song lyrics", when: "empty" },
-  { type: "song-intro", name: "Intro", corners: DEFAULT_CORNER },
-  { type: "gig-contact", name: "Contact", corners: DEFAULT_CONTACT },
 ];
 
 // Which screen is showing. Never persisted: it is a fact about this sitting,
@@ -3570,8 +3439,10 @@ function renderFlow() {
   document.querySelector(".preview-box").classList.toggle("showing-photo", onOutput);
   document.getElementById("flow-photo").hidden = !onOutput || stagePhotoUrl === null;
 
-  // P6c: the toolbar belongs to `1 SHAPES` only — there is nothing to play or open on the deal or
-  // on the output, and the output has just closed the window the toolbar would have opened.
+  // P6c: `Open output window` belongs to `1 SHAPES` only — there is nothing to open on the deal,
+  // and the output step has just closed the window this button would have opened. The transport
+  // that used to sit beside it now lives in the canvas band, gated by the song rather than by the
+  // step (2026-09-04).
   document.getElementById("header-actions").hidden = !onShapes;
   // A2: **THE NAME BAND IS STANDALONE'S** (Jorge, 2026-09-04). Hosted, this label is the tool
   // introducing itself to somebody who did not choose it — the same argument that took Bombista's
@@ -4236,6 +4107,30 @@ function renderShapeList() {
        */
       panel.addEventListener("click", (e) => e.stopPropagation());
       panel.addEventListener("pointerdown", (e) => e.stopPropagation());
+      /**
+       * **AND IT CLOSES WHEN FOCUS LEAVES IT** (item 3). `relatedTarget` is where focus is going:
+       * null when it is going nowhere (a click on the canvas, on the page's own background), and
+       * an element inside this panel when it is only moving between its own fields — which must
+       * not close it mid-edit.
+       *
+       * `renderControl` rebuilds the list, so this listener dies with the panel it is on. That is
+       * the reason it is here rather than on the document: nothing to unbind, and nothing left
+       * watching for a shape that is no longer open.
+       */
+      const accordionShapeId = shape.id;
+      panel.addEventListener("focusout", (e) => {
+        if (e.relatedTarget && panel.contains(e.relatedTarget)) return;
+        // **A PANEL ONLY CLOSES ITS OWN SHAPE**, and this is not defensive coding — it is the
+        // whole difference between item 3 working and item 3 undoing itself. Clicking a shape on
+        // the canvas while a field in here has focus runs `selectShape` on `pointerdown`, which
+        // opens the NEW shape and re-renders; the blur that follows still reaches this listener,
+        // which belongs to the old shape, and without this line it would shut the accordion the
+        // click had just opened. **Measured, not guessed**: the row highlighted, no accordion
+        // appeared, and the trace read `select`, `select`, `close` in that order. (`isConnected`
+        // was tried first and did not hold — the panel still reads as connected at that point.)
+        if (openShapeId !== accordionShapeId) return;
+        closeShapeAccordion();
+      });
       buildShapeAccordion(panel, shape, songId);
       row.appendChild(panel);
     }
@@ -4329,12 +4224,33 @@ function moveShapeBefore(id, beforeId) {
   commitProjectChange();
 }
 
-/** Which shape's accordion is open, or null. A view state: never persisted, never in the file. */
+/**
+ * **THE OPEN ACCORDION IS THE SELECTED SHAPE'S** (Jorge, 2026-09-04, walking `v0.61.0`).
+ *
+ * It used to be a second selection with its own pencil: a shape could be selected with its
+ * accordion shut, or open while another was selected, and the pencil was the only way to get from
+ * one to the other. **Selecting a shape is already saying which one you mean**, so it opens.
+ *
+ * **And it closes when focus leaves it**, which is what keeps a list of twelve shapes readable.
+ * Only a *focus* loss closes it — clicking away from a field, or tabbing out. Selecting on the
+ * canvas opens the new one and that closes the old one by replacement, not by focus.
+ *
+ * Still separate state from `selectedShapeId` rather than derived from it, because closing must be
+ * possible without deselecting: the pencil still toggles, and `focusout` still shuts it, and
+ * neither of those means *stop pointing at this shape*.
+ */
 let openShapeId = null;
 
 function toggleShapeAccordion(id) {
   openShapeId = openShapeId === id ? null : id;
   if (openShapeId !== null) selectedShapeId = id;
+  renderControl();
+}
+
+/** Closes the open accordion. A no-op when none is open, so it is safe to call from a listener. */
+function closeShapeAccordion() {
+  if (openShapeId === null) return;
+  openShapeId = null;
   renderControl();
 }
 
@@ -4391,9 +4307,18 @@ function targetReadsFilled(targetId) {
 
 /** Whether this shape shows on the canvas as drawn. Unconditional shapes always do. */
 function shapeShowsInPreview(shape) {
-  const cond = shapeCondition(shape);
-  if (!cond) return true;
-  return cond.is === "filled" ? targetReadsFilled(cond.shape) : !targetReadsFilled(cond.shape);
+  return shapeShowsUnderConditions(shape, targetReadsFilled);
+}
+
+/**
+ * Which targets read as filled, as a list of ids, for the state message.
+ *
+ * **The answer travels, not the inputs.** In Mode B it is derived from the song's assignments and
+ * in Mode A from the toggles, and the output window has no business knowing which — it has no
+ * toggles and no scope. One field, evaluated once, on the side that owns both.
+ */
+function filledTargetIds() {
+  return conditionTargetIds().filter(targetReadsFilled);
 }
 
 function renderPreviewToggles() {
@@ -4419,13 +4344,41 @@ function renderPreviewToggles() {
     btn.textContent = `${target ? target.name : id} ${filled ? "filled" : "empty"}`;
     btn.addEventListener("click", () => {
       previewFilled.set(id, !filled);
+      // **AND THE WALL FOLLOWS** (item 4). `renderControl` redraws this window and nothing else;
+      // without the broadcast the toggle moved the canvas while the output window kept whichever
+      // face it was last told about, which is exactly the disagreement this item is about. It is
+      // NOT `commitProjectChange`: a view is not a change to the file and must not be saved.
+      broadcastState();
       renderControl();
     });
     bar.appendChild(btn);
   });
 }
 
-/** ITEM 8: the band above the canvas, naming the song and stating the mode. */
+/**
+ * Whether the song being previewed has a video the output can actually play: a lit `song-video`
+ * shape with a file named for it. **The assignment alone is not enough** — a shape with no asset
+ * for this song mounts nothing, and a Play button over nothing is what made the old global
+ * transport unreadable.
+ */
+function previewSongHasVideo(songId) {
+  return resolveShapesForType(project, "song-video", songId).some(
+    (shape) => songAssetFor(project, songId, shape.id) !== null
+  );
+}
+
+/**
+ * ITEM 8: the band above the canvas, naming the song and stating the mode.
+ *
+ * **AND CARRYING THE TRANSPORT SINCE 2026-09-04** (Jorge, walking `v0.61.0`). Play/Pause/Restart
+ * were three buttons in the flow bar that played *every video layer on the output at once*, on
+ * every step including the deal and the photograph. **Here they are the named song's**, because
+ * in Mode B the only videos mounted on the output are that song's — the transport was always
+ * effectively per-song and the flow bar was the only thing claiming otherwise.
+ *
+ * **This is what gives back playing a video to see it in action**: the reason to press Play is to
+ * watch one clip in one shape on the real wall, and that is a Mode B question.
+ */
 function renderCanvasBand() {
   const band = document.getElementById("canvas-band");
   const songId = previewSongId();
@@ -4435,6 +4388,7 @@ function renderCanvasBand() {
   document.getElementById("canvas-band-song").textContent = song ? song.title : songId;
   document.getElementById("canvas-band-mode").textContent =
     "Assignment only — what this song puts in each shape. The room is not edited here.";
+  document.getElementById("canvas-transport").hidden = !previewSongHasVideo(songId);
 }
 
 function renderPreview() {
@@ -4588,8 +4542,6 @@ const PREVIEW_BADGES = {
   text: "T text",
   "song-lyrics": "T lyrics",
   "song-video": "▶ song video",
-  "song-intro": "▤ intro",
-  "gig-contact": "▣ contact",
 };
 
 function renderShapePreview(svg, shape) {
@@ -4651,7 +4603,13 @@ function renderShapePreview(svg, shape) {
    * does not look identical to one you can. **The handles disappearing then reads as a consequence
    * of something visible** rather than as the app being broken, which is exactly how it read.
    */
-  const locked = previewSongId() !== null ? " locked" : "";
+  /**
+   * **AND THE SELECTED ONE IS NEVER DRAWN LOCKED** (Jorge, 2026-09-04). *Locked* is the answer to
+   * *why can I not drag this*, and that question is only ever asked about the shape being pointed
+   * at. Drawn on every outline it says the room is frozen; drawn on all but one it says **this one
+   * is the one you are working on and the rest are held still**, which is what Mode B is.
+   */
+  const locked = previewSongId() !== null && !selected ? " locked" : "";
   const edge = document.createElementNS(SVG_NS, "polygon");
   edge.setAttribute("points", points);
   edge.setAttribute("class", "preview-shape-outline" + (selected ? " selected" : "") + dark + muted + locked);
@@ -5063,9 +5021,9 @@ function renderOutlinePointHandles(svg, shape) {
 // beginPreviewDrag puts them somewhere a re-render cannot reach.
 function startShapeDrag(e, svg, shape) {
   if (selectedShapeId !== shape.id) {
-    selectedShapeId = shape.id;
-    clearShapeSubselection();
-    renderControl(); // full re-render (sidebar highlight, layer panel, handles)
+    // Item 3: through `selectShape`, so a shape picked on the canvas opens its accordion exactly
+    // like one picked in the list. It re-renders (sidebar highlight, layer panel, handles).
+    selectShape(shape.id);
   }
 
   const originalOutline = shape.outline.map(([x, y]) => [x, y]);
@@ -5793,12 +5751,10 @@ function buildContentSection(container, shape, layer, songId) {
       return;
     }
     if (type === "song-lyrics") return say("The song's own words, at render time. Nothing to choose.");
-    if (type === "song-intro") return say("The song's title and tagline, at render time.");
     return say("This shape holds the same thing for every song. Set it in All.");
   }
 
   if (type === "video" || type === "image") return buildMediaSourceControls(container, shape, layer);
-  if (type === "gig-contact") return buildContactLayerControls(container, shape, layer);
   if (type === "text") {
     // The string itself is content; how it is SET is Format.
     return buildTextStringRow(container, shape, layer);
@@ -5810,7 +5766,6 @@ function buildContentSection(container, shape, layer, songId) {
     return
   }
   if (type === "song-video") return say("What plays here is per song. Pick a song in Scope to set it.");
-  if (type === "song-intro") return say("The playing song's title and tagline. A locked template.");
   say("This type holds no content of its own.");
 }
 
@@ -6169,58 +6124,18 @@ function buildTextLayerControls(container, shape, layer) {
   container.appendChild(more);
 }
 
-// gig-contact: one line, and the name of a QR file if there is one. NOT
-// per-song, and there is deliberately no formatting here - it is decided once,
-// at gig visual setup, for the whole night.
-function buildContactLayerControls(container, shape, layer) {
-  const fields = sanitizeContactLayer(layer);
 
-  const lineRow = document.createElement("div");
-  lineRow.className = "layer-field";
-  const lineLabel = document.createElement("label");
-  lineLabel.textContent = "Contact line";
-  lineLabel.setAttribute("for", "layer-contact-text-input");
-  const lineInput = document.createElement("input");
-  lineInput.type = "text";
-  lineInput.id = "layer-contact-text-input";
-  lineInput.placeholder = "changopepper.com";
-  lineInput.value = fields.text;
-  lineInput.addEventListener("input", () => setLayerField(shape.id, "text", lineInput.value));
-  lineRow.append(lineLabel, lineInput);
-  container.appendChild(lineRow);
-
-  const qrRow = document.createElement("div");
-  qrRow.className = "layer-field";
-  const qrLabel = document.createElement("label");
-  qrLabel.textContent = "QR image (optional)";
-  qrLabel.setAttribute("for", "layer-contact-qr-input");
-  const qrInput = document.createElement("input");
-  qrInput.type = "text";
-  qrInput.id = "layer-contact-qr-input";
-  qrInput.placeholder = "qr-changopepper.png";
-  qrInput.value = fields.qrSrc || "";
-  qrInput.addEventListener("input", () => setLayerField(shape.id, "qrSrc", qrInput.value.trim() || null));
-  qrRow.append(qrLabel, qrInput);
-  container.appendChild(qrRow);
-
-}
-
-// song-intro and song-video have NO settings, and saying nothing would read as
-// a panel that failed to load. So it says what the type is and where the only
-// two handles are.
-function buildLockedTypeNote(container, type) {
+/**
+ * **`buildLockedTypeNote` NOW SPEAKS FOR ONE TYPE, NOT THREE** (2026-09-04). `song-intro` and
+ * `gig-contact` left the vocabulary; what is left is `song-video`, whose quad IS its framing.
+ */
+function buildLockedTypeNote(container) {
   const hint = document.createElement("p");
   hint.className = "layer-hint";
-  // SHORTENED RATHER THAN DELETED, and it is the one exception on this pass:
-  // this note IS the panel for these two types, so taking it out leaves a blank
-  // box that reads as a panel that failed to draw rather than as one with
-  // nothing in it. One line each, which is a label.
-  hint.textContent =
-    type === "song-intro"
-      ? "Locked template — nothing to format."
-      : "The quad is the framing — nothing to set.";
+  hint.textContent = "The quad is the framing — nothing to set.";
   container.appendChild(hint);
 }
+
 
 function formatTextSize(fraction) {
   return `${(fraction * 100).toFixed(1)}%`;
@@ -6252,7 +6167,6 @@ function updateLayerPanelValues(container, shape, layer) {
 
   if (typeTakesTextFormatting(layer.type)) updateTextLayerPanelValues(container, layer, active);
   if (layer.type === "fill") updateFillLayerPanelValues(container, layer, active);
-  if (layer.type === "gig-contact") updateContactLayerPanelValues(container, layer, active);
 
 }
 
@@ -6297,15 +6211,6 @@ function updateTextLayerPanelValues(container, layer, active) {
   if (outlineWidthValue) outlineWidthValue.textContent = fields.outlineWidth.toFixed(3);
 }
 
-function updateContactLayerPanelValues(container, layer, active) {
-  const fields = sanitizeContactLayer(layer);
-
-  const lineInput = container.querySelector("#layer-contact-text-input");
-  if (lineInput && active !== lineInput) lineInput.value = fields.text;
-
-  const qrInput = container.querySelector("#layer-contact-qr-input");
-  if (qrInput && active !== qrInput) qrInput.value = fields.qrSrc || "";
-}
 
 function updateFillLayerPanelValues(container, layer, active) {
   const fields = sanitizeFillLayer(layer);
@@ -6463,7 +6368,29 @@ function importProjectFromFile(file) {
   reader.readAsText(file);
 }
 
+/**
+ * **THE BACKDROP FOLD OPENS WITH THE PAGE AND CLOSES WHEN IT LOSES FOCUS** (Jorge, 2026-09-04,
+ * walking `v0.61.0`). `open` in the markup is the first half; this is the second.
+ *
+ * **Only a focus loss closes it**, and only a focus loss that came from inside — `focusout` does
+ * not fire on a fold nobody has touched, so the fold stays open through a whole first session of
+ * placing shapes until the moment somebody actually uses it and moves on. `relatedTarget` is where
+ * focus is going: an element inside the fold means it is only moving between the fold's own
+ * controls.
+ *
+ * Same rule as the shape accordion, deliberately — see `openShapeId`. Two folds behaving
+ * differently is a thing to learn; one rule is a thing to notice once.
+ */
+function wireBackdropFold() {
+  const fold = document.getElementById("backdrop-fold");
+  fold.addEventListener("focusout", (e) => {
+    if (e.relatedTarget && fold.contains(e.relatedTarget)) return;
+    fold.open = false;
+  });
+}
+
 function wireControlEvents() {
+  wireBackdropFold();
   document.getElementById("btn-add-shape").addEventListener("click", addShape);
   document
     .getElementById("btn-show-dependencies")
@@ -6650,12 +6577,17 @@ function outputPreviewSongId() {
   return outputPreview ? outputPreview.songId : null;
 }
 
-// The title the song-intro template paints. The real one while a song is
-// previewed, a stand-in otherwise - see INTRO_PLACEHOLDER for why only this
-// one part of the three is ever real.
-function outputPreviewTitle() {
-  return (outputPreview && outputPreview.songTitle) || INTRO_PLACEHOLDER.title;
+/**
+ * The ids the control window says read as *filled* (item 4). **Received, never computed**: this
+ * window has no toggles and no scope, and a second opinion about which face of the room is up is
+ * exactly the disagreement Jorge saw.
+ */
+let outputFilled = new Set();
+
+function outputTargetReadsFilled(targetId) {
+  return outputFilled.has(targetId);
 }
+
 
 function renderOutput() {
   const container = document.getElementById("output-surfaces");
@@ -6669,7 +6601,11 @@ function renderOutput() {
   // is playing at a desk, and you cannot place a shape you cannot see.
   const songId = outputPreviewSongId();
   const visibleShapes = project.surfaces.filter(
-    (s) => s.visible && !shapeIsDarkForPreview(project, s, songId)
+    (s) =>
+      s.visible &&
+      !shapeIsDarkForPreview(project, s, songId) &&
+      // Item 4: the same rule the canvas draws by, from the answer that rode with the state.
+      shapeShowsUnderConditions(s, outputTargetReadsFilled)
   );
   const visibleIds = new Set(visibleShapes.map((s) => s.id));
 
@@ -6923,10 +6859,6 @@ function createLayerElement(shape, layer, url) {
       return createTextLayerElement(layer, shape);
     case "song-video":
       return createSongVideoLayerElement(shape);
-    case "song-intro":
-      return createSongIntroLayerElement(shape);
-    case "gig-contact":
-      return createGigContactLayerElement(shape);
     case "pattern":
     default:
       return renderPatternLayer(shape);
@@ -7442,24 +7374,23 @@ function textLayerKey(layer, boxWidth) {
 // =========================================================================
 // SONG-AWARE LAYERS (painting half; the schema is up in STATE)
 // =========================================================================
-// FOUR TYPES, THREE OF WHICH HAVE NO FORMATTING AT ALL, and that is the design
-// rather than a shortcut. song-video's quad IS its framing; song-intro is a
-// locked template whose proportions are the whole of its design; gig-contact
-// is decided once for the night. The only handles those three have are the
-// shape's position and size, which move everything in them together.
+// TWO TYPES, ONE OF WHICH HAS NO FORMATTING AT ALL, and that is the design
+// rather than a shortcut. song-video's quad IS its framing, so the shape's
+// position and size are the only handles it has and they move everything in it
+// together. (It was four types until 2026-09-04, when the intro card and the
+// contact panel stopped being shapes here at all.)
 //
 // WHAT IS PAINTED HERE IS A PREVIEW, NOT THE SHOW. Muralista reads no song
 // content - no lyrics, no translations, no taglines, no media - so a lyrics
-// slot paints the dummy line, a video slot paints its own extent, and an intro
-// paints its real title (the one thing gig.json is allowed to give up) with
-// stand-ins for the two parts that live in the song file. Every stand-in SAYS
-// it is one on the wall. A preview that flatters is not a preview.
+// slot paints the dummy line and a video slot paints its own extent. Every
+// stand-in SAYS it is one on the wall. A preview that flatters is not a
+// preview.
 
 // The types that are dressed after mounting rather than built complete: their
 // content depends on the quad's proportions (and, for the intro, on which song
 // is being previewed), neither of which a factory can read.
 function typeIsDressed(type) {
-  return typeTakesTextFormatting(type) || type === "song-intro" || type === "gig-contact" || type === "song-video";
+  return typeTakesTextFormatting(type) || type === "song-video";
 }
 
 // The layout box's width for any dressed type. The three unformatted ones take
@@ -7481,15 +7412,6 @@ function dressedLayerKey(shape, layer, boxWidth) {
     case "text":
     case "song-lyrics":
       return textLayerKey(layer, boxWidth);
-    case "song-intro":
-      // The previewed title is in here, so switching songs in song visual
-      // setup re-fits the card - a longer title breaks to more lines and the
-      // whole block resizes with it, which is exactly what the auto-fit is for.
-      return JSON.stringify(["intro", outputPreviewTitle(), boxWidth]);
-    case "gig-contact": {
-      const fields = sanitizeContactLayer(layer);
-      return JSON.stringify(["contact", fields.text, resolveMediaUrl(fields.qrSrc) || "", boxWidth]);
-    }
     case "song-video":
       return JSON.stringify(["song-video", shape.name, boxWidth]);
     default:
@@ -7499,8 +7421,6 @@ function dressedLayerKey(shape, layer, boxWidth) {
 
 function dressLayer(box, shape, layer, boxWidth) {
   if (typeTakesTextFormatting(layer.type)) applyTextLayer(box, layer, boxWidth);
-  else if (layer.type === "song-intro") applySongIntroLayer(box, boxWidth);
-  else if (layer.type === "gig-contact") applyGigContactLayer(box, layer, boxWidth);
   else if (layer.type === "song-video") applySongVideoLayer(box, shape, boxWidth);
 }
 
@@ -7586,118 +7506,10 @@ function applySongVideoLayer(box, shape, boxWidth) {
   label.style.fontSize = `${0.07 * UNIT_SIZE}px`;
 }
 
-// --- song-intro -------------------------------------------------------------
-
-function createSongIntroLayerElement(shape) {
-  const box = document.createElement("div");
-  box.className = "layer-box";
-
-  const panel = document.createElement("div");
-  panel.className = "layer-intro";
-
-  const block = document.createElement("div");
-  block.className = "intro-block";
-
-  // Rule and annotation share one line - see the SONG INTRO TEMPLATE comment.
-  const head = document.createElement("div");
-  head.className = "intro-head";
-  const rule = document.createElement("span");
-  rule.className = "intro-rule";
-  const annotation = document.createElement("span");
-  annotation.className = "intro-annotation";
-  head.append(rule, annotation);
-
-  const title = document.createElement("div");
-  title.className = "intro-title";
-
-  const tagline = document.createElement("div");
-  tagline.className = "intro-tagline";
-
-  block.append(head, title, tagline);
-  panel.appendChild(block);
-  box.appendChild(panel);
-  return box;
-}
-
-function applySongIntroLayer(box, boxWidth) {
-  const panel = box.querySelector(".layer-intro");
-  const block = box.querySelector(".intro-block");
-  if (!panel || !block) return;
-
-  const { insetX, insetY } = layOutScaledBox(panel, boxWidth, INTRO_INSET);
-
-  // TWO OF THE THREE ARE STAND-INS AND SAY SO. The title is the only part
-  // gig.json can honestly supply; the translation and the tagline live in the
-  // song file, which is below Muralista's line.
-  block.querySelector(".intro-annotation").textContent = INTRO_PLACEHOLDER.annotation;
-  block.querySelector(".intro-title").textContent = outputPreviewTitle();
-  block.querySelector(".intro-tagline").textContent = INTRO_PLACEHOLDER.tagline;
-
-  fitScaledBlock(panel, block, "--t", INTRO_TITLE_MAX_SIZE * UNIT_SIZE, insetX, insetY);
-}
-
-// --- gig-contact ------------------------------------------------------------
-// One line, plus a QR code if a file was named for one. Laid out in the same
-// ink vocabulary as the intro, because they are the two things the wall says in
-// its own voice rather than the song's.
-
-function createGigContactLayerElement(shape) {
-  const box = document.createElement("div");
-  box.className = "layer-box";
-
-  const panel = document.createElement("div");
-  panel.className = "layer-contact";
-
-  const block = document.createElement("div");
-  block.className = "contact-block";
-
-  const qr = document.createElement("img");
-  qr.className = "contact-qr";
-  qr.alt = "";
-  qr.hidden = true;
-
-  const line = document.createElement("div");
-  line.className = "contact-line";
-
-  block.append(qr, line);
-  panel.appendChild(block);
-
-  // Same contract as every other layer: a shape with nothing in it says so ON
-  // THE OUTPUT, because an invisible shape at a projector sends you debugging
-  // the warp instead of the field you left empty.
-  const note = document.createElement("div");
-  note.className = "layer-note";
-  note.hidden = true;
-  note.textContent = `${shape.name}\nno contact line set`;
-
-  box.append(panel, note);
-  return box;
-}
-
-function applyGigContactLayer(box, layer, boxWidth) {
-  const fields = sanitizeContactLayer(layer);
-  const panel = box.querySelector(".layer-contact");
-  const block = box.querySelector(".contact-block");
-  const note = box.querySelector(".layer-note");
-  if (!panel || !block) return;
-
-  note.hidden = fields.text.trim() !== "" || !!fields.qrSrc;
-
-  const { insetX, insetY } = layOutScaledBox(panel, boxWidth, INTRO_INSET);
-
-  const qr = block.querySelector(".contact-qr");
-  const qrUrl = fields.qrSrc ? resolveMediaUrl(fields.qrSrc) : null;
-  qr.hidden = !qrUrl;
-  if (qrUrl) qr.src = qrUrl;
-  else qr.removeAttribute("src");
-
-  block.querySelector(".contact-line").textContent = fields.text;
-
-  // The QR is sized off the same `--t` as the line, so shrinking the block to
-  // fit a small panel shrinks both together. A QR that outgrew its text would
-  // be the one thing here that stops being scannable.
-  fitScaledBlock(panel, block, "--t", CONTACT_MAX_SIZE * UNIT_SIZE, insetX, insetY);
-}
+// **THE INTRO CARD AND THE CONTACT PANEL ARE NOT PAINTED HERE ANY MORE** (2026-09-04). Both
+// stopped being shape types; Pregonero renders them into a shape that already exists. Their
+// builders, their painters, the numbers they fitted against and their stand-in strings all went
+// with them, along with `.layer-intro` / `.layer-contact` in mapper.css.
 
 // 1000x1000 canvas: numbered grid + brighter center crosshair + the
 // shape's name + numbered corner markers 1-4 matching the nudge keys and

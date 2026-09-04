@@ -2866,9 +2866,14 @@ function flowIndex(step) {
  */
 function goToFlowStep(step) {
   if (step === FLOW_SHAPES) seedDefaultLayout();
+  const arriving = step === FLOW_OUTPUT && flowStep !== FLOW_OUTPUT;
   flowStep = step;
   if (flowIndex(step) > flowIndex(flowReached)) flowReached = step;
   renderControl();
+  // **THE CAPTURE IS TAKEN ON ARRIVAL**, which is the 2026-09-04 ruling made literal: the
+  // photograph is always current rather than a stale picture of an earlier mapping. Un-awaited —
+  // it renders itself when it lands, and the screen is already correct without it.
+  if (arriving) void enterOutput();
 }
 
 /**
@@ -3028,6 +3033,7 @@ async function captureStage() {
     renderControl();
     return;
   }
+  setStagePhoto(null);
   flowBusy = true;
   flowCaptureStatus = "Capturing…";
   renderControl();
@@ -3036,19 +3042,17 @@ async function captureStage() {
     if (!canvas) throw new Error("the camera gave no frame to capture");
     const blob = await canvasToPngBlob(canvas);
     if (!blob) throw new Error("the frame could not be encoded");
+    // **The screen IS the photograph**, so it is painted before anything is said about it.
+    setStagePhoto(blob);
     if (canWriteVisuals()) {
       await writeStageFile(blob);
       // **Offerable from this moment**, without a reload: the file this window
       // just wrote is the file the Backdrop dropdown looks for.
       stageCapturePresent = true;
-      flowCaptureStatus =
-        "Stage captured, through the calibration, and saved as " +
-        STAGE_FILE_NAME +
-        " with the gig. It is now a Backdrop source, in 1 SHAPES.";
+      flowCaptureStatus = "Photographed through the calibration, and saved with the gig.";
     } else {
       downloadBlob(blob, STAGE_FILE_NAME);
-      flowCaptureStatus =
-        "Stage captured, through the calibration. There is no gig to save it into, so it was downloaded.";
+      flowCaptureStatus = "Photographed through the calibration, and downloaded — there is no gig to save it into.";
     }
   } catch (err) {
     console.warn("Muralista: the stage capture failed.", err);
@@ -3092,7 +3096,12 @@ async function flowSaveToGig() {
   flowSaveStatus = "";
   renderControl();
   await writeVisualsFile();
-  flowSaveStatus = visualsWriteError || "";
+  // **The success is said, not left blank.** It used to be, because the panel built its own
+  // sentence from `visualsWrittenAt` when it rendered; that panel is gone and this is the only
+  // place left that knows a write just happened.
+  flowSaveStatus = visualsWriteError
+    ? visualsWriteError
+    : "Saved " + VISUALS_FILE_NAME + " with the gig at " + new Date().toLocaleTimeString() + ".";
   flowBusy = false;
   renderControl();
 }
@@ -3122,11 +3131,50 @@ function renderFlow() {
   // remounted video. Only the panel beside it changes.
   document.querySelector(".main-layout").hidden = !(onShapes || onOutput);
   document.getElementById("shapes-sidebar").hidden = !onShapes;
-  document.getElementById("flow-output").hidden = !onOutput;
+  // **`2 OUTPUT` IS THE PHOTOGRAPH AND NOTHING ELSE** (Jorge, 2026-09-04). The canvas, the
+  // backdrop and the live camera all belong to the mapping; showing them here made this screen
+  // read as SHAPES with a different sidebar, which is why the walk did not notice it had changed.
+  document.querySelector(".preview-box").classList.toggle("showing-photo", onOutput);
+  document.getElementById("flow-photo").hidden = !onOutput || stagePhotoUrl === null;
 
-  if (onOutput) renderFlowOutput();
+  // P6c: the toolbar belongs to `1 SHAPES` only — there is nothing to play or open on the deal or
+  // on the output, and the output has just closed the window the toolbar would have opened.
+  document.getElementById("header-actions").hidden = !onShapes;
+
+  renderFlowFooter();
   renderStandaloneActions();
   announceFlowStep();
+}
+
+/**
+ * **ONE FOOTER, ONE PLACE, EVERY STEP** (Jorge, 2026-09-04). Outside every panel, bottom-right.
+ *
+ * **The deal and the shapes each carry the control that leaves them.** `2 OUTPUT` carries one only
+ * when nobody else is carrying it: **in a gig the embedder's forward control writes the room on its
+ * way out**, so a `Save to gig` beside it would be the two-control trap this round exists to remove.
+ * Standalone there is no forward control at all, and this is how a room is saved.
+ */
+function renderFlowFooter() {
+  const inGig = canWriteVisuals();
+  const show = (id, on) => {
+    const el = document.getElementById(id);
+    el.hidden = !on;
+    el.disabled = flowBusy;
+  };
+  show("btn-flow-deal-next", flowStep === FLOW_DEAL);
+  show("btn-flow-to-output", flowStep === FLOW_SHAPES);
+  show("btn-flow-save-gig", flowStep === FLOW_OUTPUT && inGig && !isEmbedded());
+  show("btn-flow-download", flowStep === FLOW_OUTPUT && !inGig);
+
+  // The status of whatever the footer's control last did, beside it — the only place left for it
+  // now that `2 OUTPUT` has no panel.
+  const status = document.getElementById("flow-footer-status");
+  const message =
+    flowStep === FLOW_OUTPUT
+      ? visualsReadError || flowSaveStatus || flowCaptureStatus || visualsWriteError || ""
+      : "";
+  status.hidden = !message;
+  status.textContent = message;
 }
 
 /**
@@ -3146,6 +3194,72 @@ function renderFlow() {
 function renderStandaloneActions() {
   const el = document.getElementById("standalone-actions");
   if (el) el.hidden = canWriteVisuals();
+}
+
+/** Whether this page is drawn inside somebody else's. Standalone, `window.parent === window`. */
+function isEmbedded() {
+  return window.parent !== window;
+}
+
+/**
+ * **The output window this tab opened**, held so it can be closed again.
+ *
+ * `window.open("", "mapper-output")` would find it by name — and would CREATE a blank one when
+ * there is none, which is the opposite of closing it. A reference is the only way to close a
+ * window that may not exist.
+ */
+let outputWindow = null;
+
+/** P6d: entering `2 OUTPUT` closes it. A window nobody is looking at is not a second opinion. */
+function closeOutputWindow() {
+  if (outputWindow && !outputWindow.closed) {
+    try {
+      outputWindow.close();
+    } catch (err) {
+      console.warn("Muralista: could not close the output window.", err);
+    }
+  }
+  outputWindow = null;
+}
+
+/**
+ * **THE ONE THING THIS TOOL IS TOLD BY ITS EMBEDDER, AND IT IS AN INSTRUCTION, NOT DATA.**
+ *
+ * `save` — write the room to the gig, and say whether it worked. It exists because **the control
+ * that leaves must be the control that writes** (Jorge, 2026-09-04): two controls where one leaves
+ * and the other saves is a trap even when both work, and in a gig the leaving control belongs to
+ * the embedder. So `Save to gig` comes off that screen and this arrives in its place.
+ *
+ * **Nothing about the room crosses in either direction.** One word in, one boolean plus this tool's
+ * own status sentence out — the same sentence it would have printed beside its own button. No
+ * shapes, no geometry, no gig, no song, no file contents. **The line, and it is the line for any
+ * future message: this tool may be told what to do with its own state and may report its own
+ * outcome; it may never report the work.**
+ *
+ * **Only the embedder is obeyed**, and only when there is one: `event.source` must be
+ * `window.parent`, and standalone that is this window, so nothing can talk to it at all.
+ */
+function handleEmbedderMessage(event) {
+  if (!isEmbedded() || event.source !== window.parent) return;
+  const data = event.data;
+  if (!data || data.muralista !== "save") return;
+  void (async () => {
+    // **A refusal is reported, never reported as a success.** `flowSaveToGig` returns early when
+    // there is nowhere to write, and an unchanged `visualsWriteError` would read as *saved*.
+    if (!canWriteVisuals()) {
+      window.parent.postMessage(
+        { muralista: "save-result", ok: false, reason: "There is no gig folder to write into." },
+        "*"
+      );
+      return;
+    }
+    await flowSaveToGig();
+    const ok = !visualsWriteError;
+    window.parent.postMessage(
+      { muralista: "save-result", ok, reason: ok ? null : visualsWriteError },
+      "*"
+    );
+  })();
 }
 
 /**
@@ -3197,36 +3311,56 @@ function renderFlowSteps() {
   });
 }
 
-function renderFlowOutput() {
-  const capture = document.getElementById("btn-flow-capture");
-  const captureBlocked = stageCaptureBlocker();
-  capture.disabled = !!captureBlocked || flowBusy;
-  const captureStatus = document.getElementById("flow-capture-status");
-  const captureText = flowCaptureStatus || captureBlocked || "";
-  captureStatus.hidden = !captureText;
-  captureStatus.textContent = captureText;
+/**
+ * **ARRIVING AT `2 OUTPUT`.** Two rules, both settled 2026-09-04, and both here rather than behind
+ * a button — the button is the thing that crept back in.
+ *
+ * **P6d: the output window closes.** The wall is about to be photographed and the screen is about
+ * to show that photograph; a live output window is a second answer to the same question, and one
+ * of them is a window nobody is looking at.
+ *
+ * **Capture only when a calibrated camera is live.** At the venue, arriving takes the picture. At
+ * home, against a saved `stage.png` with no camera, there is nothing to take, so the saved one is
+ * shown instead — **never overwrite a good venue capture with nothing**, because the home session
+ * is precisely the one that would otherwise destroy it silently.
+ */
+async function enterOutput() {
+  closeOutputWindow();
+  const blocked = stageCaptureBlocker();
+  if (blocked === null) {
+    await captureStage();
+    return;
+  }
+  // No camera to take one with. Show what the gig already holds, and say so plainly if it holds
+  // nothing — a screen whose whole content is a photograph has to account for an absent one.
+  await showSavedStageCapture(blocked);
+}
 
-  const save = document.getElementById("btn-flow-save-gig");
-  const canSave = canWriteVisuals();
-  save.disabled = !canSave || flowBusy;
-  // Standalone gets a download instead, and it is offered rather than
-  // substituted: a gig that is connected can have both.
-  document.getElementById("btn-flow-download").hidden = canSave;
+/** The photograph as an object URL, revoked when it is replaced. Never persisted: it is a view. */
+let stagePhotoUrl = null;
 
-  const status = document.getElementById("flow-save-status");
-  const message = visualsReadError
-    ? visualsReadError
-    : flowSaveStatus
-    ? flowSaveStatus
-    : !canSave
-      ? "No gig is connected, so there is nowhere to save. Download the file and put it beside the gig's gig.json yourself."
-      : visualsWriteError
-        ? visualsWriteError
-        : visualsWrittenAt
-          ? "Saved " + VISUALS_FILE_NAME + " with the gig at " + visualsWrittenAt.toLocaleTimeString() + "."
-          : "";
-  status.hidden = !message;
-  status.textContent = message;
+function setStagePhoto(blob) {
+  if (stagePhotoUrl) URL.revokeObjectURL(stagePhotoUrl);
+  stagePhotoUrl = blob ? URL.createObjectURL(blob) : null;
+  const img = document.getElementById("flow-photo");
+  if (!img) return;
+  if (stagePhotoUrl) img.src = stagePhotoUrl;
+  else img.removeAttribute("src");
+}
+
+async function showSavedStageCapture(whyNoCamera) {
+  let blob = null;
+  try {
+    blob = await readStageBlob();
+  } catch (err) {
+    console.warn("Muralista: could not read " + STAGE_FILE_NAME + ".", err);
+  }
+  setStagePhoto(blob);
+  stageCapturePresent = blob !== null;
+  flowCaptureStatus = blob
+    ? "The stage capture saved with this gig. " + whyNoCamera
+    : "No picture of the stage yet. " + whyNoCamera;
+  renderControl();
 }
 
 /**
@@ -3273,7 +3407,10 @@ function renderControl() {
 // it did not resolve in, where the person configuring is already looking.
 function renderMediaFolderControls() {
   const section = document.getElementById("media-folder-section");
-  if (mediaFolderState === "unsupported") {
+  // P6b: HOSTED, THE FOLDER WAS ANSWERED AT FIRST RUN (Jorge, 2026-09-04). Pregonero resolves every
+  // name through it and this tool never reads one; asking again here is a second answer to a
+  // settled question, and a second answer that cannot be right.
+  if (mediaFolderState === "unsupported" || isHostedGig()) {
     section.hidden = true;
     return;
   }
@@ -3336,7 +3473,10 @@ function renderGigControls() {
   document.getElementById("btn-gig-folder").hidden = hosted;
   document.getElementById("btn-gig-folder").textContent = label ? "Change gig folder…" : "Choose gig folder…";
   document.getElementById("btn-gig-folder-reconnect").hidden = hosted || gigFolderState !== "reconnect";
-  document.getElementById("btn-gig-reload").hidden = gigFolderState !== "granted";
+  // P6b: HOSTED, YOU ARRIVED FROM THE GIG FLOW, which had just read the folder (Jorge,
+  // 2026-09-04). Re-reading it by hand is a leftover from the tool being pointed at a folder
+  // yourself. Standalone it stays, because there the folder can change under you.
+  document.getElementById("btn-gig-reload").hidden = hosted || gigFolderState !== "granted";
   document.getElementById("btn-gig-folder-clear").hidden = hosted || !label;
 
   const status = document.getElementById("gig-status");
@@ -6105,16 +6245,23 @@ function wireControlEvents() {
     // the next click re-navigates the named output window onto it.
     const url = "mapper.html?output&v=" + encodeURIComponent(window.MURALISTA_BUILD);
     const win = window.open(url, "mapper-output");
+    outputWindow = win || null;
     if (win) {
       // If the named window already exists (possibly behind other windows or
       // on another display), window.open only re-navigates it - bring it
       // forward so the click never looks like a no-op.
       win.focus();
     } else {
+      // **The refusal is not always Chrome's** (2026-09-04). Embedded, the embedder's own
+      // window-open handler is what answers first, and Pregonero's denied everything but its
+      // projection window until `v0.55.0` — so the address-bar advice was wrong copy in the one
+      // place a person could not act on it. Say which it was.
       window.alert(
-        "Chrome blocked the output window popup.\n\n" +
-          "Click the blocked-popup icon at the right end of the address bar " +
-          "and allow popups for localhost, then try again."
+        isEmbedded()
+          ? "The output window was refused by the application this page is running inside."
+          : "Chrome blocked the output window popup.\n\n" +
+              "Click the blocked-popup icon at the right end of the address bar " +
+              "and allow popups for localhost, then try again."
       );
     }
   });
@@ -6175,9 +6322,9 @@ function wireControlEvents() {
   // --- The flow. ---
   document.getElementById("btn-flow-deal-next").addEventListener("click", () => goToFlowStep(FLOW_SHAPES));
   document.getElementById("btn-flow-to-output").addEventListener("click", () => goToFlowStep(FLOW_OUTPUT));
-  document.getElementById("btn-flow-capture").addEventListener("click", () => void captureStage());
   document.getElementById("btn-flow-save-gig").addEventListener("click", () => void flowSaveToGig());
   document.getElementById("btn-flow-download").addEventListener("click", flowDownloadVisuals);
+  window.addEventListener("message", handleEmbedderMessage);
 }
 
 function initControl() {

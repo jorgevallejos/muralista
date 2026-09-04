@@ -83,7 +83,10 @@
   <div id="control-root" class="control-root" hidden>
     <header class="header-bar">
       <h1>Muralista</h1>
-      <div class="header-actions">
+      <!-- P6c: THE TOOLBAR BELONGS TO `1 SHAPES` ONLY (Jorge, 2026-09-04). There is nothing to
+           play and nothing to open on the deal or on the output — the output is a photograph, and
+           entering it closes the output window rather than offering to open one. -->
+      <div class="header-actions" id="header-actions">
         <div class="transport-group">
           <button id="btn-play" type="button" title="Play all video layers">&#9654; Play</button>
           <button id="btn-pause" type="button" title="Pause all video layers">&#9208; Pause</button>
@@ -136,47 +139,21 @@
             are.</p>
         </div>
       </div>
-      <div class="flow-actions">
-        <button id="btn-flow-deal-next" type="button">Continue</button>
-      </div>
     </section>
 
     <div class="main-layout">
-      <!-- 2 OUTPUT. Named for doing: the preview on the left uses MURALISTA'S OWN
-           DUMMY CONTENT and never reaches for the setlist, and the actions here
-           are the capture and the save.
+      <!-- 2 OUTPUT HAS NO PANEL, and that is the ruling as designed (Jorge, 2026-09-04, said
+           for the second time). **The stage picture IS the result** — no second preview, no detail
+           beside it — and a panel had crept back in carrying a capture button and a save. It is
+           also why the walk did not notice the screen had changed: OUTPUT looked like SHAPES with a
+           different sidebar.
 
-           THE LEDES CAME OFF (Jorge, 2026-09-04): "they are making more noise than anything".
-           Labels only, on this panel and in the sidebar beside it, adding back only what proves
-           necessary. What survives is a sentence that reports a FACT ABOUT RIGHT NOW — a status,
-           or the reason a control is shut. What went is every sentence that explained how
-           something works. -->
-      <aside class="sidebar flow-output-panel" id="flow-output" hidden>
-        <div class="sidebar-header">
-          <h2>Output</h2>
-        </div>
-        <div class="sidebar-section">
-          <div class="sidebar-header">
-            <h2>Stage capture</h2>
-          </div>
-          <div class="backdrop-controls">
-            <button id="btn-flow-capture" type="button">Capture the stage</button>
-          </div>
-          <p id="flow-capture-status" class="camera-status"></p>
-        </div>
+           **The capture is taken on arrival**, so the photograph is always current rather than a
+           stale picture of an earlier mapping, and **a home session with no camera never overwrites
+           a good venue capture** — it shows the saved one instead. Both rules were designed on
+           2026-09-04 and are in `initFlow`'s sibling, `enterOutput`.
 
-        <div class="sidebar-section">
-          <div class="sidebar-header">
-            <h2>Save</h2>
-          </div>
-          <div class="backdrop-controls">
-            <button id="btn-flow-save-gig" type="button">Save to gig</button>
-            <button id="btn-flow-download" type="button" hidden>Download visuals.json</button>
-          </div>
-          <p id="flow-save-status" class="visuals-status"></p>
-        </div>
-      </aside>
-
+           What is left on this screen is the photograph and the page's own footer. -->
       <aside class="sidebar" id="shapes-sidebar">
         <!-- One list, because there is one kind of thing on the wall. A
              shape that holds black is a shape whose layer type is "fill", so
@@ -208,6 +185,10 @@
           <div class="backdrop-controls">
             <button id="btn-gig-folder" type="button">Choose gig folder&hellip;</button>
             <button id="btn-gig-folder-reconnect" type="button" hidden>Reconnect gig folder</button>
+            <!-- P6b: `Reload from the gig folder` IS A STANDALONE CONTROL (Jorge, 2026-09-04).
+                 Hosted, you arrived here from the gig flow, which had just read the folder — a
+                 button to re-read it is a leftover from the tool being pointed at a folder by hand.
+                 It stays standalone, where the folder can change under you. -->
             <!-- **It reloads BOTH files since 2026-09-03**, because the handed-in
                  visuals.json is the record for this gig and re-reading the folder
                  means re-reading the folder. The label says so: `Reload gig.json`
@@ -263,6 +244,10 @@
              (Chrome only) - without it every name falls back to the served
              directory silently, and a dead control is worse than no control.
              See MEDIA FOLDER in mapper.js. -->
+        <!-- P6b: THE MEDIA FOLDER IS A STANDALONE QUESTION (Jorge, 2026-09-04). Hosted, the
+             visuals folder was answered at first run and Pregonero resolves every name through it;
+             asking again here is a second answer to a settled question. Standalone it is the only
+             way a name becomes bytes, so it stays. -->
         <div class="sidebar-section" id="media-folder-section" hidden>
           <div class="sidebar-header">
             <h2>Media folder</h2>
@@ -323,25 +308,16 @@
             <p id="camera-status" class="camera-status"></p>
           </div>
         </div>
-        <!-- THE WAY OUT OF 1 SHAPES, and it had to be built with `1 LAYOUT` gone
-             (2026-09-04). `Keep the default` was the only thing that ever advanced
-             `flowReached` to the output; `Adjust it` left it at the shapes with the
-             output cell dimmed, which nobody hit because nobody took that branch to
-             the end. With one path left, that dead end is the only path.
-
-             A CONTROL, NOT AN ENABLED BAR CELL. Pregonero's gig flow learned the same
-             thing on the walk before this one: clicking a step's name is too subtle to
-             be the way through a flow. Same arrow, same vocabulary, and the deal's
-             `Continue` is the sibling of it one screen up. -->
-        <div class="sidebar-section flow-actions-section">
-          <div class="flow-actions">
-            <button id="btn-flow-to-output" type="button">To the output &rarr;</button>
-          </div>
-        </div>
       </aside>
 
       <main class="preview-area">
         <div class="preview-box">
+          <!-- THE PHOTOGRAPH, AND IT IS THE WHOLE OF `2 OUTPUT`. The capture is a picture of the
+               shapes lit on the actual wall, taken through the calibration — the one screen in this
+               tool where nothing is simulated. It sits inside the same box the canvas uses, so it
+               is framed at the output's own aspect and nothing about the layout moves between the
+               two steps. -->
+          <img id="flow-photo" class="flow-photo" alt="The stage, photographed through the calibrated camera" hidden>
           <img id="preview-backdrop" class="preview-backdrop" alt="" hidden>
           <!-- Live camera backdrop. Rectified into output space by a matrix3d
                built from project.cameraQuad (see CAMERA BACKDROP in mapper.js);
@@ -356,6 +332,29 @@
         </div>
       </main>
     </div>
+
+    <!-- P4: THE PAGE'S OWN FOOTER, AND THE FORWARD CONTROL LIVES IN IT (Jorge, 2026-09-04).
+         **The problem was never *left*** — Bombista's `Process song →` is bottom-left and has never
+         been missed. It was that `To the output →` sat at the foot of a tall column of controls and
+         read as one more panel item. Outside every panel, bottom-right, the same place on every
+         step of this flow and of Pregonero's, so the eye learns one place.
+
+         **The status sits beside it rather than in a panel**, because with `2 OUTPUT`'s sidebar
+         gone there is nowhere else for the outcome of the control next to it to be said. -->
+    <footer class="flow-footer" id="flow-footer">
+      <p class="flow-footer-status" id="flow-footer-status"></p>
+      <div class="flow-footer-actions">
+        <button id="btn-flow-deal-next" type="button" hidden>Continue &rarr;</button>
+        <button id="btn-flow-to-output" type="button" hidden>To the output &rarr;</button>
+        <!-- P2: `Save to gig` IS STANDALONE'S CONTROL NOW (Jorge, 2026-09-04). In a gig the
+             forward control writes the room on its way out, because two controls where one leaves
+             and the other writes is a trap even when both work — the second time that shape has
+             appeared, after `Save the gig →`. Standalone there is no forward control, so this is
+             how a room is saved at all. -->
+        <button id="btn-flow-save-gig" type="button" hidden>Save to gig</button>
+        <button id="btn-flow-download" type="button" hidden>Download visuals.json</button>
+      </div>
+    </footer>
   </div>
 
   <!-- ============ OUTPUT ROLE (?output) ============ -->

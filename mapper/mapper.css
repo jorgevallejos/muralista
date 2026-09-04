@@ -259,6 +259,7 @@ button.danger:hover {
 
 .main-layout {
   flex: 1;
+  min-height: 0;
   display: flex;
   min-height: 0;
 }
@@ -772,10 +773,33 @@ button.danger:hover {
   min-width: 0;
 }
 
+/* `2 OUTPUT` IS THE PHOTOGRAPH. It sits in the same box the canvas uses, at the output's own
+   aspect, so nothing about the layout moves between the two steps — and everything belonging to
+   the mapping is hidden under it rather than drawn on top of a picture of the finished wall. */
+.flow-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.preview-box.showing-photo #preview-svg,
+.preview-box.showing-photo #preview-backdrop,
+.preview-box.showing-photo #preview-camera {
+  display: none;
+}
+
 .preview-box {
   position: relative;
   width: 100%;
   max-width: 1100px;
+  /* BOUNDED BY THE SHORTER SIDE, not only by width. `aspect-ratio` with a width cap alone makes a
+     1100-wide box 619 tall in a 591-tall area, so it overflowed above and below — invisible on the
+     canvas, where the overflow is empty margin, and unmissable on `2 OUTPUT`, where the box IS the
+     photograph and *fills the screen* is the whole of the screen's design. */
+  max-height: 100%;
   aspect-ratio: 16 / 9;
   background: #000;
   border: 1px solid var(--border);
@@ -1474,14 +1498,34 @@ body.role-output {
   color: var(--text);
 }
 
-.flow-actions {
+/* THE PAGE'S OWN FOOTER (Jorge, 2026-09-04). Outside every panel, bottom-right, the same place on
+   every step of this flow and of Pregonero's — so the eye learns one place instead of hunting the
+   foot of whichever column is tallest. The problem was never *left*: Bombista's `Process song →` is
+   bottom-left and has never been missed. It was that the control sat INSIDE a panel. */
+.flow-footer {
+  flex-shrink: 0;
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
 }
 
-/* The shapes screen's own way onward, at the foot of its sidebar where the last
-   thing on a screen goes. */
-.flow-actions-section .flow-actions {
-  padding: 0 16px;
+/* The outcome of the control beside it, and the only place left for it now that `2 OUTPUT` has no
+   panel. It takes the slack so the control stays pinned right whatever the sentence's length. */
+.flow-footer-status {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.flow-footer-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 

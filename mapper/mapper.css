@@ -1565,6 +1565,67 @@ body.role-output {
    that the control sat INSIDE a panel, at the foot of a tall column, and read as one more item in
    it. **The divider is what fixes that**, and it is already here: `border-top`, full width, with
    the control below every panel rather than inside one. */
+/* CONDITIONAL VISIBILITY, and the three costs it is paid at (Jorge, 2026-09-04).
+
+   **The sentence** is authored on the shape it affects, because sentences read correctly to
+   non-technical authors where field/operator/value grids do not. It wraps rather than overflowing:
+   a shape name can be long, and this row sits in a narrow column. */
+.condition-sentence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.condition-sentence select {
+  min-width: 0;
+}
+
+.condition-word {
+  color: var(--text-dim);
+}
+
+/* **The permanent mark**, small and under the type badge, naming what this shape depends on —
+   Keynote's build-order principle: an invisible property needs a visible one, and a badge naming
+   the dependency beats a mark that only says one exists. */
+.preview-condition-badge {
+  fill: var(--accent);
+  font-family: var(--font-label);
+  font-size: 15px;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.7);
+  stroke-width: 4;
+}
+
+.preview-condition-badge.dark-for-song {
+  opacity: 0.35;
+}
+
+/* **The overlay, on request.** CAD's constraint overlay; the anti-pattern is a node editor's
+   permanent wires over a photograph of a wall. Dashed and thin, so it reads as annotation. */
+.preview-dependency-link {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
+  opacity: 0.85;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+#btn-show-dependencies.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* A refusal about a shape, where the shapes are. */
+.shape-status {
+  margin: 8px 16px 0;
+  color: var(--danger);
+  line-height: 1.4;
+}
+
 /* B1: the mode says itself in words, beside a canvas that says it by having no handles. */
 .song-setup-mode {
   margin: 0 0 10px;

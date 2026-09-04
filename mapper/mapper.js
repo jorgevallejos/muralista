@@ -717,7 +717,70 @@ function sanitizeContactLayer(layer) {
 // UI offers one shape per type for now, so real files contain sets of size one
 // naturally; a hand-edited visuals.json listing two already works.
 function emptySongVisuals() {
-  return { defaults: {}, songs: {} };
+  return { defaults: {}, songs: {}, assets: {} };
+}
+
+/**
+ * **WHAT A SONG PUTS IN A SHAPE — a new field, and not the map beside it.**
+ *
+ * `songs[songId]` answers *which shape of this kind does this song use*, which is REASSIGNMENT.
+ * `assets[songId]` answers *what does this song put in that shape*, which is CONTENT. They look
+ * alike and are not: one moves a song onto a different quad, the other fills a quad it already has.
+ *
+ * **Keyed by SHAPE ID, never by type.** The resolver returns a SET of shapes per type — two shapes
+ * showing one song's video is how a corner gets spanned — and keying by type would cap that at one,
+ * which is precisely the rule this repo has written down twice: no code may depend on the authoring
+ * UI happening to offer one.
+ *
+ * **A NAME, NEVER A PATH.** The same rule the media folder has always had: the mapping stores the
+ * name and the folder is a fact about the machine. That is what lets a gig folder be handed over on
+ * a stick, and it is why the hosted listing was worth building rather than working around.
+ *
+ * **Empty is the default and means DARK for that song**, which is the sentence this suite already
+ * has: a shape is a place that can hold content, not a thing that is on. A song with no animation
+ * sets nothing, and setting nothing is free.
+ */
+function sanitizeSongAssets(value) {
+  const src = value && typeof value === "object" ? value : {};
+  const out = {};
+  Object.keys(src).forEach((songId) => {
+    if (!songId) return;
+    const entry = src[songId];
+    if (!entry || typeof entry !== "object") return;
+    const map = {};
+    Object.keys(entry).forEach((shapeId) => {
+      const name = entry[shapeId];
+      // A name, so anything carrying a separator is refused rather than repaired: a path here would
+      // be a fact about one machine written into a file built to travel.
+      if (!shapeId || typeof name !== "string") return;
+      const trimmed = name.trim();
+      if (!trimmed || trimmed.includes("/") || trimmed.includes("\\")) return;
+      map[shapeId] = trimmed;
+    });
+    if (Object.keys(map).length) out[songId] = map;
+  });
+  return out;
+}
+
+/** What this song puts in this shape, or null. The one reader, so there is one answer. */
+function songAssetFor(proj, songId, shapeId) {
+  if (!songId || !shapeId) return null;
+  const assets = projectSongVisuals(proj).assets || {};
+  const entry = assets[songId];
+  return (entry && entry[shapeId]) || null;
+}
+
+function setSongAsset(songId, shapeId, name) {
+  if (!songId || !shapeId) return;
+  const sv = ensureSongVisuals();
+  if (!sv.assets || typeof sv.assets !== "object") sv.assets = {};
+  const entry = sv.assets[songId] || {};
+  const trimmed = typeof name === "string" ? name.trim() : "";
+  if (trimmed) entry[shapeId] = trimmed;
+  else delete entry[shapeId];
+  if (Object.keys(entry).length) sv.assets[songId] = entry;
+  else delete sv.assets[songId];
+  commitProjectChange();
 }
 
 // An id list, defaulted and de-duplicated. NO LENGTH CAP - see above.
@@ -759,6 +822,7 @@ function sanitizeSongVisuals(value) {
   return {
     defaults: sanitizeAssignmentMap(src.defaults, SONG_AWARE_TYPES),
     songs,
+    assets: sanitizeSongAssets(src.assets),
   };
 }
 
@@ -1383,6 +1447,7 @@ function ensureSongVisuals() {
   }
   if (!project.songVisuals.defaults) project.songVisuals.defaults = {};
   if (!project.songVisuals.songs) project.songVisuals.songs = {};
+  if (!project.songVisuals.assets) project.songVisuals.assets = {};
   return project.songVisuals;
 }
 
@@ -1872,6 +1937,7 @@ async function syncResolvedMedia() {
 // cleared). The project did not change, so no state message: the output
 // re-renders off the media message alone.
 async function refreshMediaForFolderChange() {
+  void refreshVisualsFolderNames();
   await syncResolvedMedia();
   broadcastMedia();
   renderControl();
@@ -2065,6 +2131,84 @@ function isHostedGig() {
   return hostedGigBase !== null;
 }
 
+/**
+ * **WHERE THE HOST KEEPS THE VISUALS, WHEN THERE IS A HOST.**
+ *
+ * **A cross-origin frame cannot open a directory picker.** Chromium refuses outright —
+ * *Cross origin sub frames aren't allowed to show a file picker* — and unlike the camera there is
+ * no permissions-policy token that opens it. So hosted, this tool cannot go and get the folder; the
+ * host hands it over as a mount, and a `GET` on that mount's root answers with the names in it.
+ *
+ * **Same shape and same refusal as `?gig=`**: a RELATIVE url naming a mount. A scheme or a
+ * protocol-relative host would carry the host's identity into this file, and there is one right
+ * shape here — anything else is a mistake worth failing on rather than sanitising.
+ *
+ * **Standalone this is null and nothing changes**: the directory handle and `showDirectoryPicker`
+ * work at top level, and they are the mechanism this mirrors rather than replaces. **Either way the
+ * mapping stores a NAME**, which is the whole reason the two can be one mechanism at all.
+ */
+const hostedMediaBase = readHostedMediaBase();
+
+function readHostedMediaBase() {
+  const raw = new URLSearchParams(window.location.search).get("media");
+  if (!raw) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("//")) {
+    console.warn("Muralista: the visuals endpoint must be a relative URL. Ignoring:", raw);
+    return null;
+  }
+  try {
+    return new URL(raw.endsWith("/") ? raw : raw + "/", window.location.href);
+  } catch (err) {
+    console.warn("Muralista: could not read the visuals endpoint.", err);
+    return null;
+  }
+}
+
+function isHostedMedia() {
+  return hostedMediaBase !== null;
+}
+
+function hostedMediaUrl(fileName) {
+  return new URL(encodeURIComponent(fileName), hostedMediaBase).href;
+}
+
+/**
+ * The names the visuals folder holds — the host's listing, or the directory handle's own entries.
+ * **One list, two sources**, so the picker below has one shape to render.
+ */
+let visualsFolderNames = [];
+
+async function refreshVisualsFolderNames() {
+  const before = visualsFolderNames.join("\u0000");
+  visualsFolderNames = await readVisualsFolderNames();
+  if (visualsFolderNames.join("\u0000") !== before) renderControl();
+}
+
+async function readVisualsFolderNames() {
+  if (isHostedMedia()) {
+    try {
+      const res = await fetch(hostedMediaBase.href, { cache: "no-store" });
+      if (!res.ok) return [];
+      const body = await res.json();
+      return Array.isArray(body && body.names) ? body.names.filter((n) => typeof n === "string") : [];
+    } catch (err) {
+      console.warn("Muralista: could not read the visuals folder.", err);
+      return [];
+    }
+  }
+  if (!mediaFolderHandle || mediaFolderState !== "granted") return [];
+  try {
+    const names = [];
+    for await (const [name, entry] of mediaFolderHandle.entries()) {
+      if (entry.kind === "file" && !name.startsWith(".")) names.push(name);
+    }
+    return names.sort();
+  } catch (err) {
+    console.warn("Muralista: could not list the visuals folder.", err);
+    return [];
+  }
+}
+
 function hostedGigUrl(fileName) {
   return new URL(fileName, hostedGigBase).href;
 }
@@ -2228,6 +2372,9 @@ async function refreshGig() {
     visualSetupSongId = null;
     visualSetupMode = "gig";
   }
+  // The names the picker offers. Un-awaited: it re-renders itself when it lands, and a dropdown is
+  // not worth holding a gig load up for.
+  void refreshVisualsFolderNames();
   broadcastState(); // the preview song rides the state message
   renderControl();
 }
@@ -2684,17 +2831,22 @@ function previewSongId() {
   return visualSetupMode === "song" && gigConnected() ? visualSetupSongId : null;
 }
 
-function setVisualSetupMode(mode) {
-  visualSetupMode = mode === "song" ? "song" : "gig";
-  if (visualSetupMode === "song" && !gigSongById(visualSetupSongId) && gig && gig.songs.length) {
-    visualSetupSongId = gig.songs[0].id;
-  }
-  broadcastState();
-  renderControl();
-}
-
+/**
+ * **ONE SELECTOR, AND THE EMPTY VALUE IS `All`** (Jorge, 2026-09-04). It replaced a mode picker
+ * beside a song picker — two controls saying one thing, where the first only ever enabled the
+ * second.
+ *
+ * **Picking a song is what makes the canvas assignment-only**, and clearing the shape selection is
+ * part of that: a shape panel left open would offer geometry the mode does not have.
+ */
 function setVisualSetupSong(songId) {
-  visualSetupSongId = gigSongById(songId) ? songId : null;
+  const found = gigSongById(songId);
+  visualSetupSongId = found ? songId : null;
+  visualSetupMode = found ? "song" : "gig";
+  if (found) {
+    selectedShapeId = null;
+    clearShapeSubselection();
+  }
   broadcastState();
   renderControl();
 }
@@ -3527,22 +3679,31 @@ function renderGigControls() {
 }
 
 function renderVisualSetup() {
-  const modeSelect = document.getElementById("select-visual-setup-mode");
-  modeSelect.value = visualSetupMode;
-
+  const songRow = document.getElementById("visual-setup-song-row");
+  const songSelect = document.getElementById("select-visual-setup-song");
   const gigBlock = document.getElementById("gig-assignments");
   const songBlock = document.getElementById("song-setup");
-  // **1 SHAPES IS GIG LEVEL ONLY** (2026-09-03). The mode picker is shut and
-  // the song half with it, so the screen carries the room's shapes and their
-  // types and nothing per-song. `visualSetupMode` stays a real variable and the
-  // song machinery stays correct - this defers the screen, it does not delete
-  // the model underneath it.
-  const inSong = false;
+
+  // The list is the gig's own, which this tool already reads. `All` first, because `All` is the
+  // room and the room is what you arrive to work on.
+  const songs = gigConnected() ? gig.songs : [];
+  songRow.hidden = songs.length === 0;
+  songSelect.innerHTML = "";
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "All — the room";
+  songSelect.appendChild(all);
+  songs.forEach((song) => {
+    const opt = document.createElement("option");
+    opt.value = song.id;
+    opt.textContent = song.title;
+    songSelect.appendChild(opt);
+  });
+  songSelect.value = previewSongId() || "";
+
+  const inSong = previewSongId() !== null;
   gigBlock.hidden = inSong;
   songBlock.hidden = !inSong;
-
-  const hint = document.getElementById("visual-setup-hint");
-  hint.textContent = "";
 
   if (inSong) renderSongSetup(songBlock);
   else renderGigAssignments(gigBlock);
@@ -3559,34 +3720,93 @@ function renderGigAssignments(container) {
   });
 }
 
+/**
+ * **WHAT THIS SONG PUTS IN EACH SHAPE**, one row per shape the song can fill.
+ *
+ * **Assignment only**, which the header says out loud: the canvas has no handles in this mode, so
+ * a row here can never move a quad. **Never per-song geometry** — a song holding its own
+ * coordinates is silently wrong on stage after the room is remapped.
+ *
+ * **A `song-video` shape offers the visuals folder; a `song-lyrics` shape needs nothing chosen** —
+ * the words come from the song file at render time through Pregonero, and Muralista never sees
+ * them. **Empty means that shape stays dark for this song**, and empty is the default: a song with
+ * no animation sets nothing, and this screen has to make that the effortless case rather than a
+ * form to be cleared.
+ */
 function renderSongSetup(container) {
-  const songSelect = document.getElementById("select-visual-setup-song");
-  songSelect.innerHTML = "";
-  gig.songs.forEach((song) => {
-    const opt = document.createElement("option");
-    opt.value = song.id;
-    opt.textContent = song.title;
-    songSelect.appendChild(opt);
-  });
-  songSelect.value = visualSetupSongId || "";
+  const songId = previewSongId();
+  const mode = document.getElementById("song-setup-mode");
+  const song = gigSongById(songId);
+  mode.textContent = song
+    ? `Assignment only — what ${song.title} puts in each shape. The room's shapes are not moved here.`
+    : "";
 
   const rows = document.getElementById("song-assignments");
   rows.innerHTML = "";
-  const songId = visualSetupSongId;
   if (!songId) return;
 
-  const sv = projectSongVisuals(project);
-  // gig-contact is missing from this list and its absence is the rule: the
-  // contact panel is a gig-level fact, so there is no per-song row for it.
-  SONG_REASSIGNABLE_TYPES.forEach((type) => {
-    const deviates = !!(sv.songs[songId] && sv.songs[songId][type]);
-    const current = deviates ? resolveShapesForType(project, type, songId) : [];
-    const fallback = resolveShapesForType(project, type, null);
-    const fallbackLabel = fallback.length ? `Same as the gig (${fallback[0].name})` : "Same as the gig (none)";
-    rows.appendChild(
-      buildAssignmentRow(type, fallbackLabel, current, (ids) => setSongAssignment(songId, type, ids))
-    );
+  const fillable = project.surfaces.filter((shape) => {
+    const type = shapeType(shape);
+    return type === "song-video" || type === "song-lyrics";
   });
+  if (fillable.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "layer-hint";
+    empty.textContent = "No song shapes in this room yet.";
+    rows.appendChild(empty);
+    return;
+  }
+  fillable.forEach((shape) => rows.appendChild(buildSongAssetRow(shape, songId)));
+}
+
+/** One shape, and what this song puts in it. A picker for a video; a statement for lyrics. */
+function buildSongAssetRow(shape, songId) {
+  const row = document.createElement("div");
+  row.className = "assignment-row";
+
+  const label = document.createElement("label");
+  label.textContent = shape.name;
+  row.appendChild(label);
+
+  if (shapeType(shape) === "song-lyrics") {
+    // **Nothing to choose, and saying so is the point.** The words arrive from the song file
+    // through Pregonero; this tool never sees them and must not look as though it could.
+    const said = document.createElement("span");
+    said.className = "layer-hint";
+    said.textContent = "The song's own words.";
+    row.appendChild(said);
+    return row;
+  }
+
+  const select = document.createElement("select");
+  const current = songAssetFor(project, songId, shape.id);
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "Nothing — dark for this song";
+  select.appendChild(none);
+  const names = [...visualsFolderNames];
+  // A name the folder no longer holds is still shown, and marked: dropping it would silently
+  // unassign a song's video because a drive was not plugged in.
+  if (current && !names.includes(current)) names.unshift(current);
+  names.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = visualsFolderNames.includes(name) ? name : `${name} — not in the folder`;
+    select.appendChild(opt);
+  });
+  select.value = current || "";
+  select.addEventListener("change", (e) => setSongAsset(songId, shape.id, e.target.value));
+  row.appendChild(select);
+
+  if (visualsFolderNames.length === 0) {
+    const why = document.createElement("span");
+    why.className = "layer-hint";
+    why.textContent = isHostedMedia()
+      ? "The visuals folder is empty."
+      : "Choose a media folder below to pick from it.";
+    row.appendChild(why);
+  }
+  return row;
 }
 
 // One row: a type, and which shape of that type serves it. The empty option
@@ -3793,6 +4013,12 @@ function renderPreview() {
 
   project.surfaces.filter((shape) => shape.visible).forEach((shape) => renderShapePreview(svg, shape));
 
+  // **ASSIGNMENT ONLY WHILE A SONG IS PICKED** (Jorge, 2026-09-04). The handles disappear, because
+  // you cannot drag what has no handle — and **never per-song geometry** is the ruling underneath
+  // it: a song holding its own coordinates is silently wrong on stage after the room is remapped.
+  // The header on the panel says so in words; this is the same statement in the canvas.
+  if (previewSongId() !== null) return;
+
   // Handles for the selected shape go last, so they sit above every shape's
   // body rather than being buried under whatever paints after it.
   const selected = getSelectedShape();
@@ -3907,8 +4133,11 @@ function renderShapePreview(svg, shape) {
     body.style.opacity = String(0.82 * (layer.opacity ?? 1));
     applyMarginStroke(body, fields.margin, PREVIEW_H);
   }
-  // Click-to-select + whole-shape drag in one gesture.
-  body.addEventListener("pointerdown", (e) => startShapeDrag(e, svg, shape));
+  // Click-to-select + whole-shape drag in one gesture — and neither in assignment mode, where the
+  // canvas is a picture of the room rather than the room being drawn.
+  if (previewSongId() === null) {
+    body.addEventListener("pointerdown", (e) => startShapeDrag(e, svg, shape));
+  }
   svg.appendChild(body);
 
   const edge = document.createElementNS(SVG_NS, "polygon");
@@ -6355,9 +6584,6 @@ function wireControlEvents() {
   // window is open. Re-reading it is one click rather than a reload.
   document.getElementById("btn-gig-reload").addEventListener("click", refreshGig);
 
-  document
-    .getElementById("select-visual-setup-mode")
-    .addEventListener("change", (e) => setVisualSetupMode(e.target.value));
   document
     .getElementById("select-visual-setup-song")
     .addEventListener("change", (e) => setVisualSetupSong(e.target.value));

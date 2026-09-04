@@ -203,30 +203,30 @@
           <p id="gig-error" class="media-folder-failures" hidden></p>
 
           <div id="gig-setup" hidden>
-            <!-- GIG LEVEL ONLY (2026-09-03). 1 SHAPES is the room's shapes and
-                 each one's type; song visual setup is deferred entirely, so the
-                 mode picker and the song half below are shut rather than
-                 removed - the machinery is still right and is not being torn
-                 out on the way past. -->
-            <div class="backdrop-controls" id="visual-setup-mode-row" hidden>
-              <label class="backdrop-mode">Visual setup
-                <select id="select-visual-setup-mode">
-                  <option value="gig">Gig &mdash; the room</option>
-                  <option value="song">Song &mdash; a deviation</option>
-                </select>
-              </label>
+            <!-- B1: ONE SELECTOR, AND `All` IS THE ROOM (Jorge, 2026-09-04). It replaced a
+                 mode picker plus a song picker — two controls saying one thing — and it starts at
+                 `All`, which is full editing exactly as before.
+
+                 **PICKING A SONG SWITCHES TO ASSIGNMENT ONLY.** The handles disappear, because you
+                 cannot drag what has no handle, and the header says so: a canvas that behaves
+                 differently depending on a dropdown is a silent mode otherwise.
+
+                 **NEVER PER-SONG GEOMETRY.** A song holding its own coordinates is silently wrong
+                 on stage the moment the room is remapped. Standing ruling, not a preference — what
+                 a song sets is what it PUTS IN a shape, never where the shape is. -->
+            <div class="assignment-row" id="visual-setup-song-row" hidden>
+              <label for="select-visual-setup-song">Song</label>
+              <select id="select-visual-setup-song"></select>
             </div>
 
             <!-- Gig visual setup: which shape of each kind serves every song. -->
             <div id="gig-assignments" class="setup-rows" hidden></div>
 
-            <!-- Song visual setup: the ONE place a song picker exists. A shape
-                 does not belong to a song; a song points at a shape. -->
+            <!-- Song visual setup: what this song puts in each shape. Empty is the default and
+                 means that shape stays dark for this song — a song with no animation sets nothing,
+                 and setting nothing is free. -->
             <div id="song-setup" class="song-setup" hidden>
-              <div class="assignment-row">
-                <label for="select-visual-setup-song">Song</label>
-                <select id="select-visual-setup-song"></select>
-              </div>
+              <p class="song-setup-mode" id="song-setup-mode"></p>
               <div id="song-assignments"></div>
             </div>
 

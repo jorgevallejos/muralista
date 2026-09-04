@@ -1565,6 +1565,13 @@ body.role-output {
    that the control sat INSIDE a panel, at the foot of a tall column, and read as one more item in
    it. **The divider is what fixes that**, and it is already here: `border-top`, full width, with
    the control below every panel rather than inside one. */
+/* B1: the mode says itself in words, beside a canvas that says it by having no handles. */
+.song-setup-mode {
+  margin: 0 0 10px;
+  color: var(--accent);
+  line-height: 1.4;
+}
+
 .flow-footer {
   flex-shrink: 0;
   display: flex;

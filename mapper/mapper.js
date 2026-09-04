@@ -1717,6 +1717,38 @@ function commitProjectChange() {
 
 const channel = new BroadcastChannel("mapper");
 
+/**
+ * **THE OUTPUT WINDOW IS IN A DIFFERENT STORAGE PARTITION WHEN THIS PAGE IS FRAMED, SO THE
+ * BROADCAST CHANNEL CANNOT REACH IT** (found 2026-09-04, walking Pregonero `v0.60.0`).
+ *
+ * The window opened, took `role-output`, and stayed black: `Play` and `Show white` never arrived.
+ * **Measured rather than guessed** — both documents report the SAME ORIGIN, a value written to
+ * `localStorage` in this page is `null` in that one, and a `postMessage` on the window handle
+ * arrives. **Chromium partitions storage by TOP-LEVEL SITE**: framed inside Pregonero this page's
+ * top-level site is the host's `file://` document, while the output window is its own top-level
+ * `127.0.0.1`. `BroadcastChannel` is storage. It does not cross.
+ *
+ * **The camera's family a fourth time: something that worked until the tool moved into a frame.**
+ *
+ * **So every message goes out on BOTH**, and the window handle is the one that works when framed.
+ * The channel stays because standalone it is the only route to a window opened by hand — a second
+ * tab on `?output`, which has no opener. **Double delivery is made harmless rather than avoided**:
+ * every message carries a `seq`, and the output applies each one once.
+ */
+let outboundSeq = 0;
+
+function postToOutput(message) {
+  const stamped = { ...message, seq: ++outboundSeq };
+  channel.postMessage(stamped);
+  if (outputWindow && !outputWindow.closed) {
+    try {
+      outputWindow.postMessage(stamped, "*");
+    } catch (err) {
+      console.warn("Muralista: could not post to the output window.", err);
+    }
+  }
+}
+
 // `preview` is UI state, not project state, and it rides the state message
 // rather than living in the project because it must NEVER be saved: which song
 // somebody was looking at on Tuesday is not a fact about the room, and a
@@ -1727,7 +1759,7 @@ const channel = new BroadcastChannel("mapper");
 // business being handed the gig to find one in.
 function broadcastState() {
   const song = gigSongById(previewSongId());
-  channel.postMessage({
+  postToOutput({
     kind: "state",
     project,
     preview: song ? { songId: song.id, songTitle: song.title } : null,
@@ -1759,7 +1791,7 @@ function broadcastState() {
 function broadcastMedia() {
   const entries = [];
   resolvedMedia.forEach((rec, src) => entries.push({ src, token: rec.token, blob: rec.blob }));
-  channel.postMessage({ kind: "media", entries, nonce: Date.now() });
+  postToOutput({ kind: "media", entries, nonce: Date.now() });
 }
 
 // Transport message shape (structure only — consumers land in slice 3 when
@@ -1768,7 +1800,7 @@ function broadcastMedia() {
 // (the lyric-translator's storage-event lesson applies to BroadcastChannel
 // too: don't rely on "value changed" semantics for command messages).
 function broadcastTransport(action) {
-  channel.postMessage({ kind: "transport", action, nonce: Date.now() });
+  postToOutput({ kind: "transport", action, nonce: Date.now() });
 }
 
 // Control-side memory of the last transport command sent, so a late-joining
@@ -1791,7 +1823,7 @@ function handleTransportButton(action) {
 let whiteFieldOn = false;
 
 function broadcastWhiteField() {
-  channel.postMessage({ kind: "whiteField", on: whiteFieldOn, nonce: Date.now() });
+  postToOutput({ kind: "whiteField", on: whiteFieldOn, nonce: Date.now() });
 }
 
 function toggleWhiteField() {
@@ -1807,7 +1839,7 @@ function toggleWhiteField() {
 // load and on every resize; always carries a nonce per project convention,
 // though this consumer reads current w/h directly rather than diffing.
 function broadcastOutputSize() {
-  channel.postMessage({ kind: "outputSize", w: window.innerWidth, h: window.innerHeight, nonce: Date.now() });
+  postToOutput({ kind: "outputSize", w: window.innerWidth, h: window.innerHeight, nonce: Date.now() });
 }
 
 function handleControlMessage(event) {
@@ -1834,14 +1866,22 @@ function handleControlMessage(event) {
       // to 0, so a last action of 'restart' is re-sent as 'play' - this is
       // the only place 'restart' semantics are altered for a joiner.
       const action = lastTransport === "restart" ? "play" : lastTransport;
-      channel.postMessage({ kind: "transport", action, nonce: Date.now() });
+      postToOutput({ kind: "transport", action, nonce: Date.now() });
     }
   } else if (msg.kind === "outputSize" && typeof msg.w === "number" && typeof msg.h === "number") {
     outputSize = { w: msg.w, h: msg.h };
   }
 }
 
+/** Every `seq` is applied once. Both routes carry the same message, and both may arrive. */
+let lastAppliedSeq = 0;
+
 function handleOutputMessage(event) {
+  const stamp = event && event.data && event.data.seq;
+  if (typeof stamp === "number") {
+    if (stamp <= lastAppliedSeq) return;
+    lastAppliedSeq = stamp;
+  }
   const msg = event.data;
   if (!msg || typeof msg !== "object") return;
   if (msg.kind === "state" && isValidProject(msg.project)) {
@@ -2297,8 +2337,21 @@ function isHostedMedia() {
   return hostedMediaBase !== null;
 }
 
+/**
+ * **A name may be a RELATIVE PATH now** (Jorge, 2026-09-04): the listing recurses, because a real
+ * visuals folder keeps its animations one level down in a per-song directory and a root-only
+ * listing offered a README.
+ *
+ * **Each segment is encoded on its own, and the separators are left alone.** `encodeURIComponent`
+ * on the whole string turns `/` into `%2F`, which asks the mount for one file with a slash in its
+ * name — a 404 that looks exactly like a missing file.
+ */
 function hostedMediaUrl(fileName) {
-  return new URL(encodeURIComponent(fileName), hostedMediaBase).href;
+  const encoded = String(fileName)
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return new URL(encoded, hostedMediaBase).href;
 }
 
 /**
@@ -2327,15 +2380,42 @@ async function readVisualsFolderNames() {
   }
   if (!mediaFolderHandle || mediaFolderState !== "granted") return [];
   try {
-    const names = [];
-    for await (const [name, entry] of mediaFolderHandle.entries()) {
-      if (entry.kind === "file" && !name.startsWith(".")) names.push(name);
-    }
-    return names.sort();
+    // **Standalone walks the same way the host's listing does**, with the same filter and the same
+    // caps — the whole argument for the listing existing is that the two cases work by ONE
+    // mechanism, and a hosted picker richer than the standalone one would break exactly that.
+    return (await walkFolderForAssets(mediaFolderHandle, "", 0)).sort();
   } catch (err) {
     console.warn("Muralista: could not list the visuals folder.", err);
     return [];
   }
+}
+
+/** What a shape can hold. The same families the host's listing offers, kept in step by hand. */
+const ASSET_EXTENSIONS = [
+  ".mp4", ".mov", ".webm", ".m4v", ".mkv",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif",
+];
+
+const ASSET_MAX_DEPTH = 4;
+
+function isAssetName(name) {
+  const dot = name.lastIndexOf(".");
+  return dot !== -1 && ASSET_EXTENSIONS.includes(name.slice(dot).toLowerCase());
+}
+
+async function walkFolderForAssets(handle, prefix, depth) {
+  if (depth >= ASSET_MAX_DEPTH) return [];
+  const found = [];
+  for await (const [name, entry] of handle.entries()) {
+    if (name.startsWith(".")) continue;
+    const rel = prefix === "" ? name : `${prefix}/${name}`;
+    if (entry.kind === "directory") {
+      found.push(...(await walkFolderForAssets(entry, rel, depth + 1)));
+    } else if (isAssetName(name)) {
+      found.push(rel);
+    }
+  }
+  return found;
 }
 
 function hostedGigUrl(fileName) {
@@ -3144,10 +3224,16 @@ const DEFAULT_CONTACT = [
   [0.62, 0.94],
 ];
 
+/**
+ * **THE NAMES, AND `Frame` WAS AMBIGUOUS** (Jorge, 2026-09-04): the projector's frame, or the
+ * video's? **The pair names itself now** — `Video frame` is the animation and `Video lyrics` are
+ * the words at its foot, so reading one tells you what the other is. `Song lyrics` is the words
+ * filling the frame when there is no animation. Sentence case, like every other label in the suite.
+ */
 const DEFAULT_LAYOUT = [
-  { type: "song-video", name: "Frame", key: "video" },
-  { type: "song-lyrics", name: "Lyrics at the foot", corners: DEFAULT_FOOT, when: "filled" },
-  { type: "song-lyrics", name: "Lyrics across the frame", when: "empty" },
+  { type: "song-video", name: "Video frame", key: "video" },
+  { type: "song-lyrics", name: "Video lyrics", corners: DEFAULT_FOOT, when: "filled" },
+  { type: "song-lyrics", name: "Song lyrics", when: "empty" },
   { type: "song-intro", name: "Intro", corners: DEFAULT_CORNER },
   { type: "gig-contact", name: "Contact", corners: DEFAULT_CONTACT },
 ];
@@ -4134,6 +4220,22 @@ function renderShapeList() {
     if (openShapeId === shape.id) {
       const panel = document.createElement("div");
       panel.className = "shape-accordion";
+      /**
+       * **THE ACCORDION SWALLOWS THE ROW'S CLICK, AND THIS IS WHY ITS FIELDS COULD NOT BE TYPED
+       * IN** (Jorge, 2026-09-04, walking Pregonero `v0.60.0`).
+       *
+       * **It was not the drag.** `draggable` is on the grip alone and always was, so a mousedown on
+       * a field never reached a drag handler. **It was the row's own `click`**: it calls
+       * `selectShape`, which calls `renderControl`, which rebuilds this whole list — **so clicking
+       * into a field destroyed the field, mid-click.** Focus had nowhere to land.
+       *
+       * **Stopped at the accordion, not on each input**, because a per-input fix is a rule nobody
+       * will remember for the next control added here: the accordion is the editor and the row is
+       * the selector, and the boundary between them is one place. `pointerdown` goes with `click`
+       * so a drag-select inside a textarea does not start one either.
+       */
+      panel.addEventListener("click", (e) => e.stopPropagation());
+      panel.addEventListener("pointerdown", (e) => e.stopPropagation());
       buildShapeAccordion(panel, shape, songId);
       row.appendChild(panel);
     }
@@ -6456,6 +6558,13 @@ function wireControlEvents() {
 function initControl() {
   document.getElementById("control-root").hidden = false;
   channel.addEventListener("message", handleControlMessage);
+  // The output's `hello` arrives on the handle when this page is framed, for the same partition
+  // reason `postToOutput` exists. `handleEmbedderMessage` owns the parent's messages; this owns
+  // the output window's, and the two sources cannot be confused because they are different windows.
+  window.addEventListener("message", (event) => {
+    if (!outputWindow || event.source !== outputWindow) return;
+    handleControlMessage(event);
+  });
   wireControlEvents();
   // Keydown on the whole document (not a specific element) so nudging works
   // no matter what's focused in the control window, short of a text input.
@@ -7705,6 +7814,13 @@ function toggleFullscreen() {
 function initOutput() {
   document.getElementById("output-root").hidden = false;
   channel.addEventListener("message", handleOutputMessage);
+  // **The window handle is the route that works when the control page is framed** — see
+  // `postToOutput`. Only the opener is believed: any page can post to a window, and this one
+  // paints a wall.
+  window.addEventListener("message", (event) => {
+    if (window.opener && event.source !== window.opener) return;
+    handleOutputMessage(event);
+  });
   window.addEventListener("resize", () => {
     renderOutput();
     broadcastOutputSize();
@@ -7715,7 +7831,17 @@ function initOutput() {
   window.addEventListener("dblclick", toggleFullscreen);
 
   renderOutput();
+  // **`hello` goes back the way it came.** The channel reaches a control page that is not framed;
+  // the opener reaches the one that is, and it is the same handshake either way — the control
+  // answers with the room, the media and the white plate's state.
   channel.postMessage({ kind: "hello" });
+  if (window.opener) {
+    try {
+      window.opener.postMessage({ kind: "hello" }, "*");
+    } catch (err) {
+      console.warn("Muralista: could not greet the opener.", err);
+    }
+  }
   broadcastOutputSize();
 }
 

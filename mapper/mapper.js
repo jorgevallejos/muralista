@@ -1580,15 +1580,6 @@ function handleTransportButton(action) {
   broadcastTransport(action);
 }
 
-// Control -> output: flash each visible surface's name/id on the output
-// window for a couple seconds so Jorge can tell which physical surface is
-// which while standing at the wall. Always carries a changing nonce (project
-// convention) so the output treats every click as a fresh trigger, even if
-// somehow the same millisecond repeats.
-function broadcastIdentify() {
-  channel.postMessage({ kind: "identify", nonce: Date.now() });
-}
-
 // Control -> output: raise or drop a full-frame white plate on the output
 // window. This exists for the camera backdrop's calibration step - the edge
 // of the projector's lit rectangle can only be marked if the projector is
@@ -1664,8 +1655,6 @@ function handleOutputMessage(event) {
     renderOutput();
   } else if (msg.kind === "media" && Array.isArray(msg.entries)) {
     applyMediaMessage(msg.entries);
-  } else if (msg.kind === "identify") {
-    showIdentifyOverlay();
   } else if (msg.kind === "whiteField" && typeof msg.on === "boolean") {
     setOutputWhiteField(msg.on);
   } else if (msg.kind === "countdown") {
@@ -2750,12 +2739,28 @@ import { stageSampler } from "./stageCapture.js";
 // =========================================================================
 // THE FLOW
 // =========================================================================
-// FOUR STEPS OVER THE TOOL THAT WAS ALWAYS HERE:
+// THREE CELLS OVER THE TOOL THAT WAS ALWAYS HERE:
 //
-//   THE DEAL  ·  1 LAYOUT  ·  2 SHAPES  ·  3 OUTPUT
+//   THE DEAL  ·  1 SHAPES  ·  2 OUTPUT
 //
-// Step 2 IS the canvas as it exists today, untouched. The flow adds a way in
+// 1 SHAPES IS the canvas as it exists today, untouched. The flow adds a way in
 // and a way out; it does not add a second tool.
+//
+// `1 LAYOUT` WAS REMOVED ON 2026-09-04, and it is not to be reinstated.
+// It offered *keep the default, or customise* — but CUSTOM STARTS FROM THE
+// DEFAULT, ALREADY PLACED, so both answers produced the same room and the only
+// difference was whether you then edited it. A screen with no real choice on it
+// is why it could not explain itself.
+//
+// AND THE SKIP WAS WRONG. `Keep the default` sent you straight to the output; a
+// gig whose songs have video still has to reach the shapes to assign them. The
+// skip was designed when the output screen still carried a preview, and it did
+// not survive that screen becoming the photograph.
+//
+// SO THE DEFAULT IS SIMPLY WHAT IS THERE WHEN YOU ARRIVE AT THE SHAPES, and you
+// edit it or you do not. Nothing else about the default changed: Muralista still
+// writes a real `visuals.json` from `2 OUTPUT`, because nothing is written on
+// behalf of a tool that did not run.
 //
 // THE DEAL IS NOT MERGED WITH SCREEN 1, and that is the whole reason it is a
 // separate cell. A deal states cost and gift ONCE; screen 1 asks a question
@@ -2772,29 +2777,21 @@ import { stageSampler } from "./stageCapture.js";
 // rule, arrived at the same way: `it stays reachable` reads as unconditional,
 // so the cell sits in the bar on every screen rather than only while it is due.
 //
-// STANDALONE WITH NO GIG SKIPS SCREEN 1, because no gig means no songs and the
-// default has nothing to act on. That is the question NOT ARISING - it is not
-// the screen moving to Pregonero, and the 02/09 ruling is untouched: the
-// default belongs to Muralista, and nothing is ever written on behalf of a
-// tool that did not run.
-//
-// 3 OUTPUT IS NAMED FOR DOING, and it was Jorge's correction. That screen is
+// 2 OUTPUT IS NAMED FOR DOING, and it was Jorge's correction. That screen is
 // where you take the picture and save the room; `preview` implies looking
-// only. It also makes the two flows rhyme, since Bombista's step 3 is the same
-// role under the same name.
+// only. It also makes the two flows rhyme, since Bombista's last step is the
+// same role under the same name.
 
 const FLOW_DEAL = "deal";
-const FLOW_LAYOUT = "layout";
 const FLOW_SHAPES = "shapes";
 const FLOW_OUTPUT = "output";
 
 // The bar, in order. `THE DEAL` carries no number because it is not one of the
-// three - it is the thing you agree to before the three start.
+// two - it is the thing you agree to before the two start.
 const FLOW_STEPS = [
   { key: FLOW_DEAL, n: null, label: "THE DEAL" },
-  { key: FLOW_LAYOUT, n: 1, label: "LAYOUT" },
-  { key: FLOW_SHAPES, n: 2, label: "SHAPES" },
-  { key: FLOW_OUTPUT, n: 3, label: "OUTPUT" },
+  { key: FLOW_SHAPES, n: 1, label: "SHAPES" },
+  { key: FLOW_OUTPUT, n: 2, label: "OUTPUT" },
 ];
 
 // THE DEFAULT ROOM, and it is two shapes rather than three.
@@ -2853,23 +2850,22 @@ function mappingAlreadyExists() {
   return Array.isArray(project.surfaces) && project.surfaces.length > 0;
 }
 
-/** Screen 1 has nothing to act on with no gig behind it - see the section comment. */
-function flowLayoutApplies() {
-  return gigConnected();
-}
-
-/** Where `Continue` on the deal goes. */
-function flowAfterDeal() {
-  return flowLayoutApplies() ? FLOW_LAYOUT : FLOW_SHAPES;
-}
-
-const FLOW_ORDER = [FLOW_DEAL, FLOW_LAYOUT, FLOW_SHAPES, FLOW_OUTPUT];
+const FLOW_ORDER = [FLOW_DEAL, FLOW_SHAPES, FLOW_OUTPUT];
 
 function flowIndex(step) {
   return FLOW_ORDER.indexOf(step);
 }
 
+/**
+ * THE ONE WAY BETWEEN SCREENS, and the one place the default is put down.
+ *
+ * `seedDefaultLayout` only ever seeds an EMPTY room, so this is idempotent: a
+ * room somebody has worked on is never replaced, and arriving at the shapes
+ * with nothing in them gives you the default already placed — which is the whole
+ * of what `1 LAYOUT` used to ask about.
+ */
 function goToFlowStep(step) {
+  if (step === FLOW_SHAPES) seedDefaultLayout();
   flowStep = step;
   if (flowIndex(step) > flowIndex(flowReached)) flowReached = step;
   renderControl();
@@ -2900,41 +2896,8 @@ function seedDefaultLayout() {
   return true;
 }
 
-/** Why `Keep the default` is shut, or null when it is not. */
-function keepDefaultBlocker() {
-  if (project.surfaces.length > 0) {
-    return "This room already has shapes in it. Keeping the default would replace them, so it does not: adjust what is there in 2 SHAPES.";
-  }
-  if (!canWriteVisuals()) {
-    return "There is no gig to write into. Connect one, or adjust the layout and save from 3 OUTPUT.";
-  }
-  return null;
-}
-
 function canWriteVisuals() {
   return gigFolderState === "granted" && (!!gigFolderHandle || isHostedGig());
-}
-
-/**
- * KEEP THE DEFAULT. MURALISTA writes the file - which is the 02/09 ruling made
- * literal: the default belongs to this tool, so this tool is what puts it on
- * disk, and nothing is written on behalf of a tool that did not run.
- */
-async function flowKeepDefault() {
-  if (keepDefaultBlocker() || flowBusy) return;
-  flowBusy = true;
-  renderControl();
-  seedDefaultLayout();
-  await writeVisualsFile();
-  flowSaveStatus = visualsWriteError || "";
-  flowBusy = false;
-  goToFlowStep(FLOW_OUTPUT);
-}
-
-/** ADJUST IT. The same shapes, on the canvas. Custom does not start empty. */
-function flowAdjust() {
-  seedDefaultLayout();
-  goToFlowStep(FLOW_SHAPES);
 }
 
 // -------------------------------------------------------------------------
@@ -2973,13 +2936,13 @@ const STAGE_CAPTURE_HEIGHT = 900;
 /** Why the capture is shut, or null. The same three conditions the adopt gesture has. */
 function stageCaptureBlocker() {
   // EVERY ONE OF THESE NAMES THE SCREEN THE CONTROL IS ON. The camera lives in
-  // 2 SHAPES's sidebar, which is not this screen, and a requirement stated with
+  // 1 SHAPES's sidebar, which is not this screen, and a requirement stated with
   // nowhere to go is the dead end this suite has a rule about. The bar is one
   // press away; the sentence has to say which press.
-  if (!isCameraMode()) return "Set Backdrop → Source to Live camera, in 2 SHAPES, first.";
-  if (!isCameraEnabled()) return "Enable the camera in 2 SHAPES first.";
+  if (!isCameraMode()) return "Set Backdrop → Source to Live camera, in 1 SHAPES, first.";
+  if (!isCameraEnabled()) return "Enable the camera in 1 SHAPES first.";
   if (!isValidQuad(project.cameraQuad)) {
-    return "Calibrate the camera in 2 SHAPES first. The capture is taken through that calibration, into output space - without it there is nothing to map through.";
+    return "Calibrate the camera in 1 SHAPES first. The capture is taken through that calibration, into output space - without it there is nothing to map through.";
   }
   return null;
 }
@@ -3081,7 +3044,7 @@ async function captureStage() {
       flowCaptureStatus =
         "Stage captured, through the calibration, and saved as " +
         STAGE_FILE_NAME +
-        " with the gig. It is now a Backdrop source, in 2 SHAPES.";
+        " with the gig. It is now a Backdrop source, in 1 SHAPES.";
     } else {
       downloadBlob(blob, STAGE_FILE_NAME);
       flowCaptureStatus =
@@ -3150,12 +3113,10 @@ function renderFlow() {
   renderFlowSteps();
 
   const onDeal = flowStep === FLOW_DEAL;
-  const onLayout = flowStep === FLOW_LAYOUT;
   const onShapes = flowStep === FLOW_SHAPES;
   const onOutput = flowStep === FLOW_OUTPUT;
 
   document.getElementById("flow-deal").hidden = !onDeal;
-  document.getElementById("flow-layout").hidden = !onLayout;
   // The canvas element itself is NEVER moved or unmounted - the camera's
   // matrix3d is built from its measured size, and a remounted preview is a
   // remounted video. Only the panel beside it changes.
@@ -3163,18 +3124,64 @@ function renderFlow() {
   document.getElementById("shapes-sidebar").hidden = !onShapes;
   document.getElementById("flow-output").hidden = !onOutput;
 
-  if (onLayout) renderFlowLayout();
   if (onOutput) renderFlowOutput();
+  renderStandaloneActions();
+  announceFlowStep();
+}
+
+/**
+ * EXPORT AND IMPORT ARE STANDALONE'S ONLY PORTABILITY, AND THEY ARE OFF IN A GIG
+ * (Jorge, 2026-09-04).
+ *
+ * **In a gig, an import would silently override the gig's own `visuals.json`**,
+ * which contradicts *the handed-in file always wins* — the ruling this tool
+ * shipped in `v1.9.0`. So they are not there to be pressed.
+ *
+ * **Standalone they are load-bearing and were kept for it.** With no gig folder
+ * the local store is a browser's, and `visuals.json` is the *emitted room*
+ * rather than the project — no camera calibration, no backdrop, no media folder
+ * name — so a downloaded one is not a way to move a project to another machine.
+ * These two are.
+ */
+function renderStandaloneActions() {
+  const el = document.getElementById("standalone-actions");
+  if (el) el.hidden = canWriteVisuals();
+}
+
+/**
+ * WHICH OF MURALISTA'S OWN SCREENS IS SHOWING, SAID OUT LOUD TO WHOEVER IS
+ * EMBEDDING IT — and that is the whole of it.
+ *
+ * **It exists because an outer flow's forward control must not be visible from
+ * inside this one** (Jorge, 2026-09-04). Pregonero draws `To the check →` around
+ * this page; while you are on THE DEAL or 1 SHAPES that control is a second
+ * forward button on a screen that already has one, which is the nesting problem
+ * this flow spent a round removing, one layer down.
+ *
+ * **NOTHING CROSSES THAT IS NOT MURALISTA'S OWN UI STATE.** One string, naming
+ * one of this tool's three cells. No gig, no song, no file, no geometry. Nothing
+ * is read back and nothing is awaited: this tool does not learn who is listening
+ * and does not change behaviour if nobody is. It is the same class of thing as
+ * Bombista being told `--no-header` — what to draw, never who is asking — and it
+ * goes the other way.
+ *
+ * Standalone `window.parent === window`, so this is a no-op.
+ */
+function announceFlowStep() {
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage({ muralista: "flow-step", step: flowStep }, "*");
+  } catch (err) {
+    // An embedder that cannot be posted to is not this tool's problem: the flow
+    // is unaffected, and a throw here would take the render down with it.
+    console.warn("Muralista: could not announce the flow step.", err);
+  }
 }
 
 function renderFlowSteps() {
   const nav = document.getElementById("flow-steps");
   nav.innerHTML = "";
   FLOW_STEPS.forEach(({ key, n, label }) => {
-    // Screen 1 with no gig behind it is a question that does not arise, so it
-    // is not in the bar at all. A dimmed cell would say "later"; this is not
-    // later, it is not applicable to a tool used on its own.
-    if (key === FLOW_LAYOUT && !flowLayoutApplies()) return;
     const here = key === flowStep;
     const open = flowIndex(key) <= flowIndex(flowReached);
     const el = document.createElement("button");
@@ -3188,19 +3195,6 @@ function renderFlowSteps() {
     el.addEventListener("click", () => goToFlowStep(key));
     nav.appendChild(el);
   });
-}
-
-function renderFlowLayout() {
-  const keep = document.getElementById("btn-flow-keep-default");
-  const why = document.getElementById("flow-keep-default-why");
-  const blocked = keepDefaultBlocker();
-  // DISABLED WITH THE REASON, NEVER ABSENT. A screen with the control taken
-  // off it gives no evidence the capability exists; this repo's sibling has a
-  // named rule for it and the same argument holds here.
-  keep.disabled = !!blocked || flowBusy;
-  why.hidden = !blocked;
-  why.textContent = blocked || "";
-  document.getElementById("btn-flow-adjust").disabled = flowBusy;
 }
 
 function renderFlowOutput() {
@@ -3237,7 +3231,7 @@ function renderFlowOutput() {
 
 /**
  * WHERE THE FLOW OPENS. Called once, after the gig has had its chance to
- * connect, because whether screen 1 applies is a question about the gig.
+ * connect, because whether a mapping already exists is a question about it.
  */
 async function initFlow() {
   if (mappingAlreadyExists()) {
@@ -3247,9 +3241,8 @@ async function initFlow() {
     flowReached = FLOW_OUTPUT;
   } else {
     // A FIRST TIME WALKS THE FLOW, and the bar dims what has not been reached.
-    // Not for ceremony: 3 OUTPUT on an empty room offers a save that would
-    // write a room with nothing in it, and the layout question is what stops
-    // that being the first thing anybody does.
+    // Not for ceremony: `2 OUTPUT` on an empty room offers a save that would
+    // write a room with nothing in it.
     flowStep = FLOW_DEAL;
     flowReached = FLOW_DEAL;
   }
@@ -3395,7 +3388,7 @@ function renderVisualSetup() {
 
   const gigBlock = document.getElementById("gig-assignments");
   const songBlock = document.getElementById("song-setup");
-  // **2 SHAPES IS GIG LEVEL ONLY** (2026-09-03). The mode picker is shut and
+  // **1 SHAPES IS GIG LEVEL ONLY** (2026-09-03). The mode picker is shut and
   // the song half with it, so the screen carries the room's shapes and their
   // types and nothing per-song. `visualSetupMode` stays a real variable and the
   // song machinery stays correct - this defers the screen, it does not delete
@@ -3405,9 +3398,7 @@ function renderVisualSetup() {
   songBlock.hidden = !inSong;
 
   const hint = document.getElementById("visual-setup-hint");
-  hint.textContent = inSong
-    ? "Reassignment only: pick which existing shape of that kind this song uses. A song never holds its own geometry — re-mapping the room would leave it silently on the old position, wrong on stage with nothing reporting it. If no shape fits, go back to gig setup and add one. The wall is previewing this song, so the shapes it does not use are dark."
-    : "The room's shapes and their types, serving every song. For a gig where all the songs follow one pattern this is the whole job — song setup exists only for a song that deviates.";
+  hint.textContent = "";
 
   if (inSong) renderSongSetup(songBlock);
   else renderGigAssignments(gigBlock);
@@ -5390,20 +5381,8 @@ function buildMediaSourceControls(container, shape, layer) {
     }
     fileInput.value = "";
   });
-  const hint = document.createElement("p");
-  hint.className = "layer-hint";
-  hint.textContent = folderLabel
-    ? `Picking a file only fills in the name above - the file itself must live in ${folderLabel}/.`
-    : "Picking a file only fills in the path above - the file itself must already be copied into mapper/media/.";
-  fileRow.append(fileBtn, fileInput, hint);
+  fileRow.append(fileBtn, fileInput);
   container.appendChild(fileRow);
-
-  if (layer.type === "image") {
-    const webmHint = document.createElement("p");
-    webmHint.className = "layer-hint";
-    webmHint.textContent = "A .webm source (alpha transparency, Chrome-only) is a transport-synced overlay: it joins Play/Pause/Restart like a video layer instead of autoplaying on its own, so it starts with everything else.";
-    container.appendChild(webmHint);
-  }
 }
 
 // The fill layer's own controls: a colour, and the margin that grows the shape
@@ -5425,11 +5404,6 @@ function buildFillLayerControls(container, shape, layer) {
   colorRow.append(colorLabel, colorInput);
   container.appendChild(colorRow);
 
-  const colorHint = document.createElement("p");
-  colorHint.className = "layer-hint";
-  colorHint.textContent =
-    "Black is the default and the case this exists for: the projector floods the whole background, so holding part of it dark is a decision the mapping has to carry. It paints in list order like every other shape - move it up or down to put it behind or in front of one.";
-  container.appendChild(colorHint);
 
   const marginRow = document.createElement("div");
   marginRow.className = "layer-field";
@@ -5454,11 +5428,6 @@ function buildFillLayerControls(container, shape, layer) {
   marginRow.append(marginLabel, marginInput, marginValue);
   container.appendChild(marginRow);
 
-  const marginHint = document.createElement("p");
-  marginHint.className = "layer-hint";
-  marginHint.textContent =
-    "How far the shape grows outward, as a fraction of frame height. A true dilation - it thickens thin limbs rather than lengthening them. Draw generously larger than the shadow: a performer sways, and an exact mask lets light onto the face on every lean.";
-  container.appendChild(marginHint);
 }
 
 // The outline every shape has. Identical controls on every type, which is the
@@ -5479,19 +5448,9 @@ function buildOutlineControls(container, shape) {
   pointRow.append(deletePointBtn, pointCount);
   container.appendChild(pointRow);
 
-  const pointHint = document.createElement("p");
-  pointHint.className = "layer-hint";
-  pointHint.textContent =
-    "Click an edge in the preview to insert a point and pull it out. Click a point to select it, then Delete (or the button) to remove it. Three points is the floor.";
-  container.appendChild(pointHint);
 
   // Said only where it is true - see updateOutlinePanelValues. On a fill shape
   // there is no content to be warped and nothing here to explain.
-  const framed = document.createElement("p");
-  framed.id = "shape-frame-hint";
-  framed.className = "layer-hint";
-  container.appendChild(framed);
-
   const refitRow = document.createElement("div");
   refitRow.className = "layer-field";
   const refitBtn = document.createElement("button");
@@ -5532,17 +5491,7 @@ function buildAdoptBoundariesControls(container, shape) {
 
   // The two facts that decide whether this gesture can work at all, said
   // before it is pressed rather than after it comes back empty.
-  const rules = document.createElement("p");
-  rules.className = "layer-hint";
-  rules.textContent =
-    "It detects a DIFFERENCE between two photographs of the wall, so the thing has to be absent from one of them: it finds a person who walks in, or an object placed and removed, and cannot find a painting that was hanging there the whole time. And for anything standing out from the wall, trace the SHADOW, not the thing — the camera and the lens disagree about where a body is, and never about where its shadow falls.";
-  container.appendChild(rules);
 
-  const comfort = document.createElement("p");
-  comfort.className = "layer-hint";
-  comfort.textContent =
-    "The wall goes dark while you walk in and lights again for the second photograph, so you are not standing in a white field for the whole count. The camera's exposure moving between the two photographs is corrected for, so auto exposure is fine; locking it (the Elgato Facecam can) is still the steadier setting if you have a moment.";
-  container.appendChild(comfort);
 
   const secsRow = document.createElement("div");
   secsRow.className = "layer-field";
@@ -5587,11 +5536,6 @@ function buildAdoptBoundariesControls(container, shape) {
   thrRow.append(thrLabel, thrInput, thrValue);
   container.appendChild(thrRow);
 
-  const thrHint = document.createElement("p");
-  thrHint.className = "layer-hint";
-  thrHint.textContent =
-    "How much darker a pixel must get to count. One knob, not a clever guess: raise it if the trace catches the whole wall, lower it if it finds nothing. A coarse blob is the right answer here - on a fill shape the margin has to inflate it anyway.";
-  container.appendChild(thrHint);
 }
 
 // The text layer's own controls. Kept plain on purpose - the brutalist
@@ -5671,9 +5615,11 @@ function buildTextLayerControls(container, shape, layer) {
 
   const textHint = document.createElement("p");
   textHint.className = "layer-hint";
-  textHint.textContent = isSlot
-    ? "The dummy line, and it is deliberately nasty: three rows, two hard breaks, quote marks, and a compound nobody would say out loud. It is measured against every line in the catalogue and is harder than all of them. Pregonero fills this slot from the song file on the night — this string is only ever what the layout is tuned against, so softening it makes the tuning feel finished without having tested anything."
-    : "Wraps on word boundaries, and a line break here is a line break on the wall. Paste the longest line you will actually use — that is the one the layout has to survive.";
+  // A LABEL, NOT A LESSON (Jorge, 2026-09-04). The dummy line's argument — that
+  // it is deliberately nastier than every line in the catalogue, and that
+  // softening it makes the tuning feel finished without having tested anything
+  // — is a fact about this tool and belongs in this comment, not on the screen.
+  textHint.textContent = isSlot ? "Stand-in text — Pregonero fills this on the night." : "";
   container.appendChild(textHint);
 
   // --- the bar ---
@@ -5843,11 +5789,6 @@ function buildContactLayerControls(container, shape, layer) {
   qrRow.append(qrLabel, qrInput);
   container.appendChild(qrRow);
 
-  const hint = document.createElement("p");
-  hint.className = "layer-hint";
-  hint.textContent =
-    "A file name, resolved in the media folder like any other source — Muralista does not generate the code. Generate it elsewhere, drop the PNG in beside the videos, and scan it with a phone off the wall before the doors open. One line and one code, for the whole night: this panel is not per-song.";
-  container.appendChild(hint);
 }
 
 // song-intro and song-video have NO settings, and saying nothing would read as
@@ -5856,10 +5797,14 @@ function buildContactLayerControls(container, shape, layer) {
 function buildLockedTypeNote(container, type) {
   const hint = document.createElement("p");
   hint.className = "layer-hint";
+  // SHORTENED RATHER THAN DELETED, and it is the one exception on this pass:
+  // this note IS the panel for these two types, so taking it out leaves a blank
+  // box that reads as a panel that failed to draw rather than as one with
+  // nothing in it. One line each, which is a label.
   hint.textContent =
     type === "song-intro"
-      ? "A locked template: the song's translation, title and tagline, in fixed proportions. There is nothing to format — the shape's position and size are the only decisions, and they move all three parts together. The tagline is the smallest thing on the wall and the first thing to check from the back of the room."
-      : "The playing song's video, stretched to fill the quad. The quad is the framing, so there is nothing to set: a video that needs to sit differently is a different shape. The wall shows the extent it will fill.";
+      ? "Locked template — nothing to format."
+      : "The quad is the framing — nothing to set.";
   container.appendChild(hint);
 }
 
@@ -5974,15 +5919,6 @@ function updateOutlinePanelValues(container, shape) {
   const deletePointBtn = container.querySelector("#shape-delete-point");
   if (deletePointBtn) deletePointBtn.disabled = selectedPointIndex == null || count <= SHAPE_MIN_POINTS;
 
-  const frameHint = container.querySelector("#shape-frame-hint");
-  if (frameHint) {
-    frameHint.textContent = !shapeCarriesContent(shape)
-      ? ""
-      : shapeOutlineIsFrame(shape)
-        ? "At four points the outline is what the content is warped onto, so dragging a point reshapes the content with it."
-        : "Past four points the content stays warped onto the four corners this shape had at four, and the outline only clips it. Re-fit moves it onto the shape as it is now.";
-  }
-
   // Nothing to re-fit onto a shape that is still its own frame, and nothing to
   // re-fit at all on a fill. Disabled rather than hidden, so the row does not
   // appear and disappear under the pointer as points are added and removed.
@@ -5999,11 +5935,13 @@ function updateAdoptPanelValues(container, active) {
     adoptBtn.disabled = !!blocker || adoptRunning;
     adoptBtn.textContent = adoptRunning ? "Capturing…" : "Adopt boundaries…";
   }
+  // THE REASON A CONTROL IS SHUT SURVIVES; THE EXPLANATION OF WHAT IT DOES DOES
+  // NOT (Jorge, 2026-09-04). That is the line the whole left-hand side was cut
+  // on: a sentence that reports a fact about right now stays, a sentence that
+  // teaches goes.
   const adoptHint = container.querySelector("#shape-adopt-hint");
   if (adoptHint) {
-    adoptHint.textContent = blocker
-      ? blocker
-      : "Raises the white plate, photographs the wall, counts you (or whatever is being traced) into the beam, photographs it again, and makes what got darker this shape's outline.";
+    adoptHint.textContent = blocker || "";
     adoptHint.classList.toggle("blocked", !!blocker);
   }
   const thrInput = container.querySelector("#shape-adopt-threshold-input");
@@ -6181,8 +6119,6 @@ function wireControlEvents() {
     }
   });
 
-  document.getElementById("btn-identify").addEventListener("click", broadcastIdentify);
-
   document.getElementById("btn-export").addEventListener("click", exportProject);
 
   const fileInput = document.getElementById("file-import");
@@ -6237,9 +6173,8 @@ function wireControlEvents() {
     .addEventListener("change", (e) => setVisualSetupSong(e.target.value));
 
   // --- The flow. ---
-  document.getElementById("btn-flow-deal-next").addEventListener("click", () => goToFlowStep(flowAfterDeal()));
-  document.getElementById("btn-flow-keep-default").addEventListener("click", () => void flowKeepDefault());
-  document.getElementById("btn-flow-adjust").addEventListener("click", flowAdjust);
+  document.getElementById("btn-flow-deal-next").addEventListener("click", () => goToFlowStep(FLOW_SHAPES));
+  document.getElementById("btn-flow-to-output").addEventListener("click", () => goToFlowStep(FLOW_OUTPUT));
   document.getElementById("btn-flow-capture").addEventListener("click", () => void captureStage());
   document.getElementById("btn-flow-save-gig").addEventListener("click", () => void flowSaveToGig());
   document.getElementById("btn-flow-download").addEventListener("click", flowDownloadVisuals);
@@ -7472,47 +7407,6 @@ function shapeHue(shape) {
     hash = (hash * 31 + shape.id.charCodeAt(i)) | 0;
   }
   return Math.abs(hash) % 360;
-}
-
-// =========================================================================
-// IDENTIFY (output overlay)
-// =========================================================================
-// In response to a broadcast 'identify', overlay each visible shape's
-// name + id at its centroid in plain screen space (unwarped - this is a
-// readability aid, not part of the projected content) for ~2s.
-
-let identifyTimer = null;
-
-function showIdentifyOverlay() {
-  const container = document.getElementById("output-identify");
-  container.innerHTML = "";
-
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-
-  project.surfaces
-    .filter((s) => s.visible)
-    .forEach((shape) => {
-      // The OUTLINE's centroid, so a fill shape gets a label too and a clipped
-      // shape gets its label where the shape actually is.
-      const outline = shapeOutline(shape);
-      if (!outline) return;
-      const [nx, ny] = ringCentroidNormalized(outline);
-      const cx = nx * w;
-      const cy = ny * h;
-
-      const label = document.createElement("div");
-      label.className = "identify-label";
-      label.style.left = `${cx}px`;
-      label.style.top = `${cy}px`;
-      label.textContent = `${shape.name}\n${shape.id}`;
-      container.appendChild(label);
-    });
-
-  window.clearTimeout(identifyTimer);
-  identifyTimer = window.setTimeout(() => {
-    container.innerHTML = "";
-  }, 2000);
 }
 
 // The one change to the output render path (v2.4): a plain white plate above

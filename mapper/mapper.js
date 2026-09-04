@@ -149,6 +149,9 @@ function isValidQuad(q) {
 // without complaint - it simply carries no camera calibration, which is
 // exactly true of it - and one exported while layers were sound-reactive
 // opens too, simply without that behavior.
+/** The two states a condition can ask about. Declared here because `migrateShape` reads it. */
+const CONDITION_STATES = ["filled", "empty"];
+
 function migrateProject(obj) {
   const proj = Object.assign({}, obj);
   if (proj.backdropMode !== "camera") proj.backdropMode = "photo";
@@ -158,6 +161,20 @@ function migrateProject(obj) {
   const shapes = (Array.isArray(proj.surfaces) ? proj.surfaces : [])
     .map((surface) => migrateShape(surface))
     .filter(Boolean);
+
+  // **ONE LEVEL, ENFORCED ON THE WAY IN.** A condition may only point at a shape
+  // that exists and has no condition of its own — so cycles are impossible by
+  // construction and there is nothing to detect at runtime. A file that says
+  // otherwise loses the condition rather than the shape: the shape is somebody's
+  // afternoon, the condition is one field, and dropping the smaller thing is the
+  // repair with the smaller blast radius.
+  const conditioned = new Set(shapes.filter((s) => s.visibleWhen).map((s) => s.id));
+  const byId = new Map(shapes.map((s) => [s.id, s]));
+  shapes.forEach((s) => {
+    if (!s.visibleWhen) return;
+    const target = s.visibleWhen.shape;
+    if (!byId.has(target) || conditioned.has(target) || target === s.id) delete s.visibleWhen;
+  });
 
   // v8: the keep-out array is dissolved into the shape list. Every entry
   // becomes a shape whose layer type is "fill", carrying its ring as the
@@ -273,7 +290,7 @@ function migrateShape(surface) {
   // the test this repo uses for whether a bump is owed.
   const pinned = outline.length === 4 ? outline.map(([x, y]) => [x, y]) : corners;
 
-  return {
+  const shape = {
     id: typeof surface.id === "string" && surface.id ? surface.id : genShapeId(),
     name: typeof surface.name === "string" && surface.name.trim() ? surface.name.trim() : "Shape",
     corners: pinned,
@@ -281,6 +298,21 @@ function migrateShape(surface) {
     layer,
     visible: surface.visible !== false,
   };
+
+  // v10: **conditional visibility.** The shape's own half of it is sanitised here
+  // — a target id and one of two states — and the ONE-LEVEL rule is enforced
+  // across the list in `migrateProject`, because it is a fact about the list
+  // rather than about a shape. **An import is arbitrary JSON**, so a condition
+  // pointing at nothing, or at a shape that has one of its own, is dropped
+  // rather than carried to a renderer that would then have to refuse it.
+  //
+  // **Absent stays absent**: an unconditional shape gains no key, so no older
+  // project grows a field it never had.
+  const raw = surface.visibleWhen;
+  if (raw && typeof raw === "object" && typeof raw.shape === "string" && raw.shape) {
+    if (CONDITION_STATES.includes(raw.is)) shape.visibleWhen = { shape: raw.shape, is: raw.is };
+  }
+  return shape;
 }
 
 function genShapeId() {
@@ -310,6 +342,84 @@ function defaultShape(index) {
     layer: { type: "pattern", src: null, opacity: 1 },
     visible: true,
   };
+}
+
+// =========================================================================
+// CONDITIONAL VISIBILITY — a shape may depend on another shape
+// =========================================================================
+// **COWORK PROPOSED A FLAG SAYING *for songs with video / without*, AND JORGE
+// REJECTED IT** (2026-09-04): that is domain knowledge this tool does not have.
+// Whether a song has a video lives in the song file, below Muralista's line —
+// it reads `gig.json` and nothing else. It was a requirement on one tool that
+// the other could not satisfy.
+//
+// **His replacement asks about ANOTHER SHAPE**, which is entirely this tool's
+// own vocabulary. **Muralista declares the relationship; Pregonero evaluates
+// it**, because Pregonero is the one that knows what content landed. Each tool
+// says only what it can know.
+//
+// **IT IS ABOUT CONTENT, NEVER EXISTENCE.** Shapes are gig level and always
+// exist; what varies per song is whether they got content. *Visible when that
+// shape is empty for this song*, never *visible if that shape is not there*.
+// Since song visual setup shipped, **filled means an asset is assigned for that
+// song** in `songVisuals.assets`.
+//
+// **ON THE SHAPE, NOT IN A CONNECTORS LIST.** Reading a shape tells you when it
+// shows without scanning a table, and deleting the shape takes its condition
+// with it, so nothing orphans.
+//
+// **AN OBJECT, NOT A STRING**, so a `when` or an `after` can join it later
+// without a redesign. **BUILD THE CONDITION, NOT THE ANIMATION SYSTEM** — the
+// PowerPoint-style future is real and is deliberately not designed here.
+//
+// **ONE LEVEL, SO CYCLES ARE IMPOSSIBLE**: a condition may only point at a
+// shape that has no condition of its own. Nothing to detect at runtime and
+// nothing to refuse there.
+
+
+/** The condition on a shape, or null. The one reader, so there is one answer. */
+function shapeCondition(shape) {
+  const raw = shape && shape.visibleWhen;
+  if (!raw || typeof raw !== "object") return null;
+  if (typeof raw.shape !== "string" || !raw.shape) return null;
+  if (!CONDITION_STATES.includes(raw.is)) return null;
+  return { shape: raw.shape, is: raw.is };
+}
+
+/**
+ * **Which shapes a condition may point at: every OTHER shape that has none.**
+ *
+ * That is the whole of the one-level rule, enforced where the choice is made
+ * rather than checked afterwards — a list that cannot express a cycle needs no
+ * cycle detection.
+ */
+function conditionTargets(shape) {
+  return project.surfaces.filter((s) => s.id !== shape.id && shapeCondition(s) === null);
+}
+
+/** The shapes whose condition points at this one. Empty for most shapes. */
+function dependentsOf(shapeId) {
+  return project.surfaces.filter((s) => {
+    const cond = shapeCondition(s);
+    return cond !== null && cond.shape === shapeId;
+  });
+}
+
+function setShapeCondition(id, target, state) {
+  const shape = findShape(id);
+  if (!shape) return;
+  if (!target) {
+    delete shape.visibleWhen;
+  } else {
+    const wanted = CONDITION_STATES.includes(state) ? state : "filled";
+    // **A shape that something depends on cannot itself depend on something.**
+    // The picker never offers such a target; this is the same rule at the
+    // model, so a hand-edited file cannot introduce one either.
+    if (dependentsOf(id).length > 0) return;
+    if (!conditionTargets(shape).some((s) => s.id === target)) return;
+    shape.visibleWhen = { shape: target, is: wanted };
+  }
+  commitProjectChange();
 }
 
 // =========================================================================
@@ -1247,13 +1357,48 @@ function addShape() {
   commitProjectChange();
 }
 
+/**
+ * **DELETING A REFERENCED SHAPE REFUSES AND NAMES ITS DEPENDENTS** (Jorge,
+ * 2026-09-04), rather than silently dropping their conditions — the rule this
+ * suite already follows for a misplaced `visuals.json`. A condition that
+ * vanished with the shape it pointed at would make a dependent unconditionally
+ * visible, which is the opposite of what its author asked for and is invisible
+ * until a song is on the wall.
+ */
+function deleteBlocker(id) {
+  const dependents = dependentsOf(id);
+  if (dependents.length === 0) return null;
+  const shape = findShape(id);
+  const names = dependents.map((s) => s.name).join(", ");
+  return (
+    `${shape ? shape.name : "That shape"} cannot be deleted: ${names} ` +
+    `${dependents.length === 1 ? "depends" : "depend"} on it. Clear that first.`
+  );
+}
+
 function removeShape(id) {
+  // **The guard is here as well as on the press**, so a hand-called delete cannot
+  // orphan a condition either. The press checks first only so nobody is asked to
+  // confirm something that is then refused.
+  const blocked = deleteBlocker(id);
+  if (blocked) {
+    setShapeStatus(blocked);
+    renderControl();
+    return;
+  }
   project.surfaces = project.surfaces.filter((s) => s.id !== id);
   if (selectedShapeId === id) {
     selectedShapeId = null;
     clearShapeSubselection();
   }
   commitProjectChange();
+}
+
+/** A refusal about a shape, said where the shape list is. Cleared by the next act. */
+let shapeStatus = "";
+
+function setShapeStatus(text) {
+  shapeStatus = text || "";
 }
 
 function renameShape(id, name) {
@@ -1554,6 +1699,8 @@ function replaceProject(newProject) {
 // Both paths post the live `project` object, so a nudge that overtakes a
 // pending resolve still carries the newer geometry - the two cannot disagree.
 function commitProjectChange() {
+  // Any act that changes the project answers the last refusal, so it goes.
+  shapeStatus = "";
   // **THE LOCAL COPY IS KEPT ONLY WHEN NOTHING WAS HANDED OVER** (Jorge,
   // 2026-09-03). Editing inside a gig writes to the gig folder and nowhere
   // else, so the two cannot drift; the local store is for standalone with no
@@ -2966,9 +3113,35 @@ const DEFAULT_FRAME = [
 ];
 
 // Later in the list is on top, so the lyrics go second.
+/**
+ * **THE DESIGNED DEFAULT, AND IT IS THREE SHAPES AT LAST** (2026-09-04).
+ *
+ * `v1.8.0` shipped two, and said why: the third needed conditional visibility,
+ * which did not exist. **This is the 02/09 default policy expressed in custom's
+ * own vocabulary rather than hardcoded**, which was the point of the field:
+ *
+ * - a `song-video` shape filling the frame;
+ * - a `song-lyrics` shape at its foot, **visible when the video is FILLED**;
+ * - a `song-lyrics` shape filling the frame, **visible when the video is EMPTY**.
+ *
+ * **So a song with an animation gets video with words at its foot, and a song
+ * without gets words across the projector's frame — same room, no geometry
+ * moved.** One renderer, not two, and the default is a preset rather than a
+ * separate world.
+ *
+ * Later in the list is on top, so the lyrics go after the frame.
+ */
+const DEFAULT_FOOT = [
+  [0, 0.78],
+  [1, 0.78],
+  [1, 1],
+  [0, 1],
+];
+
 const DEFAULT_LAYOUT = [
-  { type: "song-video", name: "Frame" },
-  { type: "song-lyrics", name: "Lyrics" },
+  { type: "song-video", name: "Frame", key: "video" },
+  { type: "song-lyrics", name: "Lyrics at the foot", corners: DEFAULT_FOOT, when: "filled" },
+  { type: "song-lyrics", name: "Lyrics across the frame", when: "empty" },
 ];
 
 // Which screen is showing. Never persisted: it is a fact about this sitting,
@@ -3039,14 +3212,36 @@ function goToFlowStep(step) {
  */
 function seedDefaultLayout() {
   if (project.surfaces.length > 0) return false;
-  DEFAULT_LAYOUT.forEach(({ type, name }) => {
+  let videoId = null;
+  DEFAULT_LAYOUT.forEach(({ type, name, corners, key, when }) => {
     const shape = defaultShape(project.surfaces.length + 1);
     shape.name = name;
-    shape.corners = DEFAULT_FRAME.map(([x, y]) => [x, y]);
-    shape.outline = DEFAULT_FRAME.map(([x, y]) => [x, y]);
+    const quad = corners ?? DEFAULT_FRAME;
+    shape.corners = quad.map(([x, y]) => [x, y]);
+    shape.outline = quad.map(([x, y]) => [x, y]);
     project.surfaces.push(shape);
     setLayerType(shape.id, type);
+    if (key === "video") videoId = shape.id;
+    // **The condition is set through the same setter a person uses**, so the
+    // one-level rule and the target check apply to the default too. If they
+    // ever disagreed, the default would be the thing that could not be authored.
+    if (when && videoId) setShapeCondition(shape.id, videoId, when);
   });
+
+  // **BOTH LYRICS SHAPES ARE THE GIG'S DEFAULT FOR THE TYPE, AND THE CONDITION IS
+  // WHAT SEPARATES THEM.** `adoptGigDefaultIfUnset` takes the FIRST shape of a
+  // type and stops — right for hand authoring, and wrong here: it left the
+  // second lyrics shape assigned to nothing, so Pregonero never resolved it and
+  // **a song without an animation had no words at all.** Caught by reading the
+  // file this tool actually wrote with the parser that consumes it.
+  //
+  // The resolver returns a SET and lights every member, which is exactly what
+  // makes this correct rather than a trick: both are gig-level shapes for the
+  // type, and their mutually exclusive conditions mean one shows per song.
+  const lyricsIds = project.surfaces
+    .filter((shape) => shapeType(shape) === "song-lyrics")
+    .map((shape) => shape.id);
+  if (lyricsIds.length) setGigDefault("song-lyrics", lyricsIds);
   selectedShapeId = null;
   clearShapeSubselection();
   commitProjectChange();
@@ -3878,6 +4073,16 @@ function renderShapeList() {
   const list = document.getElementById("shape-list");
   list.innerHTML = "";
 
+  const status = document.getElementById("shape-status");
+  status.hidden = !shapeStatus;
+  status.textContent = shapeStatus;
+  const depsButton = document.getElementById("btn-show-dependencies");
+  depsButton.setAttribute("aria-pressed", String(showDependencies));
+  depsButton.classList.toggle("on", showDependencies);
+  // The whole control is absent when nothing depends on anything: an overlay of
+  // an empty set is a button that does nothing, twice.
+  depsButton.parentElement.hidden = !project.surfaces.some((s) => shapeCondition(s) !== null);
+
   if (project.surfaces.length === 0) {
     const empty = document.createElement("li");
     empty.className = "surface-list-empty";
@@ -3977,6 +4182,14 @@ function renderShapeList() {
     deleteBtn.textContent = "\u{1F5D1}\uFE0F"; // trash
     deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      // **Refused before being asked.** Confirming a deletion and then being told
+      // it cannot happen is two presses for one refusal.
+      const blocked = deleteBlocker(shape.id);
+      if (blocked) {
+        setShapeStatus(blocked);
+        renderControl();
+        return;
+      }
       if (window.confirm(`Delete "${shape.name}"?`)) removeShape(shape.id);
     });
     actions.appendChild(deleteBtn);
@@ -4012,6 +4225,14 @@ function renderPreview() {
   }
 
   project.surfaces.filter((shape) => shape.visible).forEach((shape) => renderShapePreview(svg, shape));
+
+  // **A `show dependencies` TOGGLE, DRAWING EVERY LINK AT ONCE WHEN ASKED.**
+  //
+  // CAD's constraint-overlay principle. **The anti-pattern is node editors:**
+  // permanent wires are right on a dedicated graph surface and wrong on a
+  // photograph of a wall with overlapping quads. So the links are on request,
+  // and the badge above is what is always there.
+  if (showDependencies) renderDependencyLinks(svg);
 
   // **ASSIGNMENT ONLY WHILE A SONG IS PICKED** (Jorge, 2026-09-04). The handles disappear, because
   // you cannot drag what has no handle — and **never per-song geometry** is the ruling underneath
@@ -4055,6 +4276,35 @@ function renderPhotoOutlines(svg) {
       label.textContent = shape.name;
       svg.appendChild(label);
     });
+}
+
+/** Whether every dependency link is drawn. A view state, never persisted. */
+let showDependencies = false;
+
+function toggleShowDependencies() {
+  showDependencies = !showDependencies;
+  renderControl();
+}
+
+/** One arrow per condition, from the dependent's centroid to the shape it reads. */
+function renderDependencyLinks(svg) {
+  project.surfaces.forEach((shape) => {
+    const cond = shapeCondition(shape);
+    if (!cond) return;
+    const from = shapeOutline(shape);
+    const target = findShape(cond.shape);
+    const to = target && shapeOutline(target);
+    if (!from || !to) return;
+    const [fx, fy] = ringCentroidNormalized(from);
+    const [tx, ty] = ringCentroidNormalized(to);
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", fx * PREVIEW_W);
+    line.setAttribute("y1", fy * PREVIEW_H);
+    line.setAttribute("x2", tx * PREVIEW_W);
+    line.setAttribute("y2", ty * PREVIEW_H);
+    line.setAttribute("class", "preview-dependency-link");
+    svg.appendChild(line);
+  });
 }
 
 function ringPointsAttr(points, w, h) {
@@ -4159,6 +4409,29 @@ function renderShapePreview(svg, shape) {
     // static picture.
     badge.textContent = isAlphaOverlay ? "▶ overlay" : PREVIEW_BADGES[type] || type;
     svg.appendChild(badge);
+  }
+
+  /**
+   * **A SMALL PERMANENT BADGE NAMING WHAT THIS SHAPE DEPENDS ON.**
+   *
+   * Keynote's build-order principle: **an invisible property needs a visible
+   * mark, or the failure is *why did that not appear*.** And **a badge naming
+   * the dependency beats a mark that only says one exists** — the question at
+   * the wall is which shape, not whether.
+   *
+   * **Unconditional shapes pay nothing**: this branch does not run for them,
+   * which is most of them.
+   */
+  const cond = shapeCondition(shape);
+  if (cond) {
+    const target = findShape(cond.shape);
+    const [bx, by] = ringCentroidNormalized(outline);
+    const mark = document.createElementNS(SVG_NS, "text");
+    mark.setAttribute("x", bx * PREVIEW_W);
+    mark.setAttribute("y", by * PREVIEW_H + 34);
+    mark.setAttribute("class", "preview-condition-badge" + dark);
+    mark.textContent = `⇢ ${target ? target.name : cond.shape} ${cond.is}`;
+    svg.appendChild(mark);
   }
 }
 
@@ -5636,9 +5909,13 @@ function renderLayerPanel() {
   // The outline flag is in here because the outline-width control is BUILT
   // only when the outline is on, rather than built-and-disabled - so the toggle
   // is a structural change to the panel, not a value change in it.
+  // The condition is in the key because the sentence is BUILT rather than
+  // updated: picking a target adds the `is [ … ]` half, and clearing it takes
+  // that half away. A value-only refresh would leave the wrong sentence.
+  const cond = shapeCondition(shape);
   const key = `${shape.id}:${layer.type}:${mediaFolderState}:${mediaFolderLabel() || ""}:${gigConnected()}:${
     typeTakesTextFormatting(layer.type) ? sanitizeTextLayer(layer).outline : ""
-  }`;
+  }:${cond ? cond.shape + ">" + cond.is : ""}:${dependentsOf(shape.id).length}`;
 
   if (key !== layerPanelKey) {
     layerPanelKey = key;
@@ -5669,6 +5946,91 @@ function panelDivider(container, title) {
   container.appendChild(rule);
 }
 
+/**
+ * **THE RULE IS AUTHORED ON THE SHAPE IT AFFECTS, AS A SENTENCE.**
+ *
+ * `Show only when [ Frame ▾ ] is [ empty ▾ ]`. Form builders are the pattern:
+ * **sentences read correctly to non-technical authors where field / operator /
+ * value grids do not.** Their other lesson is the ceiling — past roughly ten
+ * rules a per-element pattern becomes invisible and needs an overview — and at
+ * three shapes it does not.
+ *
+ * **UNCONDITIONAL SHAPES PAY NOTHING**: one closed select reading `Always`, and
+ * no second control until there is something to say.
+ *
+ * **A shape something else depends on cannot take a condition**, and the row
+ * says so rather than vanishing: that is the one-level rule, and a control that
+ * disappeared would leave the person guessing why.
+ */
+function buildConditionRow(container, shape) {
+  const targets = conditionTargets(shape);
+  const dependents = dependentsOf(shape.id);
+  const cond = shapeCondition(shape);
+
+  const row = document.createElement("div");
+  row.className = "layer-field condition-row";
+
+  const label = document.createElement("label");
+  label.textContent = "Show";
+  row.appendChild(label);
+
+  const sentence = document.createElement("div");
+  sentence.className = "condition-sentence";
+
+  const whichSelect = document.createElement("select");
+  whichSelect.id = "condition-shape-select";
+  const always = document.createElement("option");
+  always.value = "";
+  always.textContent = "always";
+  whichSelect.appendChild(always);
+  targets.forEach((s) => {
+    const opt = document.createElement("option");
+    opt.value = s.id;
+    opt.textContent = `only when ${s.name}`;
+    whichSelect.appendChild(opt);
+  });
+  whichSelect.value = cond ? cond.shape : "";
+  whichSelect.disabled = dependents.length > 0;
+  whichSelect.addEventListener("change", () =>
+    setShapeCondition(shape.id, whichSelect.value, cond ? cond.is : "filled")
+  );
+  sentence.appendChild(whichSelect);
+
+  if (cond) {
+    const is = document.createElement("span");
+    is.className = "condition-word";
+    is.textContent = "is";
+    sentence.appendChild(is);
+
+    const stateSelect = document.createElement("select");
+    stateSelect.id = "condition-state-select";
+    CONDITION_STATES.forEach((state) => {
+      const opt = document.createElement("option");
+      opt.value = state;
+      opt.textContent = state;
+      stateSelect.appendChild(opt);
+    });
+    stateSelect.value = cond.is;
+    stateSelect.addEventListener("change", () =>
+      setShapeCondition(shape.id, cond.shape, stateSelect.value)
+    );
+    sentence.appendChild(stateSelect);
+  }
+
+  row.appendChild(sentence);
+  container.appendChild(row);
+
+  if (dependents.length > 0) {
+    const why = document.createElement("p");
+    why.className = "layer-hint";
+    why.id = "condition-blocked";
+    why.textContent = `${dependents.map((s) => s.name).join(", ")} ${
+      dependents.length === 1 ? "depends" : "depend"
+    } on this shape, so it cannot depend on another.`;
+    container.appendChild(why);
+  }
+}
+
 function buildLayerPanel(container, shape, layer) {
   container.innerHTML = "";
 
@@ -5692,6 +6054,8 @@ function buildLayerPanel(container, shape, layer) {
   typeSelect.addEventListener("change", () => setLayerType(shape.id, typeSelect.value));
   typeRow.append(typeLabel, typeSelect);
   container.appendChild(typeRow);
+
+  buildConditionRow(container, shape);
 
   // A file is only a file for the two types that read one. Everything below is
   // built INSIDE this branch, so "Pick file…" is not merely disabled on a
@@ -6509,6 +6873,9 @@ function importProjectFromFile(file) {
 
 function wireControlEvents() {
   document.getElementById("btn-add-shape").addEventListener("click", addShape);
+  document
+    .getElementById("btn-show-dependencies")
+    .addEventListener("click", toggleShowDependencies);
 
   document.getElementById("btn-open-output").addEventListener("click", () => {
     // Hand the output window THIS window's build token (see the bootstrap in

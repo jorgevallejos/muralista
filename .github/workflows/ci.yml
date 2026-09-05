@@ -53,3 +53,12 @@ jobs:
       # drawn on it lands wrong at the venue.
       - name: Stage capture test
         run: node --test mapper/stageCapture.test.mjs
+
+      # The mode resolution, and specifically the THREE-MODE room. `visuals.json`
+      # says `modes` is a list; the authoring surface only ever makes two. A
+      # renderer that quietly assumes two while the format promises a list is a
+      # value one side produces and the other refuses - the exact shape of the
+      # contract mismatches this workflow exists for. If this step is ever
+      # deleted rather than fixed, the honest build is two modes and no list.
+      - name: Modes test
+        run: node --test mapper/modes.test.mjs

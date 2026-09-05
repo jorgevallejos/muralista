@@ -2253,6 +2253,77 @@ fields on the Muralista layer, and they went with the type. The intro has no suc
 its parts come from the song file. So the contact needs somewhere for a gig to write its line before
 it needs a host, and that is a decision about what a gig owns rather than about layout.
 
+## Named modes replace conditional visibility (v1.19.0, 2026-09-05)
+
+**The giveaway was that Jorge named them.** He proposed dependencies as first-class, defined at
+`All — the room`, in the form `[Shape 1] [visible only together with] [Shape 2]` — and the names he
+gave them were `Song with lyrics` and `Song with video and lyrics`. **A name with nowhere to live is
+the symptom of a missing concept**, and what he had described is a **named mode**: a set of shapes
+that appear together.
+
+**Two gaps in the pairwise form, both structural.** A pairwise relation **cannot express a one-shape
+mode** — `Song with lyrics` is `{Song lyrics}` alone — and it only implies groups transitively,
+which is weaker than what he asked for. And **membership is not a trigger**: naming which shapes go
+together does not say *when* that group is live. **So a mode is a condition plus a set**, or the
+room has no way to choose one on the night.
+
+### The decisions, and the arguments that produced them
+
+**An ordered list, seeded with two, with no way to add a third** (Jorge: *just the two for now*).
+The list is not built for a future need — **it is the cheapest correct way to build two**:
+
+- **The resolution rule fixes a real case at N=2.** Ordered, first true condition wins, explicit
+  fallback when none match. Two hand-written branches have no answer when both conditions are true
+  or both false, **which is the double-paint failure this project keeps meeting**, and nothing ever
+  enforced that the two conditions were complements.
+- **Under *nothing is migrated*, a later change from two named fields to a list discards rooms
+  rather than carrying them forward.** Today Jorge owns one room. Later he owns several.
+
+**What is explicitly NOT the answer: an array the renderer reads as `[0]` and `[1]`.** That is a
+format promising what the code does not do — the shape of the five contract mismatches of 02/09 and
+of `countInBars`. **The list is honest or it is not a list**, so `mapper/modes.js` resolves any
+number of modes and `mapper/modes.test.mjs` renders a hand-written three-mode room, including the
+case where two conditions are true at once and order decides. **If that test is ever deleted rather
+than fixed, the honest build is two modes and no list.**
+
+**A shape belongs to one mode or to none, and no mode means always displayed.** Membership is a
+field on the shape rather than a list of ids on the mode: a field holds one value, so *exactly one*
+is structural rather than enforced, and deleting a shape takes its membership with it so nothing
+orphans. That is the same argument that put `visibleWhen` on the shape before modes existed.
+
+**What happens when no condition matches is STATED, not left to fall out: no mode is live, and only
+the no-mode shapes paint.** Two complementary conditions never reach that case; a list has to answer
+it anyway. A mode whose condition points at a deleted shape reads `null` and is never live, which
+is why deleting the shape a mode asks about is refused and names the modes.
+
+### What the surface does with it
+
+**The shape list at `All — the room` is grouped, and the grouping IS the assignment surface**
+(Jorge: *dependencies are never set up from inside a shape*). A shape joins a mode by being dragged
+into its group — reorder and reassign in one gesture, because they are one list underneath and paint
+order is list order.
+
+**Modes are renamed in place and emptied, never deleted**, because deleting one orphans its shapes
+and a shape reachable from no group is a shape nobody can find again. **The condition renders
+read-only**: the concept is visible without shipping an authoring surface for a language that
+contains exactly one sentence.
+
+**The mode names are the preview selector**, on `1 SHAPES` and on `2 OUTPUT`, one active at a time.
+**The mode being previewed is the one whose rows are listed**; the others keep their header and lose
+their rows — *he does not want to see the shapes of the mode he is not looking at*, asked twice.
+**The header stays because it is still the drop target**: a group that vanished would take with it
+the only way to put a shape into it, and it says how many shapes are in there, which is what a
+collapsed list owes.
+
+**Retired with the relation they drew:** the per-shape condition editor (`buildConditionRow`), the
+`show dependencies` overlay and its arrows, the `⇢ Frame filled` badge, and the one-level rule with
+its cycle argument — a mode points at a shape and a shape points at a mode, so no edge can close on
+itself.
+
+**This is a two-repo change.** Pregonero's `resolveShapesForType` and `songIsCarried` ask whether a
+shape carries a song; under modes they ask whether **the mode that will be live for this song**
+carries it. Muralista's model and Pregonero's readiness move together, as at step 6.
+
 ## Where the state actually lives
 
 The working venue mappings are not in git. **Since 2026-09-03 there are two homes, and which one is

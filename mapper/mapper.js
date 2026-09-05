@@ -150,9 +150,6 @@ function isValidQuad(q) {
 // without complaint - it simply carries no camera calibration, which is
 // exactly true of it - and one exported while layers were sound-reactive
 // opens too, simply without that behavior.
-/** The two states a condition can ask about. Declared here because `migrateShape` reads it. */
-const CONDITION_STATES = ["filled", "empty"];
-
 function migrateProject(obj) {
   const proj = Object.assign({}, obj);
   if (proj.backdropMode !== "camera") proj.backdropMode = "photo";
@@ -163,19 +160,26 @@ function migrateProject(obj) {
     .map((surface) => migrateShape(surface))
     .filter(Boolean);
 
-  // **ONE LEVEL, ENFORCED ON THE WAY IN.** A condition may only point at a shape
-  // that exists and has no condition of its own — so cycles are impossible by
-  // construction and there is nothing to detect at runtime. A file that says
-  // otherwise loses the condition rather than the shape: the shape is somebody's
-  // afternoon, the condition is one field, and dropping the smaller thing is the
-  // repair with the smaller blast radius.
-  const conditioned = new Set(shapes.filter((s) => s.visibleWhen).map((s) => s.id));
-  const byId = new Map(shapes.map((s) => [s.id, s]));
+  // **THE MODE LIST IS AN INVARIANT OF A ROOM, NOT A FIELD THAT MAY BE MISSING.**
+  //
+  // The surface offers no `+ Add mode`, so a room that arrived without modes
+  // would have no way to grow its first one — a dead end rather than a default.
+  // So every room comes out of here with at least the two seeded ones, and a
+  // file that already declares modes keeps EXACTLY what it declares, however
+  // many that is. **One valid mode is a room somebody authored**; zero is a
+  // room that predates the concept.
+  //
+  // **`visibleWhen` is dropped rather than converted, and that is the standing
+  // rule** (*nothing is migrated*): no fallback reads the old shape of a thing.
+  // A room mapped before 2026-09-05 opens with its three shapes under `ALWAYS`,
+  // which is visible, draggable and reported by Pregonero's sign-off — where a
+  // silent half-conversion would be the double-paint failure wearing a new coat.
   shapes.forEach((s) => {
-    if (!s.visibleWhen) return;
-    const target = s.visibleWhen.shape;
-    if (!byId.has(target) || conditioned.has(target) || target === s.id) delete s.visibleWhen;
+    delete s.visibleWhen;
   });
+  const modes = sanitizeModes(proj.modes);
+  proj.modes = modes.length > 0 ? modes : seededModesFor(shapes);
+  dropUnknownMembership(shapes, proj.modes);
 
   // v8: the keep-out array is dissolved into the shape list. Every entry
   // becomes a shape whose layer type is "fill", carrying its ring as the
@@ -299,19 +303,13 @@ function migrateShape(surface) {
     visible: surface.visible !== false,
   };
 
-  // v10: **conditional visibility.** The shape's own half of it is sanitised here
-  // — a target id and one of two states — and the ONE-LEVEL rule is enforced
-  // across the list in `migrateProject`, because it is a fact about the list
-  // rather than about a shape. **An import is arbitrary JSON**, so a condition
-  // pointing at nothing, or at a shape that has one of its own, is dropped
-  // rather than carried to a renderer that would then have to refuse it.
+  // v10: **which mode this shape belongs to**, or nothing at all. **Absent stays
+  // absent**: a no-mode shape gains no key, and no-mode means *always displayed*,
+  // so the commonest shape in the room carries nothing for the concept.
   //
-  // **Absent stays absent**: an unconditional shape gains no key, so no older
-  // project grows a field it never had.
-  const raw = surface.visibleWhen;
-  if (raw && typeof raw === "object" && typeof raw.shape === "string" && raw.shape) {
-    if (CONDITION_STATES.includes(raw.is)) shape.visibleWhen = { shape: raw.shape, is: raw.is };
-  }
+  // Membership pointing at a mode the file does not hold is dropped in
+  // `migrateProject`, because whether a mode exists is a fact about the list.
+  if (typeof surface.mode === "string" && surface.mode) shape.mode = surface.mode;
   return shape;
 }
 
@@ -345,81 +343,94 @@ function defaultShape(index) {
 }
 
 // =========================================================================
-// CONDITIONAL VISIBILITY — a shape may depend on another shape
+// NAMED MODES — a set of shapes that appear together
 // =========================================================================
+// **THE RESOLUTION RULE AND THE SANITISERS LIVE IN `modes.js`**, with the test
+// that renders a three-mode room. What is here is the room's half: seeding,
+// membership, and the one question the two windows both ask.
+//
 // **COWORK PROPOSED A FLAG SAYING *for songs with video / without*, AND JORGE
 // REJECTED IT** (2026-09-04): that is domain knowledge this tool does not have.
 // Whether a song has a video lives in the song file, below Muralista's line —
-// it reads `gig.json` and nothing else. It was a requirement on one tool that
-// the other could not satisfy.
-//
-// **His replacement asks about ANOTHER SHAPE**, which is entirely this tool's
-// own vocabulary. **Muralista declares the relationship; Pregonero evaluates
-// it**, because Pregonero is the one that knows what content landed. Each tool
-// says only what it can know.
+// it reads `gig.json` and nothing else. **His replacement asks about ANOTHER
+// SHAPE**, which is entirely this tool's own vocabulary, and that is still the
+// condition a mode carries. **Muralista declares the relationship; Pregonero
+// evaluates it**, because Pregonero is the one that knows what content landed.
 //
 // **IT IS ABOUT CONTENT, NEVER EXISTENCE.** Shapes are gig level and always
-// exist; what varies per song is whether they got content. *Visible when that
-// shape is empty for this song*, never *visible if that shape is not there*.
+// exist; what varies per song is whether they got content. *The mode for songs
+// where that shape is empty*, never *for songs where that shape is not there*.
 // Since song visual setup shipped, **filled means an asset is assigned for that
 // song** in `songVisuals.assets`.
 //
-// **ON THE SHAPE, NOT IN A CONNECTORS LIST.** Reading a shape tells you when it
-// shows without scanning a table, and deleting the shape takes its condition
-// with it, so nothing orphans.
+// **WHAT THE MODE COLLAPSED** (Jorge, 2026-09-05). One object replaced four
+// things: the per-shape condition editor, the preview chip on `1 SHAPES`, the
+// same chip owed on `2 OUTPUT`, and an unwritten assumption that the two
+// conditions partition. **Nothing enforced that they were complements** — two
+// independent rules on two shapes can both be true or both be false, and the
+// room then paints twice or not at all. A mode is exclusive by construction,
+// because the RULE makes it so and not the conditions.
 //
-// **AN OBJECT, NOT A STRING**, so a `when` or an `after` can join it later
-// without a redesign. **BUILD THE CONDITION, NOT THE ANIMATION SYSTEM** — the
-// PowerPoint-style future is real and is deliberately not designed here.
-//
-// **ONE LEVEL, SO CYCLES ARE IMPOSSIBLE**: a condition may only point at a
-// shape that has no condition of its own. Nothing to detect at runtime and
-// nothing to refuse there.
+// **THE ONE-LEVEL RULE AND ITS CYCLE ARGUMENT ARE RETIRED WITH THE PER-SHAPE
+// CONDITION.** A mode's condition points at a shape, and a shape has no
+// condition to point back with, so there is no graph left to have a cycle in.
+// `conditionTargets`, `dependentsOf`, `setShapeCondition` and the
+// `show dependencies` overlay all went with it: they drew a relation between
+// shapes that no longer exists.
 
+/** The seeded pair, pointed at whichever shape in this room is the video shape. */
+function seededModesFor(shapes) {
+  const video = (shapes || []).find((s) => shapeType(s) === "song-video") || null;
+  return SEEDED_MODES.map((seed) => ({
+    id: genModeId(),
+    name: seed.name,
+    // **Null when there is no video shape, and never live in that state.** A
+    // room whose video shape was deleted has nothing left to ask, and saying so
+    // beats inventing an answer — Pregonero's sign-off counts what is live per
+    // mode, so the empty room is reported rather than merely dark.
+    when: video ? { shape: video.id, is: seed.is } : null,
+  }));
+}
 
-/** The condition on a shape, or null. The one reader, so there is one answer. */
-function shapeCondition(shape) {
-  const raw = shape && shape.visibleWhen;
-  if (!raw || typeof raw !== "object") return null;
-  if (typeof raw.shape !== "string" || !raw.shape) return null;
-  if (!CONDITION_STATES.includes(raw.is)) return null;
-  return { shape: raw.shape, is: raw.is };
+/** The modes of the room being edited. Always an array; see `migrateProject`. */
+function projectModes() {
+  return Array.isArray(project.modes) ? project.modes : [];
+}
+
+function findMode(id) {
+  return projectModes().find((m) => m.id === id) || null;
 }
 
 /**
- * **Which shapes a condition may point at: every OTHER shape that has none.**
- *
- * That is the whole of the one-level rule, enforced where the choice is made
- * rather than checked afterwards — a list that cannot express a cycle needs no
- * cycle detection.
+ * **Modes are RENAMED and EMPTIED, never deleted** (Jorge, 2026-09-05). Deleting
+ * one orphans its shapes, and a shape reachable from no filter is a shape
+ * nobody can find again. Emptying it is dragging its rows out, which is a
+ * gesture already on the screen.
  */
-function conditionTargets(shape) {
-  return project.surfaces.filter((s) => s.id !== shape.id && shapeCondition(s) === null);
-}
-
-/** The shapes whose condition points at this one. Empty for most shapes. */
-function dependentsOf(shapeId) {
-  return project.surfaces.filter((s) => {
-    const cond = shapeCondition(s);
-    return cond !== null && cond.shape === shapeId;
-  });
-}
-
-function setShapeCondition(id, target, state) {
-  const shape = findShape(id);
-  if (!shape) return;
-  if (!target) {
-    delete shape.visibleWhen;
-  } else {
-    const wanted = CONDITION_STATES.includes(state) ? state : "filled";
-    // **A shape that something depends on cannot itself depend on something.**
-    // The picker never offers such a target; this is the same rule at the
-    // model, so a hand-edited file cannot introduce one either.
-    if (dependentsOf(id).length > 0) return;
-    if (!conditionTargets(shape).some((s) => s.id === target)) return;
-    shape.visibleWhen = { shape: target, is: wanted };
-  }
+function renameMode(id, name) {
+  const mode = findMode(id);
+  if (!mode) return;
+  const next = String(name || "").trim();
+  if (!next || next === mode.name) return;
+  mode.name = next;
   commitProjectChange();
+}
+
+/** Moves a shape into a mode, or out of every mode. `null` is *always displayed*. */
+function setShapeMode(shapeId, modeId) {
+  const shape = findShape(shapeId);
+  if (!shape) return false;
+  const wanted = modeId && findMode(modeId) ? modeId : null;
+  const current = shapeModeId(shape);
+  if (current === wanted) return false;
+  if (wanted === null) delete shape.mode;
+  else shape.mode = wanted;
+  return true;
+}
+
+/** The shapes of one mode, in list order — which is paint order. `null` is the always group. */
+function shapesInMode(modeId) {
+  return project.surfaces.filter((s) => shapeModeId(s) === modeId);
 }
 
 // =========================================================================
@@ -829,23 +840,20 @@ function resolveShapesForType(proj, type, songId) {
 }
 
 /**
- * **WHETHER A CONDITIONAL SHAPE IS DRAWN, AND IT IS ONE FUNCTION FOR BOTH WINDOWS** (Jorge,
- * 2026-09-04, walking `v0.61.0`: *the toggle changes the canvas and the output window shows
- * something else*).
+ * **WHICH MODE IS LIVE, AND IT IS ONE FUNCTION FOR BOTH WINDOWS** (Jorge, 2026-09-04, walking
+ * `v0.61.0`: *the toggle changes the canvas and the output window shows something else*).
  *
- * **It did, and the reason is that the output had no conditions at all.** `renderOutput` filtered
- * on `visible` and on the previewed song's assignments, and nothing else — so a `visibleWhen` pair
- * painted BOTH faces on the wall, in Mode A and in Mode B alike. The toggle was never wired to the
- * output; there was nothing on that side to wire it to.
+ * **It did, and the reason was that the output had no conditions at all.** `renderOutput` filtered
+ * on `visible` and on the previewed song's assignments and nothing else, so a conditional pair
+ * painted BOTH faces on the wall. Under modes the answer travels instead of the inputs — see
+ * `broadcastState` — and this is where it is computed on the side that owns them.
  *
  * `readsFilled` is the one thing that differs between the two roles: the control window answers it
- * from the song's assignment or the `Previewing:` toggles, the output window from the list of ids
- * that rode along with the state message. **The rule itself is written once.**
+ * from the song's assignment or from the mode selector, the output window never answers it at all.
+ * **The rule itself is written once**, in `modes.js`.
  */
-function shapeShowsUnderConditions(shape, readsFilled) {
-  const cond = shapeCondition(shape);
-  if (!cond) return true;
-  return cond.is === "filled" ? readsFilled(cond.shape) : !readsFilled(cond.shape);
+function activeModeIdFor(readsFilled) {
+  return resolveActiveModeId(projectModes(), readsFilled);
 }
 
 // Which shapes are lit while `songId` is playing, as a set of ids. Null means
@@ -1238,28 +1246,33 @@ function addShape() {
 }
 
 /**
- * **DELETING A REFERENCED SHAPE REFUSES AND NAMES ITS DEPENDENTS** (Jorge,
- * 2026-09-04), rather than silently dropping their conditions — the rule this
- * suite already follows for a misplaced `visuals.json`. A condition that
- * vanished with the shape it pointed at would make a dependent unconditionally
- * visible, which is the opposite of what its author asked for and is invisible
- * until a song is on the wall.
+ * **DELETING THE SHAPE A MODE ASKS ABOUT REFUSES AND NAMES THE MODES** (Jorge, 2026-09-04, carried
+ * across to modes), rather than silently emptying their conditions — the rule this suite already
+ * follows for a misplaced `visuals.json`.
+ *
+ * **The stakes went UP when the condition moved onto the mode.** Dropping one shape's condition
+ * used to make one shape unconditionally visible; a mode whose condition went null is never live,
+ * so **every shape in it disappears from the wall at once** and nothing on the canvas says why.
+ * Refusing and naming the modes is the same repair, one level larger.
+ *
+ * It is not a cycle guard and there is nothing left to detect: a mode points at a shape, and a
+ * shape points at a mode, so the graph has no edge that could close on itself.
  */
 function deleteBlocker(id) {
-  const dependents = dependentsOf(id);
-  if (dependents.length === 0) return null;
+  const asked = projectModes().filter((m) => m.when !== null && m.when.shape === id);
+  if (asked.length === 0) return null;
   const shape = findShape(id);
-  const names = dependents.map((s) => s.name).join(", ");
+  const names = asked.map((m) => m.name).join(", ");
   return (
     `${shape ? shape.name : "That shape"} cannot be deleted: ${names} ` +
-    `${dependents.length === 1 ? "depends" : "depend"} on it. Clear that first.`
+    `${asked.length === 1 ? "is the mode that reads" : "are the modes that read"} it.`
   );
 }
 
 function removeShape(id) {
   // **The guard is here as well as on the press**, so a hand-called delete cannot
-  // orphan a condition either. The press checks first only so nobody is asked to
-  // confirm something that is then refused.
+  // empty a mode's condition either. The press checks first only so nobody is
+  // asked to confirm something that is then refused.
   const blocked = deleteBlocker(id);
   if (blocked) {
     setShapeStatus(blocked);
@@ -1649,8 +1662,12 @@ function broadcastState() {
     kind: "state",
     project,
     preview: song ? { songId: song.id, songTitle: song.title } : null,
-    // Item 4: `Previewing:` drives the wall, not only the canvas. See `shapeShowsUnderConditions`.
-    filled: filledTargetIds(),
+    // **THE ANSWER TRAVELS, NOT THE INPUTS** (item 4, 2026-09-04, kept through the modes change).
+    // In Mode B the live mode is derived from the song's assignments and in Mode A from the
+    // selector, and the output window has no business knowing which — it has no selector and no
+    // scope. **One field, evaluated once, on the side that owns both**, so a second opinion about
+    // which face of the room is up is impossible rather than merely unlikely.
+    mode: activeModeIdInPreview(),
   });
 }
 
@@ -1791,10 +1808,10 @@ function handleOutputMessage(event) {
     project = msg.project;
     // Null in gig visual setup, which is the state where every shape paints.
     outputPreview = msg.preview && typeof msg.preview === "object" ? msg.preview : null;
-    // Item 4. An older control window sends no `filled`, and an empty set is the honest reading of
-    // that: nothing is filled, so every `is: "empty"` branch draws - which is what the wall showed
-    // before conditions reached it at all.
-    outputFilled = new Set(Array.isArray(msg.filled) ? msg.filled : []);
+    // An older control window sends no `mode`, and null is the honest reading of that: no mode is
+    // live, so only the no-mode shapes paint - which is what the wall showed before conditions
+    // reached it at all.
+    outputModeId = typeof msg.mode === "string" && msg.mode ? msg.mode : null;
     renderOutput();
   } else if (msg.kind === "media" && Array.isArray(msg.entries)) {
     applyMediaMessage(msg.entries);
@@ -1923,6 +1940,25 @@ function clearStoredFolderHandle() {
 // with no trimming or normalising: this key must match what the output reads
 // out of layer.src, and a name that differs by a space is a different name on
 // both sides or on neither.
+/**
+ * **FINDING 1 OF THE 05/09 WALK — HALF OF IT IS HERE.** *A video was assigned and `Play` does not
+ * play it.*
+ *
+ * **The cause, traced rather than guessed, and it is two things in a row.** This function is the
+ * first: it collected the `src` of every `video` and `image` layer and stopped there, so **a name
+ * a SONG assigned to a `song-video` shape was never resolved to bytes and never broadcast** — the
+ * output window had nothing to mount. The second half is `createSongVideoLayerElement`, which
+ * mounted a placeholder panel for that type and no `<video>` at all, so there was nothing for the
+ * transport to play even if the bytes had arrived.
+ *
+ * **Neither was a regression. Both were the state the file was left in when song visual setup
+ * shipped** — the per-song asset was authored, written to `visuals.json` and read by Pregonero,
+ * and the one thing nobody had done was play it in Muralista's own output window.
+ *
+ * **So the per-song assets join the set.** They are the same kind of thing the folder already
+ * resolves — a name, looked up in the visuals folder — and there is one resolver, so there is one
+ * answer about whether a clip is there.
+ */
 function referencedMediaNames() {
   const names = new Set();
   (project.surfaces || []).forEach((shape) => {
@@ -1932,6 +1968,15 @@ function referencedMediaNames() {
       if (typeof layer.src === "string" && layer.src) names.add(layer.src);
       return;
     }
+  });
+  // **Every song's assets, not just the previewed song's.** Which song is being looked at is a
+  // view, and re-resolving the folder on every scope change would restart the video that is
+  // playing — the exact churn the output's reconciler exists to avoid.
+  const assets = projectSongVisuals(project).assets || {};
+  Object.keys(assets).forEach((songId) => {
+    Object.values(assets[songId] || {}).forEach((name) => {
+      if (typeof name === "string" && name) names.add(name);
+    });
   });
   return names;
 }
@@ -1987,6 +2032,38 @@ async function syncResolvedMedia() {
           src: name,
           reason: err && err.name === "NotFoundError" ? "not in this folder" : (err && err.message) || "could not be read",
         });
+      }
+    }
+  } else if (isHostedMedia()) {
+    /**
+     * **FINDING 1, THE THIRD THING IN THE CHAIN: HOSTED RESOLVED NOTHING AT ALL.**
+     *
+     * This function only ever had a directory-handle branch, and **framed inside Pregonero there
+     * is no handle** — a cross-origin subframe cannot open a picker, which is why the host mounts
+     * the folder instead. So `resolvedMedia` was empty on the walk's machine, `broadcastMedia`
+     * sent nothing, and `resolveMediaUrl` fell back to the bare name, which the output window
+     * resolves against its OWN directory and not against the mount.
+     *
+     * **The output window must never fetch it itself**, and that is not a preference: it sits on
+     * the projector, it is a separate top-level document, and it is deliberately handed no `media`
+     * parameter. **The control window reads and the output window is given Blobs** — the same
+     * mechanism the folder already uses, with `fetch` where the handle would be.
+     *
+     * A failure is recorded under the same shape as a missing file in a folder, so the one status
+     * line under the picker reports both.
+     */
+    for (const name of names) {
+      try {
+        const res = await fetch(hostedMediaUrl(name), { cache: "no-store" });
+        if (!res.ok) throw new Error(res.status === 404 ? "not in this folder" : `HTTP ${res.status}`);
+        const blob = await res.blob();
+        // **A token the mount can actually answer for.** Size plus the served `Last-Modified`,
+        // falling back to the size alone: what it has to do is change when the bytes change, and
+        // a value that changed on every fetch would rebuild every video on every send.
+        const stamp = res.headers.get("last-modified") || "";
+        next.set(name, { token: `${blob.size}|${stamp}`, blob });
+      } catch (err) {
+        failures.push({ src: name, reason: (err && err.message) || "could not be read" });
       }
     }
   }
@@ -2688,6 +2765,7 @@ function projectFromVisuals(doc, expectedGigId) {
     backdropMode: "photo",
     cameraDeviceId: typeof doc.cameraDeviceId === "string" ? doc.cameraDeviceId : null,
     cameraQuad: isValidQuad(doc.cameraQuad) ? doc.cameraQuad : null,
+    modes: Array.isArray(doc.modes) ? doc.modes : [],
     surfaces: Array.isArray(doc.shapes) ? doc.shapes : [],
     songVisuals: doc.songVisuals,
   });
@@ -2839,6 +2917,10 @@ function visualsDocument() {
     gigId: gig ? gig.id : null,
     cameraDeviceId: project.cameraDeviceId,
     cameraQuad: project.cameraQuad,
+    // **THE MODES, AND THE ORDER IS THE RULE.** First whose condition is true wins; when none is
+    // true no mode is live and only the no-mode shapes paint. A reader that takes this as `[0]`
+    // and `[1]` is reading a format that promises more than it does — see `modes.js`.
+    modes: project.modes,
     shapes: project.surfaces,
     songVisuals: sanitizeSongVisuals(project.songVisuals),
   };
@@ -2997,6 +3079,19 @@ import {
 // The stage capture's maths, in a file of its own so `node --test` can reach
 // it without a DOM - the same reason `warp.js` is a file of its own.
 import { stageSampler } from "./stageCapture.js";
+// NAMED MODES. The resolution rule is the half of this model that has to be
+// PROVED rather than looked at - see `modes.js`, and `modes.test.mjs` beside it
+// for the three-mode room that keeps the list from being a claim.
+import {
+  CONDITION_STATES,
+  SEEDED_MODES,
+  activeModeId as resolveActiveModeId,
+  dropUnknownMembership,
+  genModeId,
+  sanitizeModes,
+  shapeModeId,
+  shapeShowsInMode,
+} from "./modes.js";
 
 // =========================================================================
 // THE FLOW
@@ -3083,14 +3178,18 @@ const DEFAULT_FRAME = [
  * which did not exist. **This is the 02/09 default policy expressed in custom's
  * own vocabulary rather than hardcoded**, which was the point of the field:
  *
- * - a `song-video` shape filling the frame;
- * - a `song-lyrics` shape at its foot, **visible when the video is FILLED**;
- * - a `song-lyrics` shape filling the frame, **visible when the video is EMPTY**.
+ * - a `song-video` shape filling the frame, **in no mode, so it is always there**;
+ * - a `song-lyrics` shape at its foot, **in `Song with video and lyrics`**;
+ * - a `song-lyrics` shape filling the frame, **in `Song with lyrics`**.
  *
  * **So a song with an animation gets video with words at its foot, and a song
  * without gets words across the projector's frame — same room, no geometry
  * moved.** One renderer, not two, and the default is a preset rather than a
  * separate world.
+ *
+ * **The two modes are seeded WITH the shapes and by the same function**, because
+ * a room is shapes and the groups they fall into and the seed is one act. It is
+ * also the only place a mode is ever created: there is no `+ Add mode`.
  *
  * Later in the list is on top, so the lyrics go after the frame.
  */
@@ -3175,8 +3274,7 @@ function goToFlowStep(step) {
  */
 function seedDefaultLayout() {
   if (project.surfaces.length > 0) return false;
-  let videoId = null;
-  DEFAULT_LAYOUT.forEach(({ type, name, corners, key, when }) => {
+  DEFAULT_LAYOUT.forEach(({ type, name, corners }) => {
     const shape = defaultShape(project.surfaces.length + 1);
     shape.name = name;
     const quad = corners ?? DEFAULT_FRAME;
@@ -3184,11 +3282,17 @@ function seedDefaultLayout() {
     shape.outline = quad.map(([x, y]) => [x, y]);
     project.surfaces.push(shape);
     setLayerType(shape.id, type);
-    if (key === "video") videoId = shape.id;
-    // **The condition is set through the same setter a person uses**, so the
-    // one-level rule and the target check apply to the default too. If they
-    // ever disagreed, the default would be the thing that could not be authored.
-    if (when && videoId) setShapeCondition(shape.id, videoId, when);
+  });
+
+  // **The modes come after the shapes, because a mode's condition names one.**
+  // `seededModesFor` finds the video shape itself rather than being handed an
+  // id, so the seed and a room arriving without modes take the same path — one
+  // definition of *the seeded pair*, not two that can drift.
+  project.modes = seededModesFor(project.surfaces);
+  const byWhen = new Map(project.modes.map((m) => [m.when ? m.when.is : null, m.id]));
+  DEFAULT_LAYOUT.forEach(({ when }, i) => {
+    const shape = project.surfaces[i];
+    if (shape && when && byWhen.has(when)) shape.mode = byWhen.get(when);
   });
 
   // **EVERY SHAPE OF A SONG-AWARE TYPE IS THAT TYPE'S DEFAULT** (item 3, 2026-09-04). The
@@ -3976,6 +4080,17 @@ function buildSongAssetRow(shape, songId) {
  *
  * **Item 11: the rows annotate in Mode B** with what that song puts there and whether it lights, so
  * the whole song is readable without opening anything.
+ *
+ * ── 2026-09-05: THE LIST IS GROUPED, AND THE GROUPING *IS* THE ASSIGNMENT SURFACE ──────────────
+ *
+ * **Jorge's ruling: dependencies are never set up from inside a shape.** So the per-shape condition
+ * editor is gone and a shape joins a mode **by being dragged into its group** — the gesture that
+ * was already on these rows for paint order, doing one more thing in the one place the room is
+ * laid out.
+ *
+ * **The groups are the modes, in resolution order, then `ALWAYS` for the no-mode shapes.** Order
+ * inside a group is still paint order, and dragging across a boundary reorders and reassigns in one
+ * move, because they are the same list underneath.
  */
 function renderShapeList() {
   const list = document.getElementById("shape-list");
@@ -3987,12 +4102,6 @@ function renderShapeList() {
   const status = document.getElementById("shape-status");
   status.hidden = !shapeStatus;
   status.textContent = shapeStatus;
-  const depsButton = document.getElementById("btn-show-dependencies");
-  depsButton.setAttribute("aria-pressed", String(showDependencies));
-  depsButton.classList.toggle("on", showDependencies);
-  // The whole control is absent when nothing depends on anything: an overlay of
-  // an empty set is a button that does nothing, twice.
-  depsButton.parentElement.hidden = !project.surfaces.some((s) => shapeCondition(s) !== null);
 
   // Item 7: `+ Add shape` is Mode A's. A song does not add shapes to the room.
   document.getElementById("btn-add-shape").hidden = modeB;
@@ -4005,138 +4114,267 @@ function renderShapeList() {
     return;
   }
 
-  project.surfaces.forEach((shape) => {
-    const row = document.createElement("li");
-    row.className = "surface-row";
-    row.dataset.shapeId = shape.id;
-    if (shape.id === selectedShapeId) row.classList.add("selected");
-    if (!shape.visible) row.classList.add("hidden-surface");
-    row.addEventListener("click", () => selectShape(shape.id));
-    // Item 12: hovering a row reads the room the same way selecting does, temporarily.
-    row.addEventListener("pointerenter", () => setHoveredShape(shape.id));
-    row.addEventListener("pointerleave", () => setHoveredShape(null));
+  // **Mode B is a reading screen and stays one flat list.** A song does not move shapes between
+  // modes — the modes ARE how a song is answered — so grouping there would offer a gesture that is
+  // refused, on the screen whose whole point is that nothing about the room can be edited.
+  if (modeB) {
+    project.surfaces.forEach((shape) => list.appendChild(buildShapeRow(shape, songId, modeB)));
+    return;
+  }
 
-    const head = document.createElement("div");
-    head.className = "surface-row-head";
-
-    // **The drag handle, and it is only a handle in Mode A.** Reordering is paint order, which is
-    // the room's; a song does not restack the wall.
-    if (!modeB) {
-      const grip = document.createElement("span");
-      grip.className = "surface-grip";
-      grip.title = "Drag to reorder (later in the list paints on top)";
-      grip.textContent = "⠿";
-      grip.draggable = true;
-      wireRowDrag(grip, row, shape.id);
-      head.appendChild(grip);
-    }
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "surface-name";
-    nameSpan.textContent = shape.name;
-    head.appendChild(nameSpan);
-
-    if (modeB) {
-      const note = document.createElement("span");
-      note.className = "surface-note";
-      note.textContent = songRowAnnotation(shape, songId);
-      if (note.textContent.startsWith("dark")) note.classList.add("is-dark");
-      head.appendChild(note);
-    }
-
-    const actions = document.createElement("div");
-    actions.className = "surface-actions";
-
-    // **The pencil opens the Shape accordion under this row** (item 5). It was a rename prompt; the
-    // name is a field inside the accordion now, where the rest of the shape is.
-    const openBtn = document.createElement("button");
-    openBtn.type = "button";
-    openBtn.className = "icon-btn";
-    openBtn.title = openShapeId === shape.id ? "Close" : "Edit this shape";
-    openBtn.setAttribute("aria-expanded", String(openShapeId === shape.id));
-    openBtn.textContent = "✏️";
-    openBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleShapeAccordion(shape.id);
-    });
-    actions.appendChild(openBtn);
-
-    if (!modeB) {
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "icon-btn danger";
-      deleteBtn.title = "Delete shape";
-      deleteBtn.textContent = "\u{1F5D1}\uFE0F"; // trash
-      deleteBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        // **Refused before being asked.** Confirming a deletion and then being told
-        // it cannot happen is two presses for one refusal.
-        const blocked = deleteBlocker(shape.id);
-        if (blocked) {
-          setShapeStatus(blocked);
-          renderControl();
-          return;
-        }
-        if (window.confirm(`Delete "${shape.name}"?`)) removeShape(shape.id);
-      });
-      actions.appendChild(deleteBtn);
-    }
-
-    head.appendChild(actions);
-    row.appendChild(head);
-
-    // **THE ACCORDION, UNDER ITS OWN ROW** (item 5). Not a panel further down the sidebar: the
-    // thing being edited and the controls that edit it are one block, so there is nothing to
-    // scroll between and nothing to lose track of.
-    if (openShapeId === shape.id) {
-      const panel = document.createElement("div");
-      panel.className = "shape-accordion";
-      /**
-       * **THE ACCORDION SWALLOWS THE ROW'S CLICK, AND THIS IS WHY ITS FIELDS COULD NOT BE TYPED
-       * IN** (Jorge, 2026-09-04, walking Pregonero `v0.60.0`).
-       *
-       * **It was not the drag.** `draggable` is on the grip alone and always was, so a mousedown on
-       * a field never reached a drag handler. **It was the row's own `click`**: it calls
-       * `selectShape`, which calls `renderControl`, which rebuilds this whole list — **so clicking
-       * into a field destroyed the field, mid-click.** Focus had nowhere to land.
-       *
-       * **Stopped at the accordion, not on each input**, because a per-input fix is a rule nobody
-       * will remember for the next control added here: the accordion is the editor and the row is
-       * the selector, and the boundary between them is one place. `pointerdown` goes with `click`
-       * so a drag-select inside a textarea does not start one either.
-       */
-      panel.addEventListener("click", (e) => e.stopPropagation());
-      panel.addEventListener("pointerdown", (e) => e.stopPropagation());
-      /**
-       * **AND IT CLOSES WHEN FOCUS LEAVES IT** (item 3). `relatedTarget` is where focus is going:
-       * null when it is going nowhere (a click on the canvas, on the page's own background), and
-       * an element inside this panel when it is only moving between its own fields — which must
-       * not close it mid-edit.
-       *
-       * `renderControl` rebuilds the list, so this listener dies with the panel it is on. That is
-       * the reason it is here rather than on the document: nothing to unbind, and nothing left
-       * watching for a shape that is no longer open.
-       */
-      const accordionShapeId = shape.id;
-      panel.addEventListener("focusout", (e) => {
-        if (e.relatedTarget && panel.contains(e.relatedTarget)) return;
-        // **A PANEL ONLY CLOSES ITS OWN SHAPE**, and this is not defensive coding — it is the
-        // whole difference between item 3 working and item 3 undoing itself. Clicking a shape on
-        // the canvas while a field in here has focus runs `selectShape` on `pointerdown`, which
-        // opens the NEW shape and re-renders; the blur that follows still reaches this listener,
-        // which belongs to the old shape, and without this line it would shut the accordion the
-        // click had just opened. **Measured, not guessed**: the row highlighted, no accordion
-        // appeared, and the trace read `select`, `select`, `close` in that order. (`isConnected`
-        // was tried first and did not hold — the panel still reads as connected at that point.)
-        if (openShapeId !== accordionShapeId) return;
-        closeShapeAccordion();
-      });
-      buildShapeAccordion(panel, shape, songId);
-      row.appendChild(panel);
-    }
-
-    list.appendChild(row);
+  const active = activeModeIdInPreview();
+  projectModes().forEach((mode) => {
+    appendModeGroup(list, mode, mode.id === active);
   });
+  appendAlwaysGroup(list);
+}
+
+/**
+ * **One mode's group: a header carrying the name and the condition, then its rows.**
+ *
+ * **The name is editable in place and the condition is READ-ONLY** (Jorge, 2026-09-05). Renaming is
+ * the whole of what an author needs — the names were his — and **shipping an editor for a language
+ * with one sentence in it** is the general mechanism he explicitly did not ask for. The condition
+ * is shown so the concept is visible, not so it can be typed.
+ *
+ * **There is no `+ Add mode` and no bin.** A mode is emptied by dragging its rows out, never
+ * deleted: deleting one orphans its shapes, and a shape reachable from no group is a shape nobody
+ * can find again.
+ *
+ * **The mode you are not previewing keeps its header and loses its rows** (Jorge, twice: *he does
+ * not want to see the shapes of the mode he is not looking at*). The header stays because it is
+ * still a drop target and still names the group — a group that vanished would take with it the only
+ * way to put a shape into it — and it says how many shapes are in there, which is the fact a
+ * collapsed list owes.
+ */
+function appendModeGroup(list, mode, previewed) {
+  const shapes = shapesInMode(mode.id);
+  const group = document.createElement("li");
+  group.className = "shape-group" + (previewed ? " previewed" : "");
+
+  const head = document.createElement("div");
+  head.className = "shape-group-head";
+
+  const name = document.createElement("input");
+  name.type = "text";
+  name.className = "shape-group-name";
+  name.value = mode.name;
+  name.setAttribute("aria-label", "Mode name");
+  name.addEventListener("change", () => renameMode(mode.id, name.value));
+  // A click on the field must not fall through to the group and re-render the input mid-click —
+  // the same trap the shape accordion hit on 2026-09-04, and the same one-line answer.
+  name.addEventListener("click", (e) => e.stopPropagation());
+  head.appendChild(name);
+
+  const when = document.createElement("span");
+  when.className = "shape-group-when";
+  when.textContent = modeConditionSentence(mode);
+  head.appendChild(when);
+
+  group.appendChild(head);
+  // The header is a drop target so a shape can be moved into a mode whose rows are collapsed.
+  wireGroupDrop(head, mode.id);
+  wireGroupDrop(group, mode.id);
+
+  const rows = document.createElement("ul");
+  rows.className = "surface-sublist";
+  if (previewed) {
+    shapes.forEach((shape) => rows.appendChild(buildShapeRow(shape, null, false)));
+    if (shapes.length === 0) rows.appendChild(emptyGroupRow("nothing yet"));
+  } else {
+    rows.appendChild(
+      emptyGroupRow(
+        shapes.length === 0
+          ? "nothing yet"
+          : `${shapes.length} shape${shapes.length === 1 ? "" : "s"} — preview this mode to see them`
+      )
+    );
+  }
+  group.appendChild(rows);
+  list.appendChild(group);
+}
+
+/**
+ * **`ALWAYS`: the shapes in no mode, which is most rooms' backdrop, logo and video frame.**
+ *
+ * **No mode means always displayed**, so these appear under every selection — correctly, and
+ * **marked as always-on or they read as duplicates while toggling**, which is the one thing that
+ * group's heading is for.
+ */
+function appendAlwaysGroup(list) {
+  const shapes = shapesInMode(null);
+  const group = document.createElement("li");
+  group.className = "shape-group shape-group-always previewed";
+
+  const head = document.createElement("div");
+  head.className = "shape-group-head";
+  const name = document.createElement("span");
+  name.className = "shape-group-name shape-group-name-static";
+  name.textContent = "ALWAYS";
+  head.appendChild(name);
+  const when = document.createElement("span");
+  when.className = "shape-group-when";
+  when.textContent = "in no mode — always on the wall";
+  head.appendChild(when);
+  group.appendChild(head);
+  wireGroupDrop(head, null);
+  wireGroupDrop(group, null);
+
+  const rows = document.createElement("ul");
+  rows.className = "surface-sublist";
+  shapes.forEach((shape) => rows.appendChild(buildShapeRow(shape, null, false)));
+  if (shapes.length === 0) rows.appendChild(emptyGroupRow("nothing yet"));
+  group.appendChild(rows);
+  list.appendChild(group);
+}
+
+/** The condition, in words, read-only. A mode with none says so rather than showing an empty box. */
+function modeConditionSentence(mode) {
+  if (mode.when === null) return "no condition — never live";
+  const target = findShape(mode.when.shape);
+  return `when: ${target ? target.name : mode.when.shape} is ${mode.when.is}`;
+}
+
+function emptyGroupRow(text) {
+  const li = document.createElement("li");
+  li.className = "surface-list-empty surface-group-empty";
+  li.textContent = text;
+  return li;
+}
+
+/** One shape's row. Everything that was inline in `renderShapeList` before the list was grouped. */
+function buildShapeRow(shape, songId, modeB) {
+  const row = document.createElement("li");
+  row.className = "surface-row";
+  row.dataset.shapeId = shape.id;
+  if (shape.id === selectedShapeId) row.classList.add("selected");
+  if (!shape.visible) row.classList.add("hidden-surface");
+  row.addEventListener("click", () => selectShape(shape.id));
+  // Item 12: hovering a row reads the room the same way selecting does, temporarily.
+  row.addEventListener("pointerenter", () => setHoveredShape(shape.id));
+  row.addEventListener("pointerleave", () => setHoveredShape(null));
+
+  const head = document.createElement("div");
+  head.className = "surface-row-head";
+
+  // **The drag handle, and it is only a handle in Mode A.** Reordering is paint order, which is
+  // the room's; a song does not restack the wall. **Since 2026-09-05 it also carries membership**,
+  // because dragging a row into another group is how a shape joins a mode.
+  if (!modeB) {
+    const grip = document.createElement("span");
+    grip.className = "surface-grip";
+    grip.title = "Drag to reorder, or into another mode";
+    grip.textContent = "⠿";
+    grip.draggable = true;
+    wireRowDrag(grip, row, shape.id);
+    head.appendChild(grip);
+  }
+
+  const nameSpan = document.createElement("span");
+  nameSpan.className = "surface-name";
+  nameSpan.textContent = shape.name;
+  head.appendChild(nameSpan);
+
+  if (modeB) {
+    const note = document.createElement("span");
+    note.className = "surface-note";
+    note.textContent = songRowAnnotation(shape, songId);
+    if (note.textContent.startsWith("dark")) note.classList.add("is-dark");
+    head.appendChild(note);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "surface-actions";
+
+  // **The pencil opens the Shape accordion under this row** (item 5). It was a rename prompt; the
+  // name is a field inside the accordion now, where the rest of the shape is.
+  const openBtn = document.createElement("button");
+  openBtn.type = "button";
+  openBtn.className = "icon-btn";
+  openBtn.title = openShapeId === shape.id ? "Close" : "Edit this shape";
+  openBtn.setAttribute("aria-expanded", String(openShapeId === shape.id));
+  openBtn.textContent = "✏️";
+  openBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleShapeAccordion(shape.id);
+  });
+  actions.appendChild(openBtn);
+
+  if (!modeB) {
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "icon-btn danger";
+    deleteBtn.title = "Delete shape";
+    deleteBtn.textContent = "\u{1F5D1}\uFE0F"; // trash
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // **Refused before being asked.** Confirming a deletion and then being told
+      // it cannot happen is two presses for one refusal.
+      const blocked = deleteBlocker(shape.id);
+      if (blocked) {
+        setShapeStatus(blocked);
+        renderControl();
+        return;
+      }
+      if (window.confirm(`Delete "${shape.name}"?`)) removeShape(shape.id);
+    });
+    actions.appendChild(deleteBtn);
+  }
+
+  head.appendChild(actions);
+  row.appendChild(head);
+
+  // **THE ACCORDION, UNDER ITS OWN ROW** (item 5). Not a panel further down the sidebar: the
+  // thing being edited and the controls that edit it are one block, so there is nothing to
+  // scroll between and nothing to lose track of.
+  if (openShapeId === shape.id) {
+    const panel = document.createElement("div");
+    panel.className = "shape-accordion";
+    /**
+     * **THE ACCORDION SWALLOWS THE ROW'S CLICK, AND THIS IS WHY ITS FIELDS COULD NOT BE TYPED
+     * IN** (Jorge, 2026-09-04, walking Pregonero `v0.60.0`).
+     *
+     * **It was not the drag.** `draggable` is on the grip alone and always was, so a mousedown on
+     * a field never reached a drag handler. **It was the row's own `click`**: it calls
+     * `selectShape`, which calls `renderControl`, which rebuilds this whole list — **so clicking
+     * into a field destroyed the field, mid-click.** Focus had nowhere to land.
+     *
+     * **Stopped at the accordion, not on each input**, because a per-input fix is a rule nobody
+     * will remember for the next control added here: the accordion is the editor and the row is
+     * the selector, and the boundary between them is one place. `pointerdown` goes with `click`
+     * so a drag-select inside a textarea does not start one either.
+     */
+    panel.addEventListener("click", (e) => e.stopPropagation());
+    panel.addEventListener("pointerdown", (e) => e.stopPropagation());
+    /**
+     * **AND IT CLOSES WHEN FOCUS LEAVES IT** (item 3). `relatedTarget` is where focus is going:
+     * null when it is going nowhere (a click on the canvas, on the page's own background), and
+     * an element inside this panel when it is only moving between its own fields — which must
+     * not close it mid-edit.
+     *
+     * `renderControl` rebuilds the list, so this listener dies with the panel it is on. That is
+     * the reason it is here rather than on the document: nothing to unbind, and nothing left
+     * watching for a shape that is no longer open.
+     */
+    const accordionShapeId = shape.id;
+    panel.addEventListener("focusout", (e) => {
+      if (e.relatedTarget && panel.contains(e.relatedTarget)) return;
+      // **A PANEL ONLY CLOSES ITS OWN SHAPE**, and this is not defensive coding — it is the
+      // whole difference between item 3 working and item 3 undoing itself. Clicking a shape on
+      // the canvas while a field in here has focus runs `selectShape` on `pointerdown`, which
+      // opens the NEW shape and re-renders; the blur that follows still reaches this listener,
+      // which belongs to the old shape, and without this line it would shut the accordion the
+      // click had just opened. **Measured, not guessed**: the row highlighted, no accordion
+      // appeared, and the trace read `select`, `select`, `close` in that order. (`isConnected`
+      // was tried first and did not hold — the panel still reads as connected at that point.)
+      if (openShapeId !== accordionShapeId) return;
+      closeShapeAccordion();
+    });
+    buildShapeAccordion(panel, shape, songId);
+    row.appendChild(panel);
+  }
+
+  return row;
 }
 
 /**
@@ -4147,15 +4385,16 @@ function renderShapeList() {
  */
 function songRowAnnotation(shape, songId) {
   const asset = songAssetFor(project, songId, shape.id);
-  const cond = shapeCondition(shape);
-  if (cond) {
-    const target = findShape(cond.shape);
-    const targetName = target ? target.name : cond.shape;
-    const targetFilled = songAssetFor(project, songId, cond.shape) !== null;
-    const shows = cond.is === "filled" ? targetFilled : !targetFilled;
-    if (!shows) {
-      return `dark — ${targetName} is ${targetFilled ? "filled" : "empty"}`;
-    }
+  // **The mode names the reason now**, which is the whole gain: `dark — Song with lyrics is not
+  // this song's mode` says which group the shape is in, where `dark — Frame is empty` said only
+  // what the mechanism read.
+  const mine = shapeModeId(shape);
+  if (mine !== null && mine !== activeModeIdInPreview()) {
+    const mode = findMode(mine);
+    const live = findMode(activeModeIdInPreview());
+    return live
+      ? `dark — this song is ${live.name}`
+      : `dark — ${mode ? mode.name : "its mode"} is not live for this song`;
   }
   if (typeTakesSongAsset(shapeType(shape))) {
     return asset ? asset : "dark — nothing assigned";
@@ -4200,6 +4439,9 @@ function wireRowDrag(grip, row, shapeId) {
   row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
   row.addEventListener("drop", (e) => {
     e.preventDefault();
+    // **The row's drop must not also reach its group's**, or a drop onto a row would move the
+    // shape into that group twice — once at the row's position and once at the group's end.
+    e.stopPropagation();
     row.classList.remove("drop-target");
     if (draggingShapeId === null || draggingShapeId === shapeId) return;
     moveShapeBefore(draggingShapeId, shapeId);
@@ -4208,8 +4450,38 @@ function wireRowDrag(grip, row, shapeId) {
 }
 
 /**
- * Moves `id` to sit where `beforeId` is. **Paint order is list order, so this restacks the wall** —
- * which is why it is a real edit and commits.
+ * **A GROUP IS A DROP TARGET, AND THAT IS THE WHOLE ASSIGNMENT SURFACE** (Jorge, 2026-09-05:
+ * dependencies are never set up from inside a shape).
+ *
+ * Dropping onto the group's empty space, or onto its header, puts the shape at the END of that
+ * group — the header is what makes a collapsed mode reachable at all, and the end is where an
+ * unplaced thing goes when the gesture said *this group* rather than *this position*.
+ */
+function wireGroupDrop(el, modeId) {
+  el.addEventListener("dragover", (e) => {
+    if (draggingShapeId === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    el.classList.add("drop-target");
+  });
+  el.addEventListener("dragleave", () => el.classList.remove("drop-target"));
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.remove("drop-target");
+    if (draggingShapeId === null) return;
+    moveShapeToGroupEnd(draggingShapeId, modeId);
+    draggingShapeId = null;
+  });
+}
+
+/**
+ * Moves `id` to sit where `beforeId` is, **taking `beforeId`'s mode with it**.
+ *
+ * **Reorder and reassign are one move because they are one list.** Paint order is list order, so
+ * this restacks the wall; membership is a field on the row, so landing among another group's rows
+ * is what joining that group means. Doing them separately would let a shape sit inside a group it
+ * does not belong to, which is the list disagreeing with the file.
  *
  * Removed first and re-found second: splicing by an index taken before the removal is off by one
  * whenever the shape moves down the list, and that is a bug that only shows on half the drags.
@@ -4217,10 +4489,23 @@ function wireRowDrag(grip, row, shapeId) {
 function moveShapeBefore(id, beforeId) {
   const from = project.surfaces.findIndex((s) => s.id === id);
   if (from === -1 || id === beforeId) return;
+  const target = findShape(beforeId);
   const [moved] = project.surfaces.splice(from, 1);
   const to = project.surfaces.findIndex((s) => s.id === beforeId);
   if (to === -1) project.surfaces.splice(from, 0, moved);
   else project.surfaces.splice(to, 0, moved);
+  setShapeMode(id, target ? shapeModeId(target) : null);
+  commitProjectChange();
+}
+
+/** Moves `id` to the end of `modeId`'s group, which is the top of that group's paint order. */
+function moveShapeToGroupEnd(id, modeId) {
+  const from = project.surfaces.findIndex((s) => s.id === id);
+  if (from === -1) return;
+  const [moved] = project.surfaces.splice(from, 1);
+  const last = project.surfaces.map((sh) => shapeModeId(sh)).lastIndexOf(modeId ?? null);
+  project.surfaces.splice(last === -1 ? project.surfaces.length : last + 1, 0, moved);
+  setShapeMode(id, modeId);
   commitProjectChange();
 }
 
@@ -4273,81 +4558,88 @@ function typeTakesSongAsset(type) {
 }
 
 /**
- * **ITEM 19: THE PREVIEW TOGGLES — one per condition, derived from what is there.**
+ * **THE MODE NAMES ARE THE SELECTOR** (Jorge, 2026-09-05). Two buttons side by side, one active at
+ * a time, on `1 SHAPES` and on `2 OUTPUT`. It replaces the `Video frame empty` / `Video frame
+ * filled` chip, which **spoke in mechanism where he speaks in modes** — and the names were his
+ * before the tool had an object to hang them on.
  *
- * **The canvas in `All` draws a room that will never exist**: Frame and *Lyrics across* occupy
- * nearly the same rectangle and are mutually exclusive by construction, so both faces are drawn at
- * once. One toggle per condition draws it as it will look in one branch.
+ * **The canvas in `All` used to draw a room that will never exist**: Frame and *Lyrics across*
+ * occupy nearly the same rectangle and are exclusive by construction, so both faces were drawn at
+ * once. Selecting a mode draws one branch.
  *
- * **Rejected: making the branches Scope entries.** Scope answers *who am I doing this for*, and that
- * governs what may be edited; *with video* is a state of the room, not a who — and they do not
- * scale: two entries for one condition, four for two, eight for three. **One toggle per condition
- * scales linearly.**
+ * **Rejected: making the modes Scope entries.** Scope answers *who am I doing this for*, and that
+ * governs what may be edited; *with video* is a state of the room, not a who.
  *
- * **A VIEW, NEVER A SETTING.** `previewFilled` is module state, is never persisted and never reaches
- * `visualsDocument()`. The name says so.
+ * **A VIEW, NEVER A SETTING.** `previewModeId` is module state, is never persisted and never
+ * reaches `visualsDocument()`. It is the one thing on this screen that changes what is drawn
+ * without changing what is saved, which is why the label says `Previewing:`.
  */
-const previewFilled = new Map();
+let previewModeId = null;
 
-function conditionTargetIds() {
-  const ids = [];
-  project.surfaces.forEach((shape) => {
-    const cond = shapeCondition(shape);
-    if (cond && !ids.includes(cond.shape)) ids.push(cond.shape);
-  });
-  return ids;
-}
-
-/** Whether a target reads as filled right now — the song's assignment in Mode B, the toggle in A. */
-function targetReadsFilled(targetId) {
-  const songId = previewSongId();
-  if (songId !== null) return songAssetFor(project, songId, targetId) !== null;
-  return previewFilled.get(targetId) === true;
-}
-
-/** Whether this shape shows on the canvas as drawn. Unconditional shapes always do. */
-function shapeShowsInPreview(shape) {
-  return shapeShowsUnderConditions(shape, targetReadsFilled);
+/**
+ * The mode being looked at in Mode A, defaulting to the first in the list.
+ *
+ * **Defaulted rather than nullable**, because *no mode selected* on a screen whose whole job is to
+ * show one branch is a room drawn with every group hidden — an empty canvas with nothing saying
+ * why. The list's order is the resolution order, so the first mode is the one a song with nothing
+ * assigned gets, which is the commoner case at a desk.
+ */
+function previewMode() {
+  const modes = projectModes();
+  if (modes.length === 0) return null;
+  return modes.find((m) => m.id === previewModeId) || modes[0];
 }
 
 /**
- * Which targets read as filled, as a list of ids, for the state message.
+ * **The live mode, and the two scopes answer it differently on purpose.**
  *
- * **The answer travels, not the inputs.** In Mode B it is derived from the song's assignments and
- * in Mode A from the toggles, and the output window has no business knowing which — it has no
- * toggles and no scope. One field, evaluated once, on the side that owns both.
+ * In Mode B the SONG decides: its assignments answer every condition, and the room resolves the
+ * way it will on the night. In Mode A there is no song, so the selector decides — which is what
+ * makes it a preview rather than a setting.
  */
-function filledTargetIds() {
-  return conditionTargetIds().filter(targetReadsFilled);
+function activeModeIdInPreview() {
+  const songId = previewSongId();
+  if (songId === null) {
+    const mode = previewMode();
+    return mode ? mode.id : null;
+  }
+  return activeModeIdFor((targetId) => songAssetFor(project, songId, targetId) !== null);
+}
+
+/** Whether this shape shows on the canvas as drawn. No-mode shapes always do. */
+function shapeShowsInPreview(shape) {
+  return shapeShowsInMode(shape, activeModeIdInPreview());
 }
 
 function renderPreviewToggles() {
   const bar = document.getElementById("canvas-preview-toggles");
-  const targets = previewSongId() === null ? conditionTargetIds() : [];
-  bar.hidden = targets.length === 0;
+  // **Absent in Mode B**, where the song's own assignments already decide which mode is live.
+  // Offering a choice that the song then overrules is a control that lies.
+  const modes = previewSongId() === null ? projectModes() : [];
+  bar.hidden = modes.length === 0;
   bar.innerHTML = "";
-  if (targets.length === 0) return;
+  if (modes.length === 0) return;
 
   const label = document.createElement("span");
   label.className = "preview-toggles-label";
   label.textContent = "Previewing:";
   bar.appendChild(label);
 
-  targets.forEach((id) => {
-    const target = findShape(id);
-    const filled = targetReadsFilled(id);
+  const active = activeModeIdInPreview();
+  modes.forEach((mode) => {
+    const on = mode.id === active;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "preview-toggle";
-    btn.dataset.target = id;
-    btn.setAttribute("aria-pressed", String(filled));
-    btn.textContent = `${target ? target.name : id} ${filled ? "filled" : "empty"}`;
+    btn.dataset.mode = mode.id;
+    btn.setAttribute("aria-pressed", String(on));
+    btn.textContent = mode.name;
     btn.addEventListener("click", () => {
-      previewFilled.set(id, !filled);
-      // **AND THE WALL FOLLOWS** (item 4). `renderControl` redraws this window and nothing else;
-      // without the broadcast the toggle moved the canvas while the output window kept whichever
-      // face it was last told about, which is exactly the disagreement this item is about. It is
-      // NOT `commitProjectChange`: a view is not a change to the file and must not be saved.
+      previewModeId = mode.id;
+      // **AND THE WALL FOLLOWS** (item 4, 2026-09-04). `renderControl` redraws this window and
+      // nothing else; without the broadcast the selector moved the canvas while the output window
+      // kept whichever mode it was last told about, which is exactly the disagreement that item is
+      // about. It is NOT `commitProjectChange`: a view is not a change to the file.
       broadcastState();
       renderControl();
     });
@@ -4416,9 +4708,10 @@ function renderPreview() {
     return;
   }
 
-  // **ITEM 19: the canvas draws ONE face of the room, not both.** A conditional shape whose branch
-  // is not the one being previewed is not drawn at all — that is the whole of what the toggle buys,
-  // and drawing it dimmed instead would be the overlap it exists to remove.
+  // **THE CANVAS DRAWS ONE MODE, NOT ALL OF THEM.** A shape belonging to a mode that is not the
+  // one being previewed is not drawn at all — that is the whole of what the selector buys, and
+  // drawing it dimmed instead would be the overlap it exists to remove. **No-mode shapes are drawn
+  // under every selection**, correctly, because that is what the wall does.
   project.surfaces
     .filter((shape) => shape.visible && shapeShowsInPreview(shape))
     .forEach((shape) => renderShapePreview(svg, shape));
@@ -4429,8 +4722,6 @@ function renderPreview() {
   // permanent wires are right on a dedicated graph surface and wrong on a
   // photograph of a wall with overlapping quads. So the links are on request,
   // and the badge above is what is always there.
-  if (showDependencies) renderDependencyLinks(svg);
-
   // **ASSIGNMENT ONLY WHILE A SONG IS PICKED** (Jorge, 2026-09-04). The handles disappear, because
   // you cannot drag what has no handle — and **never per-song geometry** is the ruling underneath
   // it: a song holding its own coordinates is silently wrong on stage after the room is remapped.
@@ -4454,9 +4745,20 @@ function renderPreview() {
  * Outline and name, and nothing else. A fill's margin is not drawn: it is a property of the mask,
  * and this is a picture of what the wall did.
  */
+/**
+ * **FINDING 2 OF THE 05/09 WALK: the preview toggle did nothing on `2 OUTPUT`** — both states drew
+ * the same picture. **The cause, measured rather than assumed:** this function filtered on
+ * `shape.visible` and on nothing else. It never asked about conditions at all, so the chip above it
+ * was live, was pressable, and could not change a single outline on the photograph.
+ *
+ * The selector filters here now, by the same rule the canvas and the wall draw by. **Closed by
+ * verification, not by replacement**: the finding says the new selector replaces the chip, and a
+ * replacement built over the same blind filter would have reproduced the defect exactly.
+ */
 function renderPhotoOutlines(svg) {
+  const active = activeModeIdInPreview();
   project.surfaces
-    .filter((shape) => shape.visible)
+    .filter((shape) => shape.visible && shapeShowsInMode(shape, active))
     .forEach((shape) => {
       const outline = shapeOutline(shape);
       if (!outline) return;
@@ -4475,34 +4777,17 @@ function renderPhotoOutlines(svg) {
     });
 }
 
-/** Whether every dependency link is drawn. A view state, never persisted. */
-let showDependencies = false;
-
-function toggleShowDependencies() {
-  showDependencies = !showDependencies;
-  renderControl();
-}
-
-/** One arrow per condition, from the dependent's centroid to the shape it reads. */
-function renderDependencyLinks(svg) {
-  project.surfaces.forEach((shape) => {
-    const cond = shapeCondition(shape);
-    if (!cond) return;
-    const from = shapeOutline(shape);
-    const target = findShape(cond.shape);
-    const to = target && shapeOutline(target);
-    if (!from || !to) return;
-    const [fx, fy] = ringCentroidNormalized(from);
-    const [tx, ty] = ringCentroidNormalized(to);
-    const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("x1", fx * PREVIEW_W);
-    line.setAttribute("y1", fy * PREVIEW_H);
-    line.setAttribute("x2", tx * PREVIEW_W);
-    line.setAttribute("y2", ty * PREVIEW_H);
-    line.setAttribute("class", "preview-dependency-link");
-    svg.appendChild(line);
-  });
-}
+/**
+ * **`show dependencies` IS RETIRED, AND SO IS THE RELATION IT DREW** (2026-09-05).
+ *
+ * It was CAD's constraint-overlay principle applied to shape-to-shape conditions: every link on
+ * request, because permanent wires over overlapping quads on a photograph of a wall are the node-
+ * editor anti-pattern. **Under modes there are no shape-to-shape links left to draw.** Membership
+ * is a group in the list, which is a permanent overview that costs the canvas nothing — the exact
+ * thing the overlay was standing in for.
+ *
+ * Its button, its arrows and the per-shape `⇢ target filled` badge all went together.
+ */
 
 function ringPointsAttr(points, w, h) {
   return points.map(([x, y]) => `${x * w},${y * h}`).join(" ");
@@ -4616,26 +4901,27 @@ function renderShapePreview(svg, shape) {
   svg.appendChild(edge);
 
   /**
-   * **ITEM 13: THE STAND-IN RENDERS ON THE CANVAS, AND IT WAS NOT RENDERING AT ALL.**
+   * **FINDING 3 OF THE 05/09 WALK: THE DUMMY LYRICS COME OUT OF THE CANVAS.** Jorge retracts his
+   * own decision of 04/09, and the reason is finding 4 beside it: **the preview shows a small
+   * offset between a shape and the whiteboard that is not there on the wall** — camera and
+   * projector do not share a viewpoint — and **placeholder text drawn inside a shape that sits
+   * slightly off the real board reads as a misplacement rather than as a stand-in.**
    *
-   * Reported before building, as asked: the canvas drew the word `lyrics` on a badge, and the
-   * string only ever reached the OUTPUT window. **So `maxSize` and `aspect` — the two controls that
-   * exist to be tuned against the worst case — were tuned blind.**
+   * **He positions against the wall, not against the canvas**, so the canvas owes IDENTIFICATION
+   * and not legibility. Outlines and labels stay; the words go.
    *
-   * **IT IS THE OUTPUT'S OWN RENDERER, NOT A SECOND ONE.** `createTextLayerElement`,
-   * `applyTextLayer` and the auto-fit inside it are the same functions the wall runs, mounted in a
-   * `foreignObject` over the preview's own viewBox and warped by `frameMatrix3d` exactly as the
-   * output warps it. **A second implementation is what this suite has a rule against** — the
-   * boundary between the two tools is asserted rather than shared precisely because two
-   * implementations drift — and it would drift here in the one place it must not: the size a person
-   * tunes against.
+   * **What ITEM 13 bought is not lost, it moved.** That item existed because `maxSize` and
+   * `aspect` were being tuned blind — the stand-in only ever reached the OUTPUT window. It still
+   * reaches the output window, which is where the tuning happens now: the wall is the truth, and
+   * that was the whole argument of finding 4.
    *
-   * So the canvas shows the auto-fit shrinking a line that beats the boundary, which is the fact
-   * `maxSize` is for.
+   * **A `text` shape still draws its string, and the distinction is the point.** What a `text`
+   * shape holds is content somebody typed into this tool; what a `song-lyrics` shape holds is a
+   * fiction standing in for words this tool never sees. **The canvas draws what is real.**
    */
   const frame = shapeFrame(shape);
   const warp = frame ? frameMatrix3d(frame, PREVIEW_W, PREVIEW_H) : null;
-  if (typeTakesTextFormatting(type) && warp) {
+  if (type === "text" && warp) {
     const holder = document.createElementNS(SVG_NS, "foreignObject");
     holder.setAttribute("x", "0");
     holder.setAttribute("y", "0");
@@ -4658,11 +4944,12 @@ function renderShapePreview(svg, shape) {
   }
 
   /**
-   * **ITEM 14: only the focused shape shows its name and its dependency badge**, or every shape
-   * when `show dependencies` is on. With the text rendering, permanent labels on every shape are a
-   * third layer of overlap on quads that already share a rectangle.
+   * **ITEM 14: only the focused shape shows its name and its type badge.** Permanent labels on
+   * every shape are a layer of overlap on quads that already share a rectangle — which the
+   * three-shape default makes unavoidable — and the mode selector now hides one of the two
+   * overlapping lyrics shapes outright, so the remaining overlap is the one worth marking.
    */
-  const labelled = focused || showDependencies;
+  const labelled = focused;
 
   if (labelled && type !== "pattern" && type !== "fill") {
     const isAlphaOverlay = type === "image" && /\.webm$/i.test(layer.src || "");
@@ -4681,27 +4968,14 @@ function renderShapePreview(svg, shape) {
   }
 
   /**
-   * **A SMALL PERMANENT BADGE NAMING WHAT THIS SHAPE DEPENDS ON.**
+   * **THE `⇢ Video frame filled` BADGE IS GONE WITH THE RELATION IT NAMED** (2026-09-05).
    *
-   * Keynote's build-order principle: **an invisible property needs a visible
-   * mark, or the failure is *why did that not appear*.** And **a badge naming
-   * the dependency beats a mark that only says one exists** — the question at
-   * the wall is which shape, not whether.
-   *
-   * **Unconditional shapes pay nothing**: this branch does not run for them,
-   * which is most of them.
+   * Keynote's build-order principle stands — *an invisible property needs a visible mark, or the
+   * failure is "why did that not appear"* — and **the mark is now the group in the shape list plus
+   * the selector above the canvas**, which say the same thing permanently and without drawing on
+   * the wall. A badge naming a shape-to-shape dependency would name a relation that no longer
+   * exists.
    */
-  const cond = shapeCondition(shape);
-  if (cond && labelled) {
-    const target = findShape(cond.shape);
-    const [bx, by] = ringCentroidNormalized(outline);
-    const mark = document.createElementNS(SVG_NS, "text");
-    mark.setAttribute("x", bx * PREVIEW_W);
-    mark.setAttribute("y", by * PREVIEW_H + 34);
-    mark.setAttribute("class", "preview-condition-badge" + dark);
-    mark.textContent = `⇢ ${target ? target.name : cond.shape} ${cond.is}`;
-    svg.appendChild(mark);
-  }
 }
 
 function renderBackdrop() {
@@ -5563,89 +5837,15 @@ function panelDivider(container, title) {
 }
 
 /**
- * **THE RULE IS AUTHORED ON THE SHAPE IT AFFECTS, AS A SENTENCE.**
+ * **`buildConditionRow` IS GONE** (2026-09-05). It drew `Show only when [ Frame ▾ ] is [ empty ▾ ]`
+ * inside each shape's accordion, on the form-builder argument that **sentences read correctly to
+ * non-technical authors where field / operator / value grids do not**. That argument was right and
+ * the surface was still wrong: **the thing being authored was never a property of one shape.**
  *
- * `Show only when [ Frame ▾ ] is [ empty ▾ ]`. Form builders are the pattern:
- * **sentences read correctly to non-technical authors where field / operator /
- * value grids do not.** Their other lesson is the ceiling — past roughly ten
- * rules a per-element pattern becomes invisible and needs an overview — and at
- * three shapes it does not.
- *
- * **UNCONDITIONAL SHAPES PAY NOTHING**: one closed select reading `Always`, and
- * no second control until there is something to say.
- *
- * **A shape something else depends on cannot take a condition**, and the row
- * says so rather than vanishing: that is the one-level rule, and a control that
- * disappeared would leave the person guessing why.
+ * The sentence survives as the mode's read-only condition line in the shape list's group header.
+ * **Nobody types it**, because the language it is written in has exactly one sentence in it, and
+ * an editor for that is a general mechanism shipped ahead of a second condition existing.
  */
-function buildConditionRow(container, shape) {
-  const targets = conditionTargets(shape);
-  const dependents = dependentsOf(shape.id);
-  const cond = shapeCondition(shape);
-
-  const row = document.createElement("div");
-  row.className = "layer-field condition-row";
-
-  const label = document.createElement("label");
-  label.textContent = "Show";
-  row.appendChild(label);
-
-  const sentence = document.createElement("div");
-  sentence.className = "condition-sentence";
-
-  const whichSelect = document.createElement("select");
-  whichSelect.id = "condition-shape-select";
-  const always = document.createElement("option");
-  always.value = "";
-  always.textContent = "always";
-  whichSelect.appendChild(always);
-  targets.forEach((s) => {
-    const opt = document.createElement("option");
-    opt.value = s.id;
-    opt.textContent = `only when ${s.name}`;
-    whichSelect.appendChild(opt);
-  });
-  whichSelect.value = cond ? cond.shape : "";
-  whichSelect.disabled = dependents.length > 0;
-  whichSelect.addEventListener("change", () =>
-    setShapeCondition(shape.id, whichSelect.value, cond ? cond.is : "filled")
-  );
-  sentence.appendChild(whichSelect);
-
-  if (cond) {
-    const is = document.createElement("span");
-    is.className = "condition-word";
-    is.textContent = "is";
-    sentence.appendChild(is);
-
-    const stateSelect = document.createElement("select");
-    stateSelect.id = "condition-state-select";
-    CONDITION_STATES.forEach((state) => {
-      const opt = document.createElement("option");
-      opt.value = state;
-      opt.textContent = state;
-      stateSelect.appendChild(opt);
-    });
-    stateSelect.value = cond.is;
-    stateSelect.addEventListener("change", () =>
-      setShapeCondition(shape.id, cond.shape, stateSelect.value)
-    );
-    sentence.appendChild(stateSelect);
-  }
-
-  row.appendChild(sentence);
-  container.appendChild(row);
-
-  if (dependents.length > 0) {
-    const why = document.createElement("p");
-    why.className = "layer-hint";
-    why.id = "condition-blocked";
-    why.textContent = `${dependents.map((s) => s.name).join(", ")} ${
-      dependents.length === 1 ? "depends" : "depend"
-    } on this shape, so it cannot depend on another.`;
-    container.appendChild(why);
-  }
-}
 
 /**
  * **THE SHAPE ACCORDION: Type · Content · Visibility · Format** (item 5, Jorge, 2026-09-04).
@@ -5708,8 +5908,14 @@ function buildShapeAccordion(container, shape, songId) {
   if (modeB) return;
 
   // ---- VISIBILITY ----
+  //
+  // **THE CONDITION ROW IS GONE FROM HERE, AND THAT IS THE POINT OF THE ROUND** (Jorge,
+  // 2026-09-05: *dependencies are never set up from inside a shape*). `Show only when [ Frame ▾ ]
+  // is [ empty ▾ ]` was a per-shape rule authored in a per-shape editor, and it is the surface the
+  // named mode replaced. **The mode owns the condition; the shape list owns membership; this panel
+  // owns what the shape looks like.** What is left under this heading is opacity, which really is
+  // a property of the shape.
   panelDivider(container, "Visibility");
-  buildConditionRow(container, shape);
   buildOpacityRow(container, shape, layer);
 
   // ---- FORMAT ----
@@ -6392,9 +6598,6 @@ function wireBackdropFold() {
 function wireControlEvents() {
   wireBackdropFold();
   document.getElementById("btn-add-shape").addEventListener("click", addShape);
-  document
-    .getElementById("btn-show-dependencies")
-    .addEventListener("click", toggleShowDependencies);
 
   document.getElementById("btn-open-output").addEventListener("click", () => {
     // Hand the output window THIS window's build token (see the bootstrap in
@@ -6578,15 +6781,11 @@ function outputPreviewSongId() {
 }
 
 /**
- * The ids the control window says read as *filled* (item 4). **Received, never computed**: this
- * window has no toggles and no scope, and a second opinion about which face of the room is up is
- * exactly the disagreement Jorge saw.
+ * The mode the control window says is live (item 4). **Received, never computed**: this window has
+ * no selector and no scope, and a second opinion about which face of the room is up is exactly the
+ * disagreement Jorge saw.
  */
-let outputFilled = new Set();
-
-function outputTargetReadsFilled(targetId) {
-  return outputFilled.has(targetId);
-}
+let outputModeId = null;
 
 
 function renderOutput() {
@@ -6605,7 +6804,7 @@ function renderOutput() {
       s.visible &&
       !shapeIsDarkForPreview(project, s, songId) &&
       // Item 4: the same rule the canvas draws by, from the answer that rode with the state.
-      shapeShowsUnderConditions(s, outputTargetReadsFilled)
+      shapeShowsInMode(s, outputModeId)
   );
   const visibleIds = new Set(visibleShapes.map((s) => s.id));
 
@@ -6785,6 +6984,36 @@ function applyOutlineClip(entry, shape, w, h) {
     : "";
 }
 
+/**
+ * **FINDING 1 OF THE 05/09 WALK — THE OTHER HALF. A `song-video` SHAPE NOW MOUNTS THE SONG'S CLIP.**
+ *
+ * *A video was assigned and `Play` does not play it.* **It could not**: `createSongVideoLayerElement`
+ * built a panel reading `SONG VIDEO / <name>` and no `<video>` element existed for the transport to
+ * find. The comment above it said *Muralista is never allowed to know which file that is* — and
+ * **that was true until song visual setup shipped and made Muralista the thing that AUTHORS the
+ * assignment.** The boundary it was defending had already moved; the renderer had not.
+ *
+ * **The line that still holds is the one about SONGS, not about files.** Muralista reads `gig.json`
+ * and nothing else: it never learns a song's words, its timeline or its tempo. What it knows is
+ * which clip a song puts in which shape, because that is the thing it was given a UI to say.
+ *
+ * **In `All — the room` the placeholder stays.** No song is picked, so there is no clip to name,
+ * and the extent — the quad filled edge to edge with the shape's name in it — is exactly what that
+ * scope is for. A song's clip appears when a song is being looked at, which is when the reason to
+ * press `Play` exists at all.
+ *
+ * Returned as a synthesised `video` layer rather than special-cased downstream, so the reconciler,
+ * the failure note, the blob resolution and the transport all treat it as what it is.
+ */
+function effectiveLayerFor(shape) {
+  const layer = shape.layer || { type: "pattern", src: null, opacity: 1 };
+  if (shapeType(shape) !== "song-video") return layer;
+  const songId = outputPreviewSongId();
+  const asset = songId ? songAssetFor(project, songId, shape.id) : null;
+  if (!asset) return layer;
+  return { ...layer, type: "video", src: asset };
+}
+
 // Renders (or reconciles) the content that lives inside a shape's warped
 // wrapper. Only recreates the content element when layer.type or layer.src
 // changed since the last render; otherwise just refreshes cheap properties
@@ -6797,7 +7026,7 @@ function applyOutlineClip(entry, shape, w, h) {
 // normalized ones. Video and image layers do not read them and go on filling
 // their quads exactly as they always have - the stretch is theirs to keep.
 function renderLayer(shape, entry, w, h) {
-  const layer = shape.layer || { type: "pattern", src: null, opacity: 1 };
+  const layer = effectiveLayerFor(shape);
   // Reconcile against the URL actually mounted, not the name in the project.
   // The name can stay put while the URL underneath it changes - a media folder
   // arriving, being reconnected, or being cleared all re-point an unchanged

@@ -354,6 +354,94 @@ button.danger:hover {
   font-size: 13px;
 }
 
+/* ===== The shape list, grouped by mode (2026-09-05) =====
+   The grouping IS the assignment surface: a shape joins a mode by being dragged into its group.
+   So a group has to read as a CONTAINER with an inside and an edge, not as a heading with rows
+   under it — you have to be able to see where a drop lands. */
+.shape-group {
+  list-style: none;
+  border: 1px solid var(--border);
+  margin: 0 0 8px;
+}
+
+/* **Two lines, name over condition**, because the sidebar is narrow and a name that truncates is
+   a name you cannot check. They are also two different kinds of thing — one is yours to change and
+   one is the tool's to state — and stacking them says that without a second colour. */
+.shape-group-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  background: var(--bg-row);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+/* The name is editable in place: renaming is the whole of what an author needs, and a field that
+   looks like a field is what says so. The condition beside it is not one. */
+.shape-group-name {
+  width: 100%;
+  min-width: 0;
+  font-family: var(--font-label);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 2px 4px;
+}
+
+.shape-group-name:hover,
+.shape-group-name:focus {
+  border-color: var(--border);
+  background: var(--bg);
+}
+
+.shape-group-name-static {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+/* READ-ONLY, and it looks it: no box, dim, right-aligned. The concept is visible without an
+   editor for a language with one sentence in it. */
+.shape-group-when {
+  color: var(--text-faint);
+  font-family: var(--font-label);
+  font-size: 11px;
+  padding: 0 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surface-sublist {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.surface-group-empty {
+  padding: 6px 6px;
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* The mode being previewed is the one whose shapes are drawn, so it is the one whose rows are
+   listed. The others keep their header — it is still a drop target — and say how many they hold. */
+.shape-group.previewed > .shape-group-head {
+  border-left: 2px solid var(--state-live-border);
+}
+
+.shape-group.drop-target,
+.shape-group-head.drop-target {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
 /* ===== Sidebar: layer panel + backdrop (slice 3) ===== */
 
 .sidebar-section {
@@ -1454,38 +1542,10 @@ body.role-output {
   color: var(--text-dim);
 }
 
-/* **The permanent mark**, small and under the type badge, naming what this shape depends on —
-   Keynote's build-order principle: an invisible property needs a visible one, and a badge naming
-   the dependency beats a mark that only says one exists. */
-.preview-condition-badge {
-  fill: var(--accent);
-  font-family: var(--font-label);
-  font-size: 15px;
-  text-anchor: middle;
-  paint-order: stroke;
-  stroke: rgba(0, 0, 0, 0.7);
-  stroke-width: 4;
-}
-
-.preview-condition-badge.dark-for-song {
-  opacity: 0.35;
-}
-
-/* **The overlay, on request.** CAD's constraint overlay; the anti-pattern is a node editor's
-   permanent wires over a photograph of a wall. Dashed and thin, so it reads as annotation. */
-.preview-dependency-link {
-  stroke: var(--accent);
-  stroke-width: 2;
-  stroke-dasharray: 6 5;
-  opacity: 0.85;
-  vector-effect: non-scaling-stroke;
-  pointer-events: none;
-}
-
-#btn-show-dependencies.on {
-  color: var(--accent);
-  border-color: var(--accent);
-}
+/* **`.preview-condition-badge`, `.preview-dependency-link` and `#btn-show-dependencies` went with
+   the shape-to-shape relation they drew** (2026-09-05). Membership is a group in the shape list
+   and the live mode is named above the canvas, so both marks are permanent and neither is drawn
+   over the wall. */
 
 /* A refusal about a shape, where the shapes are. */
 .shape-status {
@@ -1669,7 +1729,7 @@ body.role-output {
   padding: 3px 8px;
 }
 
-/* --- The preview toggles: a view, never a setting (item 19) --- */
+/* --- The mode selector: a view, never a setting --- */
 .canvas-preview-toggles {
   display: flex;
   align-items: center;
@@ -1688,9 +1748,14 @@ body.role-output {
   color: var(--text-dim);
 }
 
+/* **Active in green, inactive in grey** (Jorge, 2026-09-05). Green in this palette means
+   *live on the wall right now*, and that is exactly what the selected mode is: pressing it
+   broadcasts, so the output window is showing this branch while the button is lit. It is the one
+   place a view control may wear the liveness colour without lying. */
 .preview-toggle[aria-pressed="true"] {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--state-live);
+  border-color: var(--state-live-border);
+  background: var(--state-live-bg);
 }
 
 /* --- Reading the room (items 9, 12, 13, 14) --- */

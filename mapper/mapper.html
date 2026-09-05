@@ -263,7 +263,10 @@
         <!-- P6b: THE MEDIA FOLDER IS A STANDALONE QUESTION (Jorge, 2026-09-04). Hosted, the visuals
              folder was answered at first run and Pregonero resolves every name through it. -->
         <details class="sidebar-fold" id="media-folder-section" hidden>
-          <summary>Media folder <span class="fold-value" id="media-folder-summary"></span></summary>
+          <!-- The title is set from JS because this fold answers two different things: standalone it
+               is the media folder question, and hosted it is only the list of names that did not
+               resolve in the folder Pregonero already mounted. -->
+          <summary><span id="media-folder-title">Media folder</span> <span class="fold-value" id="media-folder-summary"></span></summary>
           <div class="backdrop-controls">
             <button id="btn-media-folder" type="button">Choose folder&hellip;</button>
             <button id="btn-media-folder-reconnect" type="button" hidden>Reconnect media folder</button>
@@ -357,6 +360,12 @@
          plate has to stay a clean plate, or "Adopt boundaries" would be
          tracing a shadow through a shape's own fill. -->
     <div id="output-surfaces" class="output-surfaces"></div>
+    <!-- **THE SELECTION, MARKED ON THE WALL** (Jorge, 2026-09-05): resizing against the room was
+         done half blind while the border existed only in the preview. It is EDITOR CHROME on the
+         output, which is setup and not performance, and it is gone whenever nothing is selected.
+         Above the shapes and below the white plate: the plate has to stay a clean plate. -->
+    <svg id="output-selection" class="output-selection" xmlns="http://www.w3.org/2000/svg"
+         preserveAspectRatio="none" hidden></svg>
     <!-- White-field helper: a full-frame white plate the control window can
          raise, so the projector's lit rectangle is visible while the camera
          backdrop's calibration corners are placed. -->

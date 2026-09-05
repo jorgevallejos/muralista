@@ -2324,6 +2324,133 @@ itself.
 shape carries a song; under modes they ask whether **the mode that will be live for this song**
 carries it. Muralista's model and Pregonero's readiness move together, as at step 6.
 
+## The shapes round: scope, editing, and media that draws itself (v1.20.0, 2026-09-05)
+
+**Modes were accepted on the walk and everything here is refinement on a surface that works.**
+
+### `2 OUTPUT` has no song scope, and the fix was one level up from where it looked
+
+**Jorge expected the mode selector on `2 OUTPUT` and it was absent. The code was right.**
+`renderPreviewToggles` hides the selector whenever a song is scoped, on a stated argument: in a song
+scope the song's own assignments decide which mode is live, so **a selector the song then overrules
+is a control that lies.**
+
+**Jorge's ruling found the real level: *in the output there is no song scope, only all scope.*** The
+defect was that a song scope was live on OUTPUT at all, persisting in from `1 SHAPES` on a screen
+that 04/09 already made the photograph of the room. **Drop the scope on entry and the selector needs
+no special case anywhere.**
+
+**Cowork proposed a read-only line naming the resolved mode, and Jorge rejected it as unnecessary** —
+which it is, once the scope cannot arrive. **Nothing was added to that screen.** The lesson recorded
+with it: the same build showed two different OUTPUT screens depending on what was left selected next
+door, and the cure was to remove the inheritance, not to describe it.
+
+**It subsumes the transport finding.** `Play / Pause / Restart` hangs off the song context bar, which
+is hidden with no song — so 04/09's *the toolbar belongs to `1 SHAPES` only* is satisfied by removing
+the cause rather than the symptom.
+
+### Editing works in any scope, and the copy had to move with the rule
+
+**Jorge wanted to reshape the video frame while previewing a song and had to go to `All`.** Ruling:
+**editing a shape works in any scope, and it edits the shape in the room, not for that song.**
+
+**This reverses *assignment only while a song is picked* (04/09) and only that.** The ruling
+underneath it is untouched and is what makes the reversal safe: **there is still no per-song
+geometry**, because dragging a corner in a song scope moves the room's shape for every song, exactly
+as it would in `All`. A song holding its own coordinates would be silently wrong on stage after a
+remap, and nothing here creates one.
+
+**The line is: geometry belongs to the room, assignment belongs to the song.** `Content` is the one
+section that reads the scope. Everything else — name, type, opacity, format, the bin, `+ Add shape`
+— edits the room from wherever you are standing. **`Set it in All` went with it**: it was the same
+wall Jorge hit, one section over.
+
+**The one control a song scope still does not get is the drag grip**, and that is a consequence of
+the list's shape rather than the old rule surviving. Dragging a row carries membership as well as
+paint order, because in `All` the row lands inside a mode's group. **A song's list is flat** — it
+mixes shapes from every mode so the annotations read down one column — so a drop there has no group
+to land in and would have to guess. **A gesture that silently reassigns is worse than one that is
+absent.**
+
+**The band's copy was the old rule written down**, and a sentence describing behaviour is a claim
+that does not survive a rewrite — the same failure as *coming back here re-checks the files* on
+04/09. It now states the boundary rather than the behaviour on one side of it.
+
+### Media renders as media, and a logo that would not load had three causes
+
+**The rule (Jorge): media content renders as media wherever a shape is shown — preview and wall
+alike, always-on shapes included. A text stand-in is never a substitute for media that exists.** The
+canvas drew `🖼 image` over a resolved logo file. That badge was written when rendering media in the
+preview was *explicitly out of scope for v1 — not worth it*; **the room now has always-on shapes
+with real content in them, and a badge where a logo goes says nothing about whether the logo is in
+the right place**, which is the only question that screen answers.
+
+**It is the output's own element factory in a `foreignObject`**, warped by the same matrix — the
+rule the stand-in text already followed, because a second implementation drifts in the one place a
+person positions against.
+
+**The load failure was separate, and it was three things. Measured before anything was built,
+because Cowork's first suspect had been wrong three times this week.**
+
+- **Disproved: spaces and the hyphen.** `hostedMediaUrl` encodes each segment on its own; the fetch
+  of `media/Logo Chango Pepper - black.png` against a mount that holds it returns **200** and the
+  image paints.
+- **True: the label lied under a mount.** `folderLabel` was gated on a granted directory handle, and
+  **hosted there is no handle** — the host mounts the folder instead. So the field fell back to
+  `Source (relative to mapper/media/)` with a placeholder of `e.g. media/character.png`, both
+  standalone-era strings, on a screen where a name is looked up in the visuals folder's own root.
+- **True, and worse: hosted, a failure was reported nowhere.** P6b hid the whole media section
+  hosted, on the right argument — *the folder was answered at first run and asking again is a second
+  answer to a settled question* — **but the section held two different things**, the folder question
+  and the list of names that did not resolve. Hiding the question hid the report, so **the one place
+  a failure was visible was the wall**, painted at a projector.
+
+**The fix is a picker, not better prose.** The mount already lists what it holds, and a name chosen
+from a list cannot carry a prefix nobody asked for. The free-text field survives for a name the
+listing does not offer, and says where names are looked for **in words that are true in whichever
+case is live**.
+
+**And resolution now triggers a full render.** It used to redraw the folder's status line only,
+which was right while the canvas drew a badge — the bytes changed nothing anybody could see. With
+the canvas painting media, the render that follows the edit runs before the fetch lands, so the
+picture was always one edit behind. **Measured: the first build of the preview rendering showed no
+image at all for exactly this reason.**
+
+### The selection on the wall, and an SVG that would not show
+
+**Jorge: the selected shape's border is not visible on the wall, only in the preview, so resizing is
+done half blind.** The selection now rides the state message — **received, never computed**, the same
+rule `mode` follows — and is drawn as an overlay in real output pixels, dark stroke under bright so
+it survives a logo on white.
+
+**Editor chrome on the output does not touch *nothing is simulated here*.** That rule is about the
+output being real light rather than a drawing of it; a mark saying *this is the one you are
+dragging* is setup, on a wall nobody is watching but the person dragging, and it is gone the moment
+nothing is selected.
+
+**One thing worth keeping: `element.hidden` does nothing on an SVG element.** `hidden` is an IDL
+attribute of `HTMLElement`, so `svg.hidden = false` sets a plain JavaScript property and leaves the
+HTML attribute in place — and this stylesheet's `[hidden] { display: none !important }` then wins
+forever. **Measured**: correct points, correct viewBox, `hidden` reading `false`, computed style
+`display: none`. `toggleAttribute` is the fix.
+
+### What the walk reported that the repo disproved
+
+**`Video lyrics` does not arrive in `ALWAYS`.** Seeding was measured three ways — a fresh seed, the
+bytes written to the gig folder, and the round trip back through `projectFromVisuals` — and in all
+three it lands in `Song with video and lyrics`, with only `Video frame` under `ALWAYS`.
+
+**What IS reproducible is its neighbour: a shape added with `+ Add shape` while a mode is previewed
+lands in `ALWAYS`.** It is left alone deliberately and is a question for Jorge rather than a silent
+change, because the argument runs both ways: the shapes he adds by hand — a logo, a contact panel, a
+mask — are exactly the always-on ones, so `ALWAYS` may be the right default and joining the previewed
+mode may be the surprise.
+
+**What was fixed instead is what made a correct list read wrong: the group header painted the same
+`--bg-row` as the rows inside it**, so a group's title and its shapes were the same shade and only a
+1px border answered *which group is this row in*. The header recedes to the sidebar's own ground now
+and the rows keep the lighter one.
+
 ## Where the state actually lives
 
 The working venue mappings are not in git. **Since 2026-09-03 there are two homes, and which one is

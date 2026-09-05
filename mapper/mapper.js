@@ -1668,6 +1668,22 @@ function broadcastState() {
     // scope. **One field, evaluated once, on the side that owns both**, so a second opinion about
     // which face of the room is up is impossible rather than merely unlikely.
     mode: activeModeIdInPreview(),
+    /**
+     * **THE SELECTED SHAPE, SO THE WALL CAN MARK IT** (Jorge, 2026-09-05). *The selected shape's
+     * border is not visible on the wall, only in the preview, so resizing against the room is done
+     * half blind.*
+     *
+     * **This is editor chrome on the output, and it does not touch *nothing is simulated here*.**
+     * That rule is about the OUTPUT being real light rather than a drawing of it; a mark saying
+     * *this is the one you are dragging* is setup, on a wall nobody is watching but the person
+     * dragging, and it is gone the moment nothing is selected. **It is not a preview of the
+     * night** — it is the tool's own hand, visible where the hand is working.
+     *
+     * It rides the state message rather than being derived, for the reason `mode` does: the output
+     * window has no selection of its own and must never form a second opinion about which shape
+     * that is.
+     */
+    selected: selectedShapeId,
   });
 }
 
@@ -1812,6 +1828,9 @@ function handleOutputMessage(event) {
     // live, so only the no-mode shapes paint - which is what the wall showed before conditions
     // reached it at all.
     outputModeId = typeof msg.mode === "string" && msg.mode ? msg.mode : null;
+    // An older control window sends no `selected`, and null is the honest reading: nothing is
+    // marked, which is what the wall did before the mark existed.
+    outputSelectedId = typeof msg.selected === "string" && msg.selected ? msg.selected : null;
     renderOutput();
   } else if (msg.kind === "media" && Array.isArray(msg.entries)) {
     applyMediaMessage(msg.entries);
@@ -1959,6 +1978,39 @@ function clearStoredFolderHandle() {
  * resolves — a name, looked up in the visuals folder — and there is one resolver, so there is one
  * answer about whether a clip is there.
  */
+/**
+ * **THE BYTES THIS WINDOW HOLDS FOR A NAME, AS A URL, OR NULL.**
+ *
+ * The control window resolves names to Blobs so the output window never touches the file system
+ * (`broadcastMedia`). **Until 2026-09-05 nothing on this side ever looked at them**, because the
+ * canvas drew a badge where the media goes. Jorge's rule ended that, so this is the control half
+ * of `resolveMediaUrl`: one object URL per name, minted once and revoked when the name's bytes
+ * change or the name leaves the set.
+ */
+const controlMediaUrls = new Map();
+
+function controlMediaUrl(src) {
+  if (!src) return null;
+  const rec = resolvedMedia.get(src);
+  if (!rec) return null;
+  const held = controlMediaUrls.get(src);
+  if (held && held.token === rec.token) return held.url;
+  if (held) URL.revokeObjectURL(held.url);
+  const url = URL.createObjectURL(rec.blob);
+  controlMediaUrls.set(src, { token: rec.token, url });
+  return url;
+}
+
+/** A URL is revoked the moment `resolvedMedia` stops pointing at its bytes. One rule, one place. */
+function dropStaleControlMediaUrls() {
+  for (const [src, held] of controlMediaUrls) {
+    const rec = resolvedMedia.get(src);
+    if (rec && rec.token === held.token) continue;
+    URL.revokeObjectURL(held.url);
+    controlMediaUrls.delete(src);
+  }
+}
+
 function referencedMediaNames() {
   const names = new Set();
   (project.surfaces || []).forEach((shape) => {
@@ -2071,9 +2123,20 @@ async function syncResolvedMedia() {
   if (seq !== mediaResolveSeq) return; // a newer resolve superseded this one
 
   resolvedMedia = next;
+  dropStaleControlMediaUrls();
   mediaResolveFailures = failures;
   resolvedNamesKey = mediaNamesKey(names);
-  renderMediaFolderControls();
+  /**
+   * **A FULL RENDER, NOT JUST THE FOLDER CONTROLS** (2026-09-05). This used to redraw the media
+   * folder's own status line and nothing else, which was right while the canvas drew a badge where
+   * media goes: the bytes changed nothing anybody could see.
+   *
+   * **Now the canvas paints the media**, and resolution is asynchronous — the render that follows
+   * the edit runs before the fetch lands. So without this the picture is always one edit behind,
+   * and choosing a file leaves the badge sitting there as though nothing resolved. **Measured: the
+   * first build of the preview rendering showed no image at all for exactly this reason.**
+   */
+  renderControl();
 }
 
 // Re-resolve and re-broadcast because the FOLDER changed (picked, reconnected,
@@ -3254,6 +3317,29 @@ function flowIndex(step) {
 function goToFlowStep(step) {
   if (step === FLOW_SHAPES) seedDefaultLayout();
   const arriving = step === FLOW_OUTPUT && flowStep !== FLOW_OUTPUT;
+  /**
+   * **`2 OUTPUT` HAS NO SONG SCOPE. IT IS ALWAYS THE WHOLE ROOM** (Jorge, 2026-09-05).
+   *
+   * **What the walk hit, and why this is a ruling rather than a bug fix.** Jorge expected the mode
+   * selector on `2 OUTPUT` and it was absent. **`renderPreviewToggles` was right**: it hides the
+   * selector whenever a song is scoped, because the song's own assignments decide which mode is
+   * live and a selector the song then overrules is a control that lies. **The defect was one level
+   * up — a song scope was live on OUTPUT at all**, persisting in from `1 SHAPES` on a screen that
+   * 04/09 already made the photograph of the room.
+   *
+   * **So the scope is dropped on the way in, and nothing is added to the screen.** No song picker,
+   * no per-song view, and **no read-only line naming the resolved mode** — Cowork proposed that and
+   * Jorge rejected it as unnecessary, which it is once the scope cannot arrive. The selector then
+   * behaves here exactly as it does on `1 SHAPES`, with no special case anywhere.
+   *
+   * **And it subsumes the transport finding.** `Play / Pause / Restart` hangs off the song context
+   * bar, and that bar is hidden with no song — so 04/09's *the toolbar belongs to `1 SHAPES` only*
+   * is satisfied by removing the cause rather than the symptom.
+   *
+   * Dropped on ARRIVAL rather than clamped on render, so leaving for `1 SHAPES` does not silently
+   * restore a scope the person can no longer see they are in.
+   */
+  if (arriving) setVisualSetupSong(null);
   flowStep = step;
   if (flowIndex(step) > flowIndex(flowReached)) flowReached = step;
   renderControl();
@@ -3614,25 +3700,20 @@ function isEmbedded() {
 }
 
 /**
- * **The output window this tab opened**, held so it can be closed again.
+ * **The output window this tab opened**, held so messages can be posted to it — the route that
+ * works when this page is framed and `BroadcastChannel` cannot cross the storage partition.
  *
- * `window.open("", "mapper-output")` would find it by name — and would CREATE a blank one when
- * there is none, which is the opposite of closing it. A reference is the only way to close a
- * window that may not exist.
+ * `window.open("", "mapper-output")` would find it by name and would CREATE a blank one when there
+ * is none, so a reference is the only way to talk to a window that may not exist.
  */
 let outputWindow = null;
 
-/** P6d: entering `2 OUTPUT` closes it. A window nobody is looking at is not a second opinion. */
-function closeOutputWindow() {
-  if (outputWindow && !outputWindow.closed) {
-    try {
-      outputWindow.close();
-    } catch (err) {
-      console.warn("Muralista: could not close the output window.", err);
-    }
-  }
-  outputWindow = null;
-}
+/**
+ * **NOTHING CLOSES THE OUTPUT WINDOW ANY MORE** (Jorge, 2026-09-05). `closeOutputWindow` existed
+ * for one caller — arriving at `2 OUTPUT` — and that ruling is reversed, so the function went with
+ * it rather than being left unused. The handle is still held, because re-opening finds the named
+ * window by reference rather than making a second one.
+ */
 
 /**
  * **THE ONE THING THIS TOOL IS TOLD BY ITS EMBEDDER, AND IT IS AN INSTRUCTION, NOT DATA.**
@@ -3724,12 +3805,13 @@ function renderFlowSteps() {
 }
 
 /**
- * **ARRIVING AT `2 OUTPUT`.** Two rules, both settled 2026-09-04, and both here rather than behind
- * a button — the button is the thing that crept back in.
+ * **ARRIVING AT `2 OUTPUT`.**
  *
- * **P6d: the output window closes.** The wall is about to be photographed and the screen is about
- * to show that photograph; a live output window is a second answer to the same question, and one
- * of them is a window nobody is looking at.
+ * **THE OUTPUT WINDOW STAYS OPEN** (Jorge, 2026-09-05). **This reverses P6d of 04/09**, which
+ * closed it on arrival on the argument that *the wall is about to be photographed and a live output
+ * window is a second answer to the same question*. His answer: **I'd still like to see it, it
+ * reassures me.** The old rule is not left standing in a comment as though it still held — it is
+ * reversed, and `closeOutputWindow` went with it.
  *
  * **Capture only when a calibrated camera is live.** At the venue, arriving takes the picture. At
  * home, against a saved `stage.png` with no camera, there is nothing to take, so the saved one is
@@ -3737,7 +3819,6 @@ function renderFlowSteps() {
  * is precisely the one that would otherwise destroy it silently.
  */
 async function enterOutput() {
-  closeOutputWindow();
   const blocked = stageCaptureBlocker();
   if (blocked === null) {
     await captureStage();
@@ -3824,13 +3905,36 @@ function renderControl() {
 // it did not resolve in, where the person configuring is already looking.
 function renderMediaFolderControls() {
   const section = document.getElementById("media-folder-section");
-  // P6b: HOSTED, THE FOLDER WAS ANSWERED AT FIRST RUN (Jorge, 2026-09-04). Pregonero resolves every
-  // name through it and this tool never reads one; asking again here is a second answer to a
-  // settled question, and a second answer that cannot be right.
-  if (mediaFolderState === "unsupported" || isHostedGig()) {
-    section.hidden = true;
+  /**
+   * **HOSTED, A NAME THAT DID NOT RESOLVE WAS REPORTED NOWHERE** (found 2026-09-05, and it is the
+   * other half of why a logo failed silently).
+   *
+   * P6b hid this whole section hosted, on the right argument: **the folder was answered at first
+   * run and asking again is a second answer to a settled question.** But the section holds two
+   * different things — the folder *question*, and the list of names that did not resolve in it —
+   * and hiding the question hid the report with it. **The one place a failure was visible was the
+   * wall**, as a note painted at a projector, which is the wrong place and the wrong moment.
+   *
+   * **So the question is hidden hosted and the failures are not.** This is the rule this file
+   * already had for the standalone case, said out loud: *a name that does not resolve is invisible
+   * until the projector paints a failure note, and it belongs next to the folder it did not resolve
+   * in.* Hosted there is no folder control to sit next to, so it sits alone.
+   */
+  const questionIsSettled = mediaFolderState === "unsupported" || isHostedGig();
+  if (questionIsSettled) {
+    section.hidden = mediaResolveFailures.length === 0;
+    section.open = mediaResolveFailures.length > 0;
+    document.getElementById("media-folder-title").textContent = "Missing files";
+    document.getElementById("media-folder-summary").textContent =
+      `${mediaResolveFailures.length} name${mediaResolveFailures.length === 1 ? "" : "s"} did not resolve`;
+    section.querySelectorAll(".backdrop-controls").forEach((el) => { el.hidden = true; });
+    document.getElementById("media-folder-status").hidden = true;
+    renderMediaResolveFailures();
     return;
   }
+  document.getElementById("media-folder-title").textContent = "Media folder";
+  section.querySelectorAll(".backdrop-controls").forEach((el) => { el.hidden = false; });
+  document.getElementById("media-folder-status").hidden = false;
   section.hidden = false;
 
   const chooseBtn = document.getElementById("btn-media-folder");
@@ -3856,15 +3960,23 @@ function renderMediaFolderControls() {
     status.textContent = "No folder chosen — sources resolve next to the served page, as they always have.";
   }
 
-  if (mediaResolveFailures.length) {
-    failures.hidden = false;
-    failures.textContent =
-      "Not found in this folder, falling back to the served directory:\n" +
-      mediaResolveFailures.map((f) => `• ${f.src} (${f.reason})`).join("\n");
-  } else {
+  renderMediaResolveFailures();
+}
+
+/** The names that did not resolve, said where the person configuring is, not at the projector. */
+function renderMediaResolveFailures() {
+  const failures = document.getElementById("media-folder-failures");
+  if (mediaResolveFailures.length === 0) {
     failures.hidden = true;
     failures.textContent = "";
+    return;
   }
+  failures.hidden = false;
+  failures.textContent =
+    (isHostedMedia()
+      ? "Not found in the visuals folder — these shapes will paint a failure note on the wall:\n"
+      : "Not found in this folder, falling back to the served directory:\n") +
+    mediaResolveFailures.map((f) => `• ${f.src} (${f.reason})`).join("\n");
 }
 
 
@@ -4103,8 +4215,11 @@ function renderShapeList() {
   status.hidden = !shapeStatus;
   status.textContent = shapeStatus;
 
-  // Item 7: `+ Add shape` is Mode A's. A song does not add shapes to the room.
-  document.getElementById("btn-add-shape").hidden = modeB;
+  // **`+ Add shape` works in every scope** (2026-09-05). Item 7 of 04/09 hid it in a song on the
+  // reading that *a song does not add shapes to the room* — true, and it is not what the button
+  // does: it adds a shape to the ROOM, from wherever you happen to be standing, exactly as the
+  // pencil and the bin beside it now do.
+  document.getElementById("btn-add-shape").hidden = false;
 
   if (project.surfaces.length === 0) {
     const empty = document.createElement("li");
@@ -4257,9 +4372,20 @@ function buildShapeRow(shape, songId, modeB) {
   const head = document.createElement("div");
   head.className = "surface-row-head";
 
-  // **The drag handle, and it is only a handle in Mode A.** Reordering is paint order, which is
-  // the room's; a song does not restack the wall. **Since 2026-09-05 it also carries membership**,
-  // because dragging a row into another group is how a shape joins a mode.
+  /**
+   * **THE GRIP IS THE ONE CONTROL A SONG SCOPE STILL DOES NOT GET**, and it is not the old
+   * *assignment only* rule surviving — it is a consequence of the list's shape.
+   *
+   * **Dragging a row carries membership as well as paint order** (2026-09-05), because in `All`
+   * the row lands inside a group and that group is the assignment. **A song's list is flat**: it
+   * mixes shapes from every mode so the annotations can be read down one column, so a drop there
+   * has no group to land in and would have to guess. **A gesture that silently reassigns is worse
+   * than a gesture that is absent**, and membership is authored against the mode selector, which a
+   * song scope does not have.
+   *
+   * Everything else on the row — the pencil, the bin, and every field the accordion opens — works
+   * in every scope.
+   */
   if (!modeB) {
     const grip = document.createElement("span");
     grip.className = "surface-grip";
@@ -4300,7 +4426,7 @@ function buildShapeRow(shape, songId, modeB) {
   });
   actions.appendChild(openBtn);
 
-  if (!modeB) {
+  {
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "icon-btn danger";
@@ -4636,6 +4762,19 @@ function renderPreviewToggles() {
     btn.textContent = mode.name;
     btn.addEventListener("click", () => {
       previewModeId = mode.id;
+      // **CHANGING MODE DESELECTS A SHAPE THE NEW MODE DOES NOT CONTAIN** (Jorge, 2026-09-05).
+      // Switching left the old mode's shape selected, **with its handles still drawn on a canvas
+      // that no longer draws the shape** — a grab point over nothing, which is the worst kind of
+      // ghost because it responds to being dragged.
+      //
+      // **A no-mode shape survives the switch**, correctly: it is in every mode, so selecting it
+      // and changing mode is not leaving it behind.
+      const held = findShape(selectedShapeId);
+      if (held && !shapeShowsInMode(held, mode.id)) {
+        selectedShapeId = null;
+        openShapeId = null;
+        clearShapeSubselection();
+      }
       // **AND THE WALL FOLLOWS** (item 4, 2026-09-04). `renderControl` redraws this window and
       // nothing else; without the broadcast the selector moved the canvas while the output window
       // kept whichever mode it was last told about, which is exactly the disagreement that item is
@@ -4678,8 +4817,18 @@ function renderCanvasBand() {
   if (songId === null) return;
   const song = gigSongById(songId);
   document.getElementById("canvas-band-song").textContent = song ? song.title : songId;
+  /**
+   * **THE COPY MOVED WITH THE RULE** (Jorge, 2026-09-05). It read *Assignment only — what this song
+   * puts in each shape. The room is not edited here*, **which is the old rule written down**, and
+   * a sentence describing behaviour is a claim that does not survive a rewrite — the same failure
+   * as *coming back here re-checks the files* on 04/09.
+   *
+   * **One line, and it is the rule itself rather than a description of the screen:** geometry
+   * belongs to the room, assignment belongs to the song. It stays true however much else changes,
+   * because it states the boundary rather than the behaviour on one side of it.
+   */
   document.getElementById("canvas-band-mode").textContent =
-    "Assignment only — what this song puts in each shape. The room is not edited here.";
+    "Shapes belong to the room; what goes in them belongs to the song.";
   document.getElementById("canvas-transport").hidden = !previewSongHasVideo(songId);
 }
 
@@ -4722,11 +4871,19 @@ function renderPreview() {
   // permanent wires are right on a dedicated graph surface and wrong on a
   // photograph of a wall with overlapping quads. So the links are on request,
   // and the badge above is what is always there.
-  // **ASSIGNMENT ONLY WHILE A SONG IS PICKED** (Jorge, 2026-09-04). The handles disappear, because
-  // you cannot drag what has no handle — and **never per-song geometry** is the ruling underneath
-  // it: a song holding its own coordinates is silently wrong on stage after the room is remapped.
-  // The header on the panel says so in words; this is the same statement in the canvas.
-  if (previewSongId() !== null) return;
+  /**
+   * **EDITING A SHAPE WORKS IN ANY SCOPE, AND IT EDITS THE ROOM** (Jorge, 2026-09-05). He wanted to
+   * reshape the video frame while previewing a song and had to go to `All` to do it.
+   *
+   * **This reverses *assignment only while a song is picked* (04/09), and only that.** The ruling
+   * underneath it is untouched and is the reason this is safe: **there is still no per-song
+   * geometry.** Dragging a corner here moves the shape in the room, for every song, exactly as it
+   * would in `All` — a song holding its own coordinates would be silently wrong on stage after the
+   * room is remapped, and nothing here creates one.
+   *
+   * **So the handles stay.** What a song scope changes is what the CONTENT section offers, which
+   * is the assignment, and nothing else.
+   */
 
   // Handles for the selected shape go last, so they sit above every shape's
   // body rather than being buried under whatever paints after it.
@@ -4876,25 +5033,20 @@ function renderShapePreview(svg, shape) {
     body.style.opacity = String(0.82 * (layer.opacity ?? 1));
     applyMarginStroke(body, fields.margin, PREVIEW_H);
   }
-  // Click-to-select + whole-shape drag in one gesture — and neither in assignment mode, where the
-  // canvas is a picture of the room rather than the room being drawn.
-  if (previewSongId() === null) {
-    body.addEventListener("pointerdown", (e) => startShapeDrag(e, svg, shape));
-  }
+  // Click-to-select + whole-shape drag in one gesture, **in every scope since 2026-09-05**: the
+  // shape being dragged is the room's shape, and a song scope never held its own geometry to
+  // protect.
+  body.addEventListener("pointerdown", (e) => startShapeDrag(e, svg, shape));
   svg.appendChild(body);
 
   /**
-   * **ITEM 9: OUTLINES DRAW LOCKED IN MODE B** — thinner and dashed — so a shape you cannot drag
-   * does not look identical to one you can. **The handles disappearing then reads as a consequence
-   * of something visible** rather than as the app being broken, which is exactly how it read.
+   * **NOTHING DRAWS LOCKED ANY MORE** (2026-09-05). Item 9 of 04/09 drew Mode B's outlines thinner
+   * and dashed **because they could not be dragged**, so that the missing handles read as a
+   * consequence of something visible rather than as the app being broken. **Shapes are editable in
+   * every scope now, so nothing is locked and the mark would be a lie** — and a mark that says
+   * *held still* over a shape you can drag is worse than no mark at all.
    */
-  /**
-   * **AND THE SELECTED ONE IS NEVER DRAWN LOCKED** (Jorge, 2026-09-04). *Locked* is the answer to
-   * *why can I not drag this*, and that question is only ever asked about the shape being pointed
-   * at. Drawn on every outline it says the room is frozen; drawn on all but one it says **this one
-   * is the one you are working on and the rest are held still**, which is what Mode B is.
-   */
-  const locked = previewSongId() !== null && !selected ? " locked" : "";
+  const locked = "";
   const edge = document.createElementNS(SVG_NS, "polygon");
   edge.setAttribute("points", points);
   edge.setAttribute("class", "preview-shape-outline" + (selected ? " selected" : "") + dark + muted + locked);
@@ -4921,6 +5073,49 @@ function renderShapePreview(svg, shape) {
    */
   const frame = shapeFrame(shape);
   const warp = frame ? frameMatrix3d(frame, PREVIEW_W, PREVIEW_H) : null;
+
+  /**
+   * **MEDIA RENDERS AS MEDIA WHEREVER A SHAPE IS SHOWN — PREVIEW AND WALL ALIKE, ALWAYS-ON SHAPES
+   * INCLUDED. A TEXT STAND-IN IS NEVER A SUBSTITUTE FOR MEDIA THAT EXISTS** (Jorge, 2026-09-05).
+   *
+   * **What he saw:** a logo shape drawing the words `🖼 image` on the canvas while the file was
+   * right there and resolved. The badge was written when rendering media in the preview was
+   * *explicitly out of scope for v1 — not worth it*; **the room now has always-on shapes with real
+   * content in them, and a badge where a logo goes tells you nothing about whether the logo is in
+   * the right place**, which is the only question this screen answers.
+   *
+   * **It is the output's own element factory, not a second one** — the same rule the stand-in text
+   * followed before it left the canvas: `createLayerElement` mounted in a `foreignObject` over the
+   * preview's viewBox and warped by `frameMatrix3d` exactly as the wall warps it. **A second
+   * implementation is what this suite has a rule against**, and it would drift in the one place it
+   * must not: what a person positions against.
+   *
+   * **The badge stays for shapes with nothing to draw.** A `song-video` shape has no file at gig
+   * level, a `pattern` is a test pattern, a `fill` paints itself — those still say what they are.
+   */
+  if ((type === "image" || type === "video") && warp) {
+    const url = controlMediaUrl(layer.src);
+    if (url) {
+      const holder = document.createElementNS(SVG_NS, "foreignObject");
+      holder.setAttribute("x", "0");
+      holder.setAttribute("y", "0");
+      holder.setAttribute("width", String(PREVIEW_W));
+      holder.setAttribute("height", String(PREVIEW_H));
+      holder.setAttribute("class", "preview-slot-media" + dark + muted);
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "surface-wrapper";
+      wrapper.style.width = `${UNIT_SIZE}px`;
+      wrapper.style.height = `${UNIT_SIZE}px`;
+      wrapper.style.transform = warp;
+      wrapper.style.opacity = String(layer.opacity ?? 1);
+
+      wrapper.appendChild(createLayerElement(shape, layer, url));
+      holder.appendChild(wrapper);
+      svg.appendChild(holder);
+    }
+  }
+
   if (type === "text" && warp) {
     const holder = document.createElementNS(SVG_NS, "foreignObject");
     holder.setAttribute("x", "0");
@@ -4951,7 +5146,11 @@ function renderShapePreview(svg, shape) {
    */
   const labelled = focused;
 
-  if (labelled && type !== "pattern" && type !== "fill") {
+  // **The badge is for a shape with nothing to show**, so a media shape that is drawing itself
+  // does not get a word written over the picture. What it says is already visible.
+  const drawsItsOwnMedia =
+    (type === "image" || type === "video") && controlMediaUrl(layer.src) !== null;
+  if (labelled && !drawsItsOwnMedia && type !== "pattern" && type !== "fill") {
     const isAlphaOverlay = type === "image" && /\.webm$/i.test(layer.src || "");
     const [cx, cy] = ringCentroidNormalized(outline);
     const badge = document.createElementNS(SVG_NS, "text");
@@ -5853,59 +6052,52 @@ function panelDivider(container, title) {
  * It opens **under the row it is about**, not in a panel further down the sidebar — so the thing
  * being edited and the controls that edit it are one block, with nothing to scroll between.
  *
- * **MODE B KEEPS TYPE AND CONTENT AND LOSES THE REST** (item 7). Type is shown, not changeable.
- * **Visibility is Mode A only, because a condition belongs to the shape and not to a song** — and
- * that also kills a second mechanism, since assigning nothing is already how a shape goes dark for
- * one song. Format and all outline editing go with it.
+ * **EVERY SECTION WORKS IN EVERY SCOPE SINCE 2026-09-05** (Jorge). Item 7 of 04/09 kept Type and
+ * Content in a song scope and dropped the rest, on the argument that *a condition belongs to the
+ * shape and not to a song*. **That argument was about what a song may own, and it answered a
+ * question nobody asked** — editing a shape in a song scope never made it the song's shape, and
+ * Jorge hit exactly that wall wanting to reshape the video frame while previewing a song.
+ *
+ * **The line is: geometry belongs to the room, assignment belongs to the song.** So `Content` is
+ * the one section that reads the scope — in `All` it is what this shape holds for the whole gig,
+ * in a song it is what that song puts there — and everything else edits the room from wherever you
+ * are standing.
  */
 function buildShapeAccordion(container, shape, songId) {
-  const modeB = songId !== null;
   const layer = shape.layer || {};
 
   // The name lives here now. The pencil used to open a `window.prompt`, which is a modal for one
   // field on a screen that has a place for fields.
-  if (!modeB) {
-    const nameRow = document.createElement("div");
-    nameRow.className = "layer-field";
-    const nameLabel = document.createElement("label");
-    nameLabel.textContent = "Name";
-    const nameInput = document.createElement("input");
-    nameInput.type = "text";
-    nameInput.value = shape.name;
-    nameInput.addEventListener("change", () => renameShape(shape.id, nameInput.value));
-    nameRow.append(nameLabel, nameInput);
-    container.appendChild(nameRow);
-  }
+  const nameRow = document.createElement("div");
+  nameRow.className = "layer-field";
+  const nameLabel = document.createElement("label");
+  nameLabel.textContent = "Name";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.value = shape.name;
+  nameInput.addEventListener("change", () => renameShape(shape.id, nameInput.value));
+  nameRow.append(nameLabel, nameInput);
+  container.appendChild(nameRow);
 
   // ---- TYPE ----
   panelDivider(container, "Type");
   const typeRow = document.createElement("div");
   typeRow.className = "layer-field";
-  if (modeB) {
-    // **Shown, not changeable.** What a shape is for belongs to the room; a song only fills it.
-    const said = document.createElement("span");
-    said.className = "layer-static-value";
-    said.textContent = shapeType(shape);
-    typeRow.appendChild(said);
-  } else {
-    const typeSelect = document.createElement("select");
-    typeSelect.id = "layer-type-select";
-    offeredShapeTypes(shape).forEach((t) => {
-      const opt = document.createElement("option");
-      opt.value = t;
-      opt.textContent = t;
-      typeSelect.appendChild(opt);
-    });
-    typeSelect.value = shapeType(shape);
-    typeSelect.addEventListener("change", () => setLayerType(shape.id, typeSelect.value));
-    typeRow.appendChild(typeSelect);
-  }
+  const typeSelect = document.createElement("select");
+  typeSelect.id = "layer-type-select";
+  offeredShapeTypes(shape).forEach((t) => {
+    const opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = t;
+    typeSelect.appendChild(opt);
+  });
+  typeSelect.value = shapeType(shape);
+  typeSelect.addEventListener("change", () => setLayerType(shape.id, typeSelect.value));
+  typeRow.appendChild(typeSelect);
   container.appendChild(typeRow);
 
   // ---- CONTENT ----
   buildContentSection(container, shape, layer, songId);
-
-  if (modeB) return;
 
   // ---- VISIBILITY ----
   //
@@ -5951,13 +6143,19 @@ function buildContentSection(container, shape, layer, songId) {
     container.appendChild(p);
   };
 
-  if (modeB) {
-    if (typeTakesSongAsset(type)) {
-      container.appendChild(buildSongAssetRow(shape, songId));
-      return;
-    }
-    if (type === "song-lyrics") return say("The song's own words, at render time. Nothing to choose.");
-    return say("This shape holds the same thing for every song. Set it in All.");
+  /**
+   * **THE ONE SECTION THAT READS THE SCOPE, AND THAT IS THE WHOLE OF WHAT A SONG SCOPE CHANGES**
+   * (2026-09-05). A `song-video` shape holds a per-song file, so in a song it offers that song's
+   * assignment. Everything else holds the room's own content and offers the room's own control —
+   * **`Set it in All` is gone**, because it was the same wall Jorge hit one section over, and the
+   * ruling that removed that one removes this one with it.
+   */
+  if (modeB && typeTakesSongAsset(type)) {
+    container.appendChild(buildSongAssetRow(shape, songId));
+    return;
+  }
+  if (modeB && type === "song-lyrics") {
+    return say("The song's own words, at render time. Nothing to choose.");
   }
 
   if (type === "video" || type === "image") return buildMediaSourceControls(container, shape, layer);
@@ -6003,29 +6201,83 @@ function buildOpacityRow(container, shape, layer) {
 // Video / image: src name field + file-pick convenience. Lifted out of
 // the accordion so the one call site there is the only thing that decides
 // whether a file is even a concept for this layer.
+/**
+ * **THE LABEL LIED HOSTED, AND IT IS HALF OF WHY A LOGO DID NOT LOAD** (found by measuring,
+ * 2026-09-05).
+ *
+ * `folderLabel` was `mediaFolderState === "granted" ? … : null`, and **hosted there is no directory
+ * handle** — a cross-origin frame cannot open a picker, so the host mounts the folder instead. So
+ * the field fell back to `Source (relative to mapper/media/)` with a placeholder of
+ * `e.g. media/character.png`, **both of them standalone-era strings that are false under a mount**,
+ * where a name is looked up in the visuals folder's own root. The walk's failure was
+ * `media/Logo Chango Pepper - black.png` — a name with exactly that prefix on it.
+ *
+ * **The spaces-and-hyphen suspect is disproved, not deprioritised.** `hostedMediaUrl` encodes each
+ * segment on its own; a fetch of that name against a mount that holds it returns 200 and the image
+ * paints. Measured before this was written, because Cowork's first suspect had been wrong three
+ * times this week.
+ *
+ * **So the answer is a picker, not better prose.** The mount already lists what it holds
+ * (`visualsFolderNames`, the same listing the song-asset row picks from), and a name chosen from a
+ * list cannot carry a prefix nobody asked for. The free-text field survives for a name the listing
+ * does not offer — a folder that has not been connected yet, or a file added since — and it says
+ * where names are looked for **in words that are true in whichever case is live**.
+ */
 function buildMediaSourceControls(container, shape, layer) {
-  // With a folder connected, a name is looked up INSIDE it and the old label
-  // is simply false. The field itself is unchanged either way - it has always
-  // held a name, and that is exactly what still gets saved to the mapping.
   const folderLabel = mediaFolderState === "granted" ? mediaFolderLabel() : null;
+  const where = isHostedMedia()
+    ? "the visuals folder"
+    : folderLabel
+      ? `${folderLabel}/`
+      : "mapper/media/";
+
+  // **The picker, when the folder can say what it holds.** Offered above the field rather than
+  // instead of it: the field is what a mapping stores and what a name typed by hand goes into.
+  const names = [...visualsFolderNames];
+  if (names.length > 0) {
+    const pickRow = document.createElement("div");
+    pickRow.className = "layer-field";
+    const pickLabel = document.createElement("label");
+    pickLabel.textContent = `Choose from ${where}`;
+    pickLabel.setAttribute("for", "layer-src-pick");
+    const pick = document.createElement("select");
+    pick.id = "layer-src-pick";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = layer.src ? "— keep what is typed below —" : "— nothing chosen —";
+    pick.appendChild(none);
+    // A name the folder no longer holds is still offered and marked, for the same reason the song
+    // asset row does it: dropping it would silently unassign a file because a drive was not in.
+    if (layer.src && !names.includes(layer.src)) names.unshift(layer.src);
+    names.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = visualsFolderNames.includes(name) ? name : `${name} — not in the folder`;
+      pick.appendChild(opt);
+    });
+    pick.value = layer.src && names.includes(layer.src) ? layer.src : "";
+    pick.addEventListener("change", () => {
+      if (pick.value) setLayerField(shape.id, "src", pick.value);
+    });
+    pickRow.append(pickLabel, pick);
+    container.appendChild(pickRow);
+  }
 
   const srcRow = document.createElement("div");
   srcRow.className = "layer-field";
   const srcLabel = document.createElement("label");
-  srcLabel.textContent = folderLabel ? `Source (name inside ${folderLabel}/)` : "Source (relative to mapper/media/)";
+  srcLabel.textContent = `Source (name inside ${where})`;
   srcLabel.setAttribute("for", "layer-src-input");
   const srcInput = document.createElement("input");
   srcInput.type = "text";
   srcInput.id = "layer-src-input";
   // "e.g." prefix matters: a bare filename placeholder reads as an actual
   // prefilled value, and users assume the video is already linked.
-  srcInput.placeholder = folderLabel
-    ? layer.type === "video"
-      ? "e.g. cerdo.mp4"
-      : "e.g. character.png"
-    : layer.type === "video"
-      ? "e.g. media/cerdo.mp4"
-      : "e.g. media/character.png";
+  //
+  // **No `media/` prefix in any case now.** It was right for exactly one arrangement — standalone,
+  // no folder connected, the page served out of `mapper/` — and it was wrong and load-bearing in
+  // the two that a real walk uses.
+  srcInput.placeholder = layer.type === "video" ? "e.g. cerdo.mp4" : "e.g. character.png";
   srcInput.value = layer.src || "";
   // 'change' (blur/Enter), not 'input': the reconciling output render
   // recreates the video/image element whenever layer.src changes, so
@@ -6049,11 +6301,11 @@ function buildMediaSourceControls(container, shape, layer) {
   fileInput.addEventListener("change", () => {
     const file = fileInput.files && fileInput.files[0];
     if (file) {
-      // An <input type=file> hands over a name and no path, so this has
-      // always been a convenience that fills in a guess. With a folder
-      // connected the right guess is the bare name - prefixing "media/"
-      // would send the lookup into a subfolder that probably is not there.
-      const guess = folderLabel ? file.name : `media/${file.name}`;
+      // An <input type=file> hands over a name and no path, so this has always been a convenience
+      // that fills in a guess. **The bare name is the right guess everywhere** (2026-09-05):
+      // prefixing `media/` sends the lookup into a subfolder that is only there in the one
+      // arrangement this field was first written for.
+      const guess = file.name;
       srcInput.value = guess;
       setLayerField(shape.id, "src", guess);
     }
@@ -6587,16 +6839,38 @@ function importProjectFromFile(file) {
  * Same rule as the shape accordion, deliberately — see `openShapeId`. Two folds behaving
  * differently is a thing to learn; one rule is a thing to notice once.
  */
-function wireBackdropFold() {
-  const fold = document.getElementById("backdrop-fold");
-  fold.addEventListener("focusout", (e) => {
-    if (e.relatedTarget && fold.contains(e.relatedTarget)) return;
-    fold.open = false;
+/**
+ * **`BACKDROP` CLOSES WHEN ANOTHER SIDEBAR FOLD IS OPENED, AND NOT BEFORE** (Jorge, 2026-09-05).
+ *
+ * **It used to close on `focusout`**, on the 04/09 rule that a fold *closes itself once focus has
+ * been inside it and left*, so neither has to be found before it can be used and neither stays in
+ * the way. **That rule is wrong for this fold specifically, and the reason is what it governs.**
+ * The backdrop's real work — placing the camera's calibration corners — is done **on the canvas**,
+ * which necessarily takes focus out of the fold. So it closed at the exact moment it was being
+ * used: Jorge's journey was *open it, enable the camera, hit recalibrate, start moving the
+ * screen's points — and it collapses.*
+ *
+ * **Measured rather than reasoned about**: dispatching the `focusout` a canvas click produces,
+ * with `relatedTarget` null, closed the fold every time.
+ *
+ * **What replaces it is the thing the old rule was actually for** — not being in the way. A fold
+ * is in the way of the OTHER folds, so opening one closes the others, and nothing else does.
+ * Focus going to the canvas is the fold being used, not abandoned.
+ */
+function wireSidebarFolds() {
+  const folds = [...document.querySelectorAll("aside .sidebar-fold")];
+  folds.forEach((fold) => {
+    fold.addEventListener("toggle", () => {
+      if (!fold.open) return;
+      folds.forEach((other) => {
+        if (other !== fold) other.open = false;
+      });
+    });
   });
 }
 
 function wireControlEvents() {
-  wireBackdropFold();
+  wireSidebarFolds();
   document.getElementById("btn-add-shape").addEventListener("click", addShape);
 
   document.getElementById("btn-open-output").addEventListener("click", () => {
@@ -6787,6 +7061,12 @@ function outputPreviewSongId() {
  */
 let outputModeId = null;
 
+/**
+ * **The shape the control window says is selected, or null.** Received, never computed — the same
+ * rule as `outputModeId`, and for the same reason: this window has no selection.
+ */
+let outputSelectedId = null;
+
 
 function renderOutput() {
   const container = document.getElementById("output-surfaces");
@@ -6817,6 +7097,53 @@ function renderOutput() {
   visibleShapes.forEach((shape) => renderOutputShape(container, shape, w, h));
 
   reconcileOutputShapeOrder(container, visibleShapes);
+  renderOutputSelection(visibleShapes, w, h);
+}
+
+/**
+ * **THE SELECTED SHAPE, MARKED ON THE WALL** (Jorge, 2026-09-05): *resizing against the room is
+ * done half blind* when the border only exists in the preview.
+ *
+ * **Drawn as an overlay, never as a border on the shape's own root.** A root carries the warp and
+ * the outline clip, so a border on it would be clipped away by the very outline it is meant to
+ * trace, and it would scale with the transform into a hairline on one edge and a slab on another.
+ * A separate polygon in the shape's own outline coordinates, in real output pixels, is the only
+ * drawing that traces the shape rather than its bounding box.
+ *
+ * **`vector-effect: non-scaling-stroke` is not used and must not be**: nothing is scaled here, the
+ * points are already in output pixels, and the stroke is meant to be a real width on the wall —
+ * this is a mark somebody is looking at from across a room.
+ *
+ * **It is gone when nothing is selected**, which is most of the time and all of the night.
+ */
+function renderOutputSelection(visibleShapes, w, h) {
+  const layer = document.getElementById("output-selection");
+  layer.innerHTML = "";
+  const shape = visibleShapes.find((sh) => sh.id === outputSelectedId);
+  const outline = shape ? shapeOutline(shape) : null;
+  /**
+   * **`toggleAttribute`, NOT `.hidden`, AND THE REASON IS THAT THIS IS AN SVG ELEMENT.**
+   *
+   * `hidden` is an IDL attribute of `HTMLElement`. An `SVGElement` does not have it, so
+   * `layer.hidden = false` sets **a plain JavaScript property on the object** and leaves the HTML
+   * `hidden` attribute exactly where it was — and this stylesheet's `[hidden] { display: none
+   * !important }` then wins forever. **Measured**: the polygon had correct points and a correct
+   * viewBox, `layer.hidden` read `false`, and the computed style was `display: none`.
+   */
+  if (!outline) {
+    layer.toggleAttribute("hidden", true);
+    return;
+  }
+  layer.toggleAttribute("hidden", false);
+  layer.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  // Two strokes, dark under bright: a single colour vanishes over whatever the shape is painting,
+  // and a logo on white is exactly the case the mark is needed for.
+  ["output-selection-under", "output-selection-over"].forEach((cls) => {
+    const poly = document.createElementNS(SVG_NS, "polygon");
+    poly.setAttribute("points", ringPointsAttr(outline, w, h));
+    poly.setAttribute("class", cls);
+    layer.appendChild(poly);
+  });
 }
 
 function dropOutputShape(id, entry) {

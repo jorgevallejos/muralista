@@ -367,12 +367,17 @@ button.danger:hover {
 /* **Two lines, name over condition**, because the sidebar is narrow and a name that truncates is
    a name you cannot check. They are also two different kinds of thing — one is yours to change and
    one is the tool's to state — and stacking them says that without a second colour. */
+/* **THE HEADER HAS TO READ AS A HEADER, AND IT DID NOT** (2026-09-05). Measured: it painted
+   `--bg-row` and so does `.surface-row`, the same #232320 — so a group's title and the shapes
+   inside it were the same shade, and "which group is this row in" had only a 1px border to answer
+   it. **The header recedes to the sidebar's own ground and the rows keep the lighter one**, which
+   is the ordinary direction: chrome behind, objects in front. */
 .shape-group-head {
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding: 6px 8px;
-  background: var(--bg-row);
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   min-width: 0;
 }
@@ -1686,10 +1691,17 @@ body.role-output {
 .surface-note.is-dark { font-style: italic; }
 
 /* --- The Shape accordion, under its own row (item 5) --- */
+/* **THE EXPANDED EDITOR IS ONE LEVEL DEEPER, AND HAS TO LOOK IT** (Jorge, 2026-09-05). It sat at
+   the same left margin as the rows — measured: the row's name starts at 10px of row padding plus
+   the grip, the accordion's fields started at 0 — so nothing said you were inside a shape rather
+   than beside it. **An indent plus a rule down the left edge**: the indent says *inside*, and the
+   rule is what keeps saying it once the fields are taller than the screen and the row that owns
+   them has scrolled off the top. */
 .shape-accordion {
-  margin: 8px 0 4px;
-  padding: 10px 0 4px;
+  margin: 8px 0 4px 10px;
+  padding: 10px 0 6px 12px;
   border-top: 1px solid var(--border);
+  border-left: 2px solid var(--accent-dim);
 }
 
 .layer-static-value {
@@ -1766,13 +1778,9 @@ body.role-output {
 .preview-shape-outline.muted { opacity: 0.28; }
 .preview-slot-text.muted { opacity: 0.18; }
 
-/* ITEM 9: a shape you cannot drag must not look like one you can. Thinner and dashed, so the
-   missing handles read as a consequence of something visible. */
-.preview-shape-outline.locked {
-  stroke-width: 1;
-  stroke-dasharray: 7 5;
-  opacity: 0.7;
-}
+/* **`.preview-shape-outline.locked` IS GONE** (2026-09-05). Item 9 drew a shape that could not be
+   dragged thinner and dashed, so the missing handles read as a consequence of something visible.
+   **Shapes are editable in every scope now**, so nothing is locked and the mark would be a lie. */
 
 /* ITEM 13: the stand-in, rendered by the OUTPUT'S OWN renderer in a foreignObject — same element,
    same auto-fit, same warp — so the canvas shows what the wall will show rather than an impression
@@ -1788,6 +1796,23 @@ body.role-output {
 }
 
 .preview-slot-text.dark-for-song { opacity: 0.25; }
+
+/* **MEDIA RENDERS AS MEDIA ON THE CANVAS** (Jorge, 2026-09-05), through the output's own element
+   factory in a foreignObject — same element, same warp — for the same reason the stand-in text was
+   rendered that way: a second implementation drifts in the one place a person positions against.
+   `object-fit: fill` is the wall's own behaviour and is the layer's, not this stylesheet's. */
+.preview-slot-media {
+  pointer-events: none;
+  overflow: visible;
+}
+
+.preview-slot-media .surface-wrapper {
+  transform-origin: 0 0;
+  position: absolute;
+}
+
+.preview-slot-media.muted { opacity: 0.18; }
+.preview-slot-media.dark-for-song { opacity: 0.25; }
 
 
 /* The accordion's own fields: a label above its control, because the sidebar is narrow and a row of
@@ -1828,4 +1853,28 @@ body.role-output {
 /* The condition sentence keeps its own row shape: it IS a sentence and reads across, not down. */
 .shape-accordion .condition-row {
   flex-direction: column;
+}
+
+/* **THE SELECTED SHAPE, ON THE WALL** (Jorge, 2026-09-05). Two strokes, dark under bright, because
+   one colour disappears over whatever the shape is painting — and a logo on white is exactly the
+   case this exists for. Real output pixels, so it is a real width seen from across a room. */
+.output-selection {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.output-selection-under {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.85);
+  stroke-width: 7;
+}
+
+.output-selection-over {
+  fill: none;
+  stroke: var(--state-live);
+  stroke-width: 3;
 }

@@ -50,6 +50,7 @@
         imports: {
           "./warp.js": "./warp.js?v=" + encodeURIComponent(v),
           "./stageCapture.js": "./stageCapture.js?v=" + encodeURIComponent(v),
+          "./modes.js": "./modes.js?v=" + encodeURIComponent(v),
         },
       });
       document.head.appendChild(imports);
@@ -246,16 +247,18 @@
 
         <!-- One list, because there is one kind of thing on the wall. A shape that holds black is a
              shape whose layer type is "fill", so it lives here with everything else and takes part
-             in the same paint order. **The Shape accordion opens under its own row** (item 5). -->
+             in the same paint order. **The Shape accordion opens under its own row** (item 5).
+
+             **GROUPED BY MODE SINCE 2026-09-05, and the grouping IS the assignment surface**: a
+             shape joins a mode by being dragged into its group, because dependencies are never set
+             up from inside a shape. `ALWAYS` holds the shapes in no mode, which are on the wall in
+             all of them. There is no `+ Add mode`. -->
         <div class="sidebar-header">
           <h2>Shapes</h2>
           <button id="btn-add-shape" type="button">+ Add shape</button>
         </div>
         <ul id="shape-list" class="surface-list"></ul>
         <p id="shape-status" class="shape-status" hidden></p>
-        <div class="backdrop-controls">
-          <button id="btn-show-dependencies" type="button" aria-pressed="false">Show dependencies</button>
-        </div>
 
         <!-- P6b: THE MEDIA FOLDER IS A STANDALONE QUESTION (Jorge, 2026-09-04). Hosted, the visuals
              folder was answered at first run and Pregonero resolves every name through it. -->
@@ -292,12 +295,14 @@
           </div>
         </div>
 
-        <!-- ITEM 19: `Previewing:` — ONE TOGGLE PER CONDITION, derived from the conditions actually
-             present. **A VIEW, NEVER A SETTING**: it writes nothing and never reaches visuals.json,
-             the same relationship the dummy text has to real lyrics and the backdrop has to the
-             output. It is named `Previewing:` precisely because the one real risk is that it reads
-             as having changed the file. **Absent in Mode B**, where the song's own assignment
-             already decides which face is drawn. -->
+        <!-- `Previewing:` — ONE BUTTON PER MODE, NAMED THE WAY JORGE NAMES THEM (2026-09-05).
+             `Song with lyrics` / `Song with video and lyrics`, one active at a time, on `1 SHAPES`
+             AND on `2 OUTPUT`. It replaces the `Video frame empty` / `Video frame filled` chip,
+             which spoke in mechanism and which did nothing at all on OUTPUT — see
+             `renderPhotoOutlines`. **A VIEW, NEVER A SETTING**: it writes nothing and never reaches
+             visuals.json, the same relationship the dummy text has to real lyrics and the backdrop
+             has to the output. **Absent in Mode B**, where the song's own assignments already
+             decide which mode is live. -->
         <div class="canvas-preview-toggles" id="canvas-preview-toggles" hidden></div>
 
         <div class="preview-box">

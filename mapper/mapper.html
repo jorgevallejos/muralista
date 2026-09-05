@@ -212,17 +212,10 @@
           </div>
         </details>
 
-        <!-- ITEM 1: SCOPE AT THE TOP, ONE LINE, THE DROPDOWN ALONE (Jorge, 2026-09-04).
-             **It is the mode switch and everything below changes meaning with it**, and it used to
-             sit below the things it governs. `All` is the room — full editing. Picking a song is
-             assignment only.
-
-             **The label is on the control and the mode is on the CANVAS** (item 8): a panel that
-             changes is not a mode you notice, because you are looking at the wall. -->
-        <div class="scope-row" id="scope-row" hidden>
-          <label for="select-visual-setup-song">Scope</label>
-          <select id="select-visual-setup-song"></select>
-        </div>
+        <!-- **SCOPE LEFT THIS PANEL ON 2026-09-05.** It sits beside `PREVIEWING` above the canvas
+             now — see the view bar in the preview area. The 04/09 reasoning that put it at the top
+             of the sidebar was right about its rank and wrong about its home: **the two controls
+             that decide what you are looking at belong together, where you are looking.** -->
 
         <!-- THE `LYRICS / VIDEO / INTRO / CONTACT` BLOCK IS GONE, which DELETED the
              type-to-shape concept rather than hiding it and removed a block that read as a
@@ -274,6 +267,13 @@
           </div>
           <p id="media-folder-status" class="media-folder-status"></p>
           <p id="media-folder-failures" class="media-folder-failures" hidden></p>
+          <!-- **`Look again` sits on the complaint.** A folder is a thing somebody else changes, and
+               copying a file into it is not something this tool does — so the report went on naming
+               a file that was by then sitting right there. The word describes what happens rather
+               than the bookkeeping it repairs. -->
+          <div class="media-recheck-row">
+            <button id="btn-media-recheck" type="button" hidden>Look again</button>
+          </div>
         </details>
       </aside>
 
@@ -298,15 +298,29 @@
           </div>
         </div>
 
-        <!-- `Previewing:` — ONE BUTTON PER MODE, NAMED THE WAY JORGE NAMES THEM (2026-09-05).
-             `Song with lyrics` / `Song with video and lyrics`, one active at a time, on `1 SHAPES`
-             AND on `2 OUTPUT`. It replaces the `Video frame empty` / `Video frame filled` chip,
-             which spoke in mechanism and which did nothing at all on OUTPUT — see
-             `renderPhotoOutlines`. **A VIEW, NEVER A SETTING**: it writes nothing and never reaches
-             visuals.json, the same relationship the dummy text has to real lyrics and the backdrop
-             has to the output. **Absent in Mode B**, where the song's own assignments already
-             decide which mode is live. -->
-        <div class="canvas-preview-toggles" id="canvas-preview-toggles" hidden></div>
+        <!-- **THE VIEW BAR: `SCOPE` AND `PREVIEWING`, TOGETHER, IN THE BLACK AREA** (Jorge,
+             2026-09-05). They are the two controls that decide what is on the canvas, and they used
+             to sit one in the sidebar and one above it. **Both are here now, where you are looking.**
+
+             **`PREVIEWING` IS A DROPDOWN, AND THIS SUPERSEDES THE TWO SIDE-BY-SIDE GREEN/GREY
+             BUTTONS** Jorge asked for earlier the same day. It is a reversal, not a misreading of
+             that note: two controls that answer *what am I looking at* should read as one kind of
+             thing, and a pair of buttons beside a dropdown does not. **Do not reinstate the
+             buttons.**
+
+             **A VIEW, NEVER A SETTING**: `PREVIEWING` writes nothing and never reaches
+             visuals.json. It is absent in a song scope, where the song's own assignments already
+             decide which mode is live and a control the song overrules would be one that lies. -->
+        <div class="canvas-view-bar" id="canvas-view-bar">
+          <div class="view-field" id="scope-row" hidden>
+            <label for="select-visual-setup-song">Scope</label>
+            <select id="select-visual-setup-song"></select>
+          </div>
+          <div class="view-field" id="canvas-preview-toggles" hidden>
+            <label for="select-preview-mode">Previewing</label>
+            <select id="select-preview-mode"></select>
+          </div>
+        </div>
 
         <div class="preview-box">
           <!-- THE PHOTOGRAPH, AND IT IS THE WHOLE OF `2 OUTPUT`. The capture is a picture of the

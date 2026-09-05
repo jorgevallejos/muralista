@@ -2451,6 +2451,98 @@ mode may be the surprise.
 1px border answered *which group is this row in*. The header recedes to the sidebar's own ground now
 and the rows keep the lighter one.
 
+## The v0.65.0 walk round (v1.21.0, 2026-09-05)
+
+### The seeding defect was real, and the round before named the wrong shape
+
+**`Video frame` was seeded into `ALWAYS` and belongs in `Song with video and lyrics`.** That is why
+`SONG VIDEO / Video frame` ghosted onto the wall while `Song with lyrics` was previewed: **an
+always-on shape is always on, and the room was right.**
+
+**The process lesson outlives the fix.** The previous round's kickoff recorded the report as
+*`Video lyrics` arrives in `ALWAYS`*. That claim was **disproved three ways — a fresh seed, the bytes
+written to the gig folder, the round trip back on reload — and the work stopped there**, correctly,
+because `Video lyrics` does land in the video mode. **The symptom Jorge actually saw was one row away
+and survived the disproof.** He was right that a shape was wrongly in `ALWAYS`; only the name was
+wrong, and the name is what got tested.
+
+**Disproving a literal claim is not the same as explaining a symptom, and a report names a symptom.
+Check the whole seeded set, not the shape the report happened to name.**
+
+**`ALWAYS` is empty in the seeded room now**, which is right rather than an omission: nothing in the
+designed default is meant to be up in both branches. A backdrop or a logo is a shape somebody adds,
+and **a shape somebody adds lands in `ALWAYS` by rule** (Jorge, 2026-09-05) — `previewModeId` is a
+view, never a setting, and **a view must not silently decide where a new shape is filed.**
+
+**The mode's condition still reads the video shape, which is now inside that mode**, and that needs
+no guard: a condition asks about a shape's **content**, never its visibility, and content is there
+to be read whether or not the shape is drawn.
+
+### Media stays inside the visuals folder, and the boundary rule was restated rather than excepted
+
+**Jorge had to copy his logo into the visuals folder to use it, and his logo does not live there:**
+*this is pushing me to a direction I didn't have in my folder structure.*
+
+**Both alternatives were put to him and both rejected** — *copy with consent into a folder the tools
+own inside the visuals folder*, which was Cowork's recommendation since it is the shape settled twice
+elsewhere; and *reference by absolute path anywhere*, no reorganisation at the price of media that
+can vanish between setup and the night. **Ruling: no copy, no reference. A file outside the visuals
+folder is refused, and moving it in is his to do.**
+
+**And it is not an exception at all — his reason is better than the framing it replaces.** *Visuals
+is used to read, not to write.* **The tools own a room where they write** — `song-performance/`,
+`setup/` — **and own nothing where they only read.** Cowork called the missing subfolder a hole in
+the boundary rule; **it is the rule stated properly**, and the three folders now follow one principle
+instead of two and an exception. **A later round reasoning toward a governed subfolder here has
+misread which side of the rule this folder is on.**
+
+**One consequence, ruled the same day: after a refusal the shape stays empty, with no file selected.**
+A refused pick leaves nothing behind, so **a shape pointing outside the visuals folder never exists
+at all** — the invalid state is unreachable rather than merely reported, which is the difference
+between a guard and a warning.
+
+**Why the host picks, hosted.** A cross-origin frame cannot open a file picker at all, and an
+`<input type=file>` hands over a bare name with no path — so this page could not tell a `logo.png`
+in the visuals folder from one on the Desktop. **That is a false ACCEPT, which is worse than a false
+reject.** So `pick-visual` crosses and a **name** comes back, which is the currency `?media=` already
+deals in; **no path crosses in either direction**, which is also why the refusal is shown on the
+host's side — naming the folder means naming a path. Standalone, `showOpenFilePicker` opens in the
+folder and `resolve()` answers containment directly.
+
+### A live output window stopped following, and it was the deduplication
+
+**Re-entering the gig showed the logo in the preview and not on the wall.** The window was painting
+the room as it was when the gig was created and responding to nothing; closing and reopening it
+fixed it.
+
+**Reproduced before it was fixed.** `seq` deduplicates double delivery — every message goes out on
+the channel and on the window handle — but **`outboundSeq` starts at 0 on every page load and the
+output window's high-water mark does not.** Leaving the visuals step destroys the frame; re-entering
+builds a new one numbering from 1 again, and **a window that had already seen `seq 40` discards every
+message the new page will ever send.** Reopening fixed it because a fresh window has no high-water
+mark, which is exactly the shape of the report.
+
+**So the stream is identified, not just the message.** A `seq` means *the Nth thing I said* and was
+being read as *the Nth thing anyone said*.
+
+**Jorge's own ask is built too — the output window closes when the visuals step is left** — because
+closing it is the workaround and the staleness was the defect. **It does not reverse *the window
+stays open when entering `2 OUTPUT`***: that is inside the flow, this is leaving it.
+
+### The rest
+
+- **`SCOPE` and `PREVIEWING` moved above the canvas and `PREVIEWING` became a dropdown.** They are
+  the two controls that decide what you are looking at. **This supersedes the two side-by-side
+  green/grey buttons** asked for the day before — **a reversal, not a misreading**, and the buttons
+  are not to be reinstated.
+- **A file copied into the visuals folder by hand was still reported missing.** The listing and the
+  resolved bytes were recomputed only when this tool did something, and **copying a file in is not
+  something this tool does.** `Look again` sits on the complaint, and the folder is re-read when the
+  window comes back.
+- **`BACKDROP` never collapsed, because the previous fix overshot.** Closing it only when another
+  fold opened was too little — the sidebar has one other fold and it is usually hidden. It closes
+  when a pointer lands in the side menu outside it, and survives a canvas click.
+
 ## Where the state actually lives
 
 The working venue mappings are not in git. **Since 2026-09-03 there are two homes, and which one is

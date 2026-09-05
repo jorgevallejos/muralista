@@ -1632,8 +1632,30 @@ const channel = new BroadcastChannel("mapper");
  */
 let outboundSeq = 0;
 
+/**
+ * **WHICH CONTROL PAGE IS SPEAKING, AND IT IS WHY A LIVE OUTPUT WINDOW WENT STALE** (Jorge,
+ * 2026-09-05: *re-entering the gig showed the logo in the preview and not on the wall — the window
+ * was painting the room as it was when the gig was created, and responding to nothing*).
+ *
+ * **The cause, reproduced before it was fixed.** `seq` deduplicates double delivery — every message
+ * goes out on the channel AND on the window handle, and the output applies each `seq` once. But
+ * **`outboundSeq` starts at 0 on every page load and the output window's high-water mark does
+ * not.** Leaving the visuals step destroys this frame; re-entering builds a new one, numbering from
+ * 1 again — and a window that had already seen seq 40 **discards every message the new page will
+ * ever send.** Closing and reopening the window fixed it because a fresh window has no high-water
+ * mark, which is exactly the shape of the report.
+ *
+ * **So the stream is identified, not just the message.** A `seq` means *the Nth thing I said*, and
+ * it was being read as *the Nth thing anyone said*. A new page is a new speaker and starts over,
+ * which the receiver can now see.
+ *
+ * Random rather than a timestamp: two frames can be built in the same millisecond, and the only
+ * property needed is that a new page does not collide with the one it replaced.
+ */
+const senderId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
 function postToOutput(message) {
-  const stamped = { ...message, seq: ++outboundSeq };
+  const stamped = { ...message, sender: senderId, seq: ++outboundSeq };
   channel.postMessage(stamped);
   if (outputWindow && !outputWindow.closed) {
     try {
@@ -1809,10 +1831,23 @@ function handleControlMessage(event) {
   }
 }
 
-/** Every `seq` is applied once. Both routes carry the same message, and both may arrive. */
+/**
+ * **Every `seq` is applied once, PER SPEAKER.** Both routes carry the same message and both may
+ * arrive, which is what the counter is for — but the counter belongs to one control page, and a
+ * page that reloads starts it over. **Treating it as global is what made a live window stop
+ * following** the moment the visuals step was left and re-entered: see `senderId`.
+ *
+ * A message with no `sender` is an older control window, and is deduplicated the way it always was.
+ */
 let lastAppliedSeq = 0;
+let lastSender = null;
 
 function handleOutputMessage(event) {
+  const from = event && event.data && event.data.sender;
+  if (from !== lastSender) {
+    lastSender = typeof from === "string" ? from : null;
+    lastAppliedSeq = 0;
+  }
   const stamp = event && event.data && event.data.seq;
   if (typeof stamp === "number") {
     if (stamp <= lastAppliedSeq) return;
@@ -3263,8 +3298,24 @@ const DEFAULT_FOOT = [
   [0, 1],
 ];
 
+/**
+ * **THE VIDEO FRAME IS IN `Song with video and lyrics`, NOT IN `ALWAYS`** (Jorge, 2026-09-05).
+ *
+ * **The ghost it caused:** `SONG VIDEO / Video frame` painted on the wall while `Song with lyrics`
+ * was previewed. **An always-on shape is always on** — the room was doing exactly what it was told,
+ * and the seed was what was wrong.
+ *
+ * **`ALWAYS` is therefore EMPTY in the seeded room**, and that is right rather than an omission:
+ * nothing in the designed default is meant to be up in both branches. A backdrop or a logo is a
+ * shape somebody adds, and a shape somebody adds lands in `ALWAYS` by rule.
+ *
+ * **The mode's condition still reads the video shape, which is now inside that mode.** That is not
+ * a cycle and needs no guard: **a condition asks about a shape's CONTENT, never its visibility** —
+ * *does this song have a file for it* — and content is there to be read whether or not the shape is
+ * drawn. The one-level rule that used to matter died with the per-shape condition.
+ */
 const DEFAULT_LAYOUT = [
-  { type: "song-video", name: "Video frame", key: "video" },
+  { type: "song-video", name: "Video frame", key: "video", when: "filled" },
   { type: "song-lyrics", name: "Video lyrics", corners: DEFAULT_FOOT, when: "filled" },
   { type: "song-lyrics", name: "Song lyrics", when: "empty" },
 ];
@@ -3709,11 +3760,27 @@ function isEmbedded() {
 let outputWindow = null;
 
 /**
- * **NOTHING CLOSES THE OUTPUT WINDOW ANY MORE** (Jorge, 2026-09-05). `closeOutputWindow` existed
- * for one caller — arriving at `2 OUTPUT` — and that ruling is reversed, so the function went with
- * it rather than being left unused. The handle is still held, because re-opening finds the named
- * window by reference rather than making a second one.
+ * **THE OUTPUT WINDOW CLOSES WHEN THE VISUALS STEP IS LEFT** (Jorge, 2026-09-05), and only then.
+ *
+ * **This does not reverse *the window stays open when entering `2 OUTPUT`*** from earlier the same
+ * day. That is inside the flow, where the window is a second view of work in progress and Jorge
+ * wants it — *I'd still like to see it, it reassures me.* **This is leaving the flow**, where the
+ * window it belonged to is gone and what is left is a wall painting a room nobody is editing.
+ *
+ * **It is the workaround half of the staleness report, and the defect half is fixed too** — see
+ * `senderId`. Shipping only this would leave a window that silently stops following whenever the
+ * control page reloads for any other reason, which is the kind that surfaces on a night.
  */
+function closeOutputWindow() {
+  if (outputWindow && !outputWindow.closed) {
+    try {
+      outputWindow.close();
+    } catch (err) {
+      console.warn("Muralista: could not close the output window.", err);
+    }
+  }
+  outputWindow = null;
+}
 
 /**
  * **THE ONE THING THIS TOOL IS TOLD BY ITS EMBEDDER, AND IT IS AN INSTRUCTION, NOT DATA.**
@@ -3735,7 +3802,19 @@ let outputWindow = null;
 function handleEmbedderMessage(event) {
   if (!isEmbedded() || event.source !== window.parent) return;
   const data = event.data;
-  if (!data || data.muralista !== "save") return;
+  if (!data) return;
+  /**
+   * **THE HOST'S ANSWER TO `pick-visual`.** One name, from inside the visuals folder, or nothing.
+   *
+   * **It does not widen what may cross.** A name is the currency `?media=` already deals in, and it
+   * is the same kind of value this tool stores in a mapping and hands to a renderer. **No path, no
+   * folder, no gig.** The request that produced it says only *a video* or *an image*.
+   */
+  if (data.muralista === "pick-visual-result") {
+    applyPickedVisual(data.name);
+    return;
+  }
+  if (data.muralista !== "save") return;
   void (async () => {
     // **A refusal is reported, never reported as a success.** `flowSaveToGig` returns early when
     // there is nowhere to write, and an unchanged `visualsWriteError` would read as *saved*.
@@ -3810,8 +3889,12 @@ function renderFlowSteps() {
  * **THE OUTPUT WINDOW STAYS OPEN** (Jorge, 2026-09-05). **This reverses P6d of 04/09**, which
  * closed it on arrival on the argument that *the wall is about to be photographed and a live output
  * window is a second answer to the same question*. His answer: **I'd still like to see it, it
- * reassures me.** The old rule is not left standing in a comment as though it still held — it is
- * reversed, and `closeOutputWindow` went with it.
+ * reassures me.** The old rule is not left standing in a comment as though it still held.
+ *
+ * **`closeOutputWindow` came back on 2026-09-05 for a different moment**, and the two do not
+ * conflict: **this is inside the flow and that is leaving it.** Arriving here keeps the window,
+ * because it is a second view of work in progress; leaving the visuals step closes it, because the
+ * page driving it is about to stop existing.
  *
  * **Capture only when a calibrated camera is live.** At the venue, arriving takes the picture. At
  * home, against a saved `stage.png` with no camera, there is nothing to take, so the saved one is
@@ -3927,9 +4010,13 @@ function renderMediaFolderControls() {
     document.getElementById("media-folder-title").textContent = "Missing files";
     document.getElementById("media-folder-summary").textContent =
       `${mediaResolveFailures.length} name${mediaResolveFailures.length === 1 ? "" : "s"} did not resolve`;
+    // **The folder QUESTION is hidden and the report is not** — `.backdrop-controls` is the
+    // question's own row, and `Look again` deliberately sits outside it: hosted there is no folder
+    // to choose and every reason to re-read the one already mounted.
     section.querySelectorAll(".backdrop-controls").forEach((el) => { el.hidden = true; });
     document.getElementById("media-folder-status").hidden = true;
     renderMediaResolveFailures();
+    renderRecheckButton();
     return;
   }
   document.getElementById("media-folder-title").textContent = "Media folder";
@@ -3961,6 +4048,25 @@ function renderMediaFolderControls() {
   }
 
   renderMediaResolveFailures();
+  renderRecheckButton();
+}
+
+/**
+ * **RE-READ THE FOLDER, BECAUSE A FOLDER IS A THING SOMEBODY ELSE CHANGES** (Jorge, 2026-09-05:
+ * *a file added to the visuals folder by hand is still reported missing*).
+ *
+ * **The listing and the resolved bytes were only ever recomputed when THIS tool did something** —
+ * a folder picked, a gig loaded, a name typed. **Copying a file in is not something this tool does**,
+ * so the report went on naming a file that was by then sitting right there.
+ *
+ * Both halves are re-read, because they answer different questions and both were stale: the listing
+ * is what the picker offers, and the resolution is what the report complains about.
+ */
+async function recheckVisualsFolder() {
+  await refreshVisualsFolderNames();
+  await syncResolvedMedia();
+  broadcastMedia();
+  renderControl();
 }
 
 /** The names that did not resolve, said where the person configuring is, not at the projector. */
@@ -3977,6 +4083,19 @@ function renderMediaResolveFailures() {
       ? "Not found in the visuals folder — these shapes will paint a failure note on the wall:\n"
       : "Not found in this folder, falling back to the served directory:\n") +
     mediaResolveFailures.map((f) => `• ${f.src} (${f.reason})`).join("\n");
+}
+
+/**
+ * **`Look again`, ON THE COMPLAINT ITSELF.** The fold is only on screen when something is missing,
+ * so the control that clears it sits where the complaint is rather than somewhere general.
+ *
+ * **The word is `Look again` and not `Re-check`**: what happens is a re-read of the folder, and the
+ * person has just put a file in it. `Re-check` describes the machine's bookkeeping; this describes
+ * what it does.
+ */
+function renderRecheckButton() {
+  const btn = document.getElementById("btn-media-recheck");
+  btn.hidden = mediaResolveFailures.length === 0;
 }
 
 
@@ -4738,52 +4857,50 @@ function shapeShowsInPreview(shape) {
 }
 
 function renderPreviewToggles() {
-  const bar = document.getElementById("canvas-preview-toggles");
-  // **Absent in Mode B**, where the song's own assignments already decide which mode is live.
-  // Offering a choice that the song then overrules is a control that lies.
+  const field = document.getElementById("canvas-preview-toggles");
+  const select = document.getElementById("select-preview-mode");
+  // **Absent in a song scope**, where the song's own assignments already decide which mode is live.
+  // Offering a choice the song then overrules is a control that lies.
   const modes = previewSongId() === null ? projectModes() : [];
-  bar.hidden = modes.length === 0;
-  bar.innerHTML = "";
+  field.hidden = modes.length === 0;
   if (modes.length === 0) return;
 
-  const label = document.createElement("span");
-  label.className = "preview-toggles-label";
-  label.textContent = "Previewing:";
-  bar.appendChild(label);
-
   const active = activeModeIdInPreview();
+  select.innerHTML = "";
   modes.forEach((mode) => {
-    const on = mode.id === active;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "preview-toggle";
-    btn.dataset.mode = mode.id;
-    btn.setAttribute("aria-pressed", String(on));
-    btn.textContent = mode.name;
-    btn.addEventListener("click", () => {
-      previewModeId = mode.id;
-      // **CHANGING MODE DESELECTS A SHAPE THE NEW MODE DOES NOT CONTAIN** (Jorge, 2026-09-05).
-      // Switching left the old mode's shape selected, **with its handles still drawn on a canvas
-      // that no longer draws the shape** — a grab point over nothing, which is the worst kind of
-      // ghost because it responds to being dragged.
-      //
-      // **A no-mode shape survives the switch**, correctly: it is in every mode, so selecting it
-      // and changing mode is not leaving it behind.
-      const held = findShape(selectedShapeId);
-      if (held && !shapeShowsInMode(held, mode.id)) {
-        selectedShapeId = null;
-        openShapeId = null;
-        clearShapeSubselection();
-      }
-      // **AND THE WALL FOLLOWS** (item 4, 2026-09-04). `renderControl` redraws this window and
-      // nothing else; without the broadcast the selector moved the canvas while the output window
-      // kept whichever mode it was last told about, which is exactly the disagreement that item is
-      // about. It is NOT `commitProjectChange`: a view is not a change to the file.
-      broadcastState();
-      renderControl();
-    });
-    bar.appendChild(btn);
+    const opt = document.createElement("option");
+    opt.value = mode.id;
+    opt.textContent = mode.name;
+    select.appendChild(opt);
   });
+  select.value = active ?? modes[0].id;
+}
+
+/**
+ * **CHANGING WHAT IS PREVIEWED, AND THE WALL FOLLOWS.**
+ *
+ * `renderControl` redraws this window and nothing else; without the broadcast the selector moved
+ * the canvas while the output window kept whichever mode it was last told about, which is exactly
+ * the disagreement item 4 of 04/09 was about. **It is NOT `commitProjectChange`**: a view is not a
+ * change to the file.
+ */
+function setPreviewMode(modeId) {
+  previewModeId = modeId;
+  // **CHANGING MODE DESELECTS A SHAPE THE NEW MODE DOES NOT CONTAIN** (Jorge, 2026-09-05).
+  // Switching left the old mode's shape selected, **with its handles still drawn on a canvas that
+  // no longer draws the shape** — a grab point over nothing, which is the worst kind of ghost
+  // because it responds to being dragged.
+  //
+  // **A no-mode shape survives the switch**, correctly: it is in every mode, so selecting it and
+  // changing mode is not leaving it behind.
+  const held = findShape(selectedShapeId);
+  if (held && !shapeShowsInMode(held, modeId)) {
+    selectedShapeId = null;
+    openShapeId = null;
+    clearShapeSubselection();
+  }
+  broadcastState();
+  renderControl();
 }
 
 /**
@@ -6231,37 +6348,10 @@ function buildMediaSourceControls(container, shape, layer) {
       ? `${folderLabel}/`
       : "mapper/media/";
 
-  // **The picker, when the folder can say what it holds.** Offered above the field rather than
-  // instead of it: the field is what a mapping stores and what a name typed by hand goes into.
-  const names = [...visualsFolderNames];
-  if (names.length > 0) {
-    const pickRow = document.createElement("div");
-    pickRow.className = "layer-field";
-    const pickLabel = document.createElement("label");
-    pickLabel.textContent = `Choose from ${where}`;
-    pickLabel.setAttribute("for", "layer-src-pick");
-    const pick = document.createElement("select");
-    pick.id = "layer-src-pick";
-    const none = document.createElement("option");
-    none.value = "";
-    none.textContent = layer.src ? "— keep what is typed below —" : "— nothing chosen —";
-    pick.appendChild(none);
-    // A name the folder no longer holds is still offered and marked, for the same reason the song
-    // asset row does it: dropping it would silently unassign a file because a drive was not in.
-    if (layer.src && !names.includes(layer.src)) names.unshift(layer.src);
-    names.forEach((name) => {
-      const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = visualsFolderNames.includes(name) ? name : `${name} — not in the folder`;
-      pick.appendChild(opt);
-    });
-    pick.value = layer.src && names.includes(layer.src) ? layer.src : "";
-    pick.addEventListener("change", () => {
-      if (pick.value) setLayerField(shape.id, "src", pick.value);
-    });
-    pickRow.append(pickLabel, pick);
-    container.appendChild(pickRow);
-  }
+  // **THE `Choose from the visuals folder` DROPDOWN CAME OUT** (Jorge, 2026-09-05). It shipped the
+  // day before as the answer to a name typed with the wrong prefix, and one walk retired it: **the
+  // picker is the only control**, and a dropdown beside it was a second way to say the same thing
+  // that grows unusable with the folder.
 
   const srcRow = document.createElement("div");
   srcRow.className = "layer-field";
@@ -6293,26 +6383,91 @@ function buildMediaSourceControls(container, shape, layer) {
   fileBtn.type = "button";
   fileBtn.id = "layer-pick-file";
   fileBtn.textContent = "Pick file…";
-  const fileInput = document.createElement("input");
-  fileInput.type = "file";
-  fileInput.hidden = true;
-  fileInput.accept = layer.type === "video" ? "video/*" : "image/*,.webm";
-  fileBtn.addEventListener("click", () => fileInput.click());
-  fileInput.addEventListener("change", () => {
-    const file = fileInput.files && fileInput.files[0];
-    if (file) {
-      // An <input type=file> hands over a name and no path, so this has always been a convenience
-      // that fills in a guess. **The bare name is the right guess everywhere** (2026-09-05):
-      // prefixing `media/` sends the lookup into a subfolder that is only there in the one
-      // arrangement this field was first written for.
-      const guess = file.name;
-      srcInput.value = guess;
-      setLayerField(shape.id, "src", guess);
-    }
-    fileInput.value = "";
-  });
-  fileRow.append(fileBtn, fileInput);
+  fileBtn.addEventListener("click", () => void pickVisualFile(shape, layer));
+  fileRow.append(fileBtn);
   container.appendChild(fileRow);
+}
+
+/**
+ * **MEDIA STAYS INSIDE THE VISUALS FOLDER. A FILE CHOSEN OUTSIDE IT IS REFUSED** (Jorge,
+ * 2026-09-05, after both alternatives were put to him and rejected: *copy it in with consent*, and
+ * *reference it by absolute path anywhere*).
+ *
+ * **And it is not an exception to the boundary rule — it is the rule stated properly.** In Jorge's
+ * words: *visuals is used to read, not to write.* **The tools own a room where they write** —
+ * `song-performance/`, `setup/` — **and own nothing where they only read.** The visuals folder is
+ * only ever read from, so there is nothing to carve out and the folder is taken as it is. **A later
+ * round reasoning toward a governed subfolder here has misread which side of the rule it is on.**
+ *
+ * **After a refusal the shape stays empty, with no file selected**, so a shape pointing outside the
+ * visuals folder never exists at all. **The invalid state is unreachable rather than reported**,
+ * which is the difference between a guard and a warning.
+ *
+ * ## Two pickers, because there are two ways this page runs, and only one can answer containment
+ *
+ * **Hosted, the host picks.** A cross-origin frame cannot open a file picker at all — Chromium
+ * refuses outright — and **an `<input type=file>` hands over a bare name with no path**, so this
+ * page could not tell a `logo.png` in the visuals folder from one on the Desktop. **That is a false
+ * ACCEPT, which is worse than a false reject**, and it is why the request crosses the seam instead
+ * of being guessed at here. The host owns the folder, opens its dialog there, checks containment
+ * against a path this tool must never learn, and hands back **a name** — the same currency `?media=`
+ * already deals in. The refusal is the host's to show, for the same reason: naming the folder means
+ * naming a path.
+ *
+ * **Standalone, the directory handle answers it.** `showOpenFilePicker` opens in the folder and
+ * `resolve()` returns the relative path when the file is inside it and null when it is not, which
+ * is the containment question asked directly rather than inferred.
+ */
+async function pickVisualFile(shape, layer) {
+  const accept = layer.type === "video" ? "video" : "image";
+  if (isEmbedded()) {
+    window.parent.postMessage({ muralista: "pick-visual", accept }, "*");
+    return;
+  }
+  if (typeof window.showOpenFilePicker !== "function" || !mediaFolderHandle) {
+    window.alert(
+      "Choose the visuals folder first — a shape can only hold a file that lives inside it."
+    );
+    return;
+  }
+  let handle;
+  try {
+    [handle] = await window.showOpenFilePicker({
+      startIn: mediaFolderHandle,
+      multiple: false,
+      types: [
+        accept === "video"
+          ? { description: "Video", accept: { "video/*": [".mp4", ".mov", ".webm", ".m4v", ".mkv"] } }
+          : { description: "Image", accept: { "image/*": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif"] } },
+      ],
+    });
+  } catch {
+    return; // dismissed, which is not a refusal and says nothing
+  }
+  // **The containment question, asked rather than inferred.** `resolve` returns the path segments
+  // from the folder down to the file, or null when the file is not under it at all.
+  const segments = await mediaFolderHandle.resolve(handle);
+  if (segments === null) {
+    window.alert(
+      `That file is outside ${mediaFolderLabel()}.\n\n` +
+        "A shape can only hold a file from the visuals folder. Move it in there and pick it again."
+    );
+    return;
+  }
+  setLayerField(shape.id, "src", segments.join("/"));
+}
+
+/**
+ * The host's answer to `pick-visual`: a name from inside the visuals folder, or nothing at all.
+ *
+ * **Nothing at all covers both a dismissed dialog and a refused file**, and this side does not need
+ * to tell them apart: **the shape stays empty either way**, and the host has already said why when
+ * there was something to say.
+ */
+function applyPickedVisual(name) {
+  const shape = findShape(openShapeId) || findShape(selectedShapeId);
+  if (!shape || typeof name !== "string" || !name) return;
+  setLayerField(shape.id, "src", name);
 }
 
 // The fill layer's own controls: a colour, and the margin that grows the shape
@@ -6858,7 +7013,36 @@ function importProjectFromFile(file) {
  * Focus going to the canvas is the fold being used, not abandoned.
  */
 function wireSidebarFolds() {
-  const folds = [...document.querySelectorAll("aside .sidebar-fold")];
+  const sidebar = document.getElementById("shapes-sidebar");
+  const folds = [...sidebar.querySelectorAll(".sidebar-fold")];
+
+  /**
+   * **THE FIX OVERSHOT AND THIS IS THE CORRECTION** (Jorge, 2026-09-05: *`BACKDROP` now never
+   * collapses*).
+   *
+   * The 04/09 rule closed a fold on `focusout`, which is what a canvas click produces — so it
+   * collapsed at the moment its camera calibration was being used. Closing it only when another
+   * FOLD opens fixed that and went too far: **the sidebar has one other fold and it is usually
+   * hidden**, so in practice nothing closed it at all.
+   *
+   * **The whole ask, in his words: it survives a canvas click, a recalibration and dragging the
+   * screen's points, and it closes when he moves on.** *Moving on* is touching something else in
+   * the side menu — a shape row, `+ Add shape`, the scope, the other fold. So the trigger is a
+   * pointer landing in the sidebar OUTSIDE the fold, which is exactly that and nothing more.
+   *
+   * **`pointerdown` on the sidebar, not `focusout` anywhere**: the difference between the two is
+   * the whole bug. Focus leaves for the canvas; a pointer in the sidebar does not.
+   */
+  sidebar.addEventListener("pointerdown", (e) => {
+    folds.forEach((fold) => {
+      if (!fold.open) return;
+      if (fold.contains(e.target)) return;
+      fold.open = false;
+    });
+  });
+
+  // And opening one still closes the others: two folds open in a narrow column is the thing a fold
+  // is for avoiding.
   folds.forEach((fold) => {
     fold.addEventListener("toggle", () => {
       if (!fold.open) return;
@@ -6872,6 +7056,39 @@ function wireSidebarFolds() {
 function wireControlEvents() {
   wireSidebarFolds();
   document.getElementById("btn-add-shape").addEventListener("click", addShape);
+  document
+    .getElementById("select-preview-mode")
+    .addEventListener("change", (e) => setPreviewMode(e.target.value));
+  document
+    .getElementById("btn-media-recheck")
+    .addEventListener("click", () => void recheckVisualsFolder());
+
+  /**
+   * **AND IT RE-READS ITSELF WHEN THE WINDOW COMES BACK.** Copying a file in means leaving this
+   * window for Finder and returning, so returning is the moment the answer may have changed.
+   *
+   * **The button is not made redundant by this and is not a fallback for it**: framed inside
+   * Pregonero this page may never see a `focus` of its own, and somebody who has just read a
+   * complaint wants to act on it rather than discover that looking away and back would have fixed
+   * it. Two triggers, one for each way the fact arrives.
+   */
+  window.addEventListener("focus", () => {
+    if (mediaFolderState === "granted" || isHostedMedia()) void recheckVisualsFolder();
+  });
+
+  /**
+   * **LEAVING TAKES THE OUTPUT WINDOW WITH IT** (Jorge, 2026-09-05).
+   *
+   * `pagehide` is what leaving the visuals step looks like from in here: the embedder tears this
+   * frame down, and a window opened by a document that no longer exists is a wall nobody is
+   * driving. **`unload` is not used** — it is unreliable under back/forward caching and is the
+   * event browsers are removing; `pagehide` fires in both cases and is the one with a future.
+   *
+   * **A reload closes it too, and that is correct rather than collateral.** The window that comes
+   * back is driven by a new page, and the person reopens it in one press from the same button they
+   * opened it with.
+   */
+  window.addEventListener("pagehide", closeOutputWindow);
 
   document.getElementById("btn-open-output").addEventListener("click", () => {
     // Hand the output window THIS window's build token (see the bootstrap in

@@ -1635,24 +1635,10 @@ body.role-output {
   color: var(--text);
 }
 
-/* --- Scope: the mode switch, one line, at the top (item 1) --- */
-.scope-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-}
+/* **SCOPE'S SIDEBAR RULES WENT WITH IT** (2026-09-05). It is a `.view-field` in the bar above the
+   canvas now, beside `PREVIEWING`. Its `#scope-row` id survives because that is what `renderScope`
+   shows and hides, and an id is an address. */
 
-.scope-row label {
-  font-family: var(--font-label);
-  font-size: 11px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.scope-row select { flex: 1; min-width: 0; }
 
 /* --- The Shapes rows (items 11, 15, 18) --- */
 .surface-row-head {
@@ -1741,33 +1727,42 @@ body.role-output {
   padding: 3px 8px;
 }
 
-/* --- The mode selector: a view, never a setting --- */
-.canvas-preview-toggles {
+/* --- THE VIEW BAR: the two controls that decide what is on the canvas (2026-09-05) --- */
+
+/* **`SCOPE` and `PREVIEWING`, together, in the black area.** They used to sit one in the sidebar
+   and one above it, which made them read as two different kinds of thing when they are one: the
+   answer to *what am I looking at*. Same width as the canvas below, so the bar reads as belonging
+   to the picture rather than floating over it. */
+.canvas-view-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 20px;
   flex-wrap: wrap;
   width: 100%;
   max-width: 1100px;
   margin: 0 auto 8px;
 }
 
-.preview-toggles-label {
+.view-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The label is the quiet half: it names the question, and the answer is the loud one. */
+.view-field > label {
   font-family: var(--font-label);
   font-size: 11px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-dim);
+  flex: none;
 }
 
-/* **Active in green, inactive in grey** (Jorge, 2026-09-05). Green in this palette means
-   *live on the wall right now*, and that is exactly what the selected mode is: pressing it
-   broadcasts, so the output window is showing this branch while the button is lit. It is the one
-   place a view control may wear the liveness colour without lying. */
-.preview-toggle[aria-pressed="true"] {
-  color: var(--state-live);
-  border-color: var(--state-live-border);
-  background: var(--state-live-bg);
+.view-field > select {
+  min-width: 0;
+  max-width: 22em;
 }
 
 /* --- Reading the room (items 9, 12, 13, 14) --- */
@@ -1877,4 +1872,12 @@ body.role-output {
   fill: none;
   stroke: var(--state-live);
   stroke-width: 3;
+}
+
+/* `Look again` sits under the list of names that did not resolve, in the fold that only appears
+   when there are any. Its own row rather than a `.backdrop-controls` one, because that class is the
+   folder QUESTION's and the question is hidden hosted while this is not. */
+.media-recheck-row {
+  display: flex;
+  margin-top: 8px;
 }

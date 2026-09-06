@@ -2549,7 +2549,7 @@ function clearStoredGigFolderHandle() {
 // song file it points at.
 //
 // A song with no title falls back to its id, because the example gig file in
-// docs/gig-file.md carries ids without titles while the prose that governs it
+// docs/formats.md carries ids without titles while the prose that governs it
 // says titles are what Muralista reads. Showing the id is the honest reading of
 // a file that has no title in it, and it still picks the right song by name.
 async function readGigFile(handle) {
@@ -3010,6 +3010,12 @@ async function loadStageCaptureBackdrop() {
 // multi-megabyte dataURL), and anything at all out of gig.json. The gig's own
 // id is written once, as a label, so a visuals.json found on its own says which
 // gig it belongs to.
+//
+// THIS DOCUMENT IS THE RP JSON - Room Performance (named 2026-09-06). The
+// FILENAME IS NOT CHANGING: a format name and a filename are different things,
+// and `visuals.json` is load-bearing in code that compares strings. The
+// canonical description of all three formats is `docs/formats.md` in the
+// tramoya-integration vault.
 function visualsDocument() {
   return {
     visualsVersion: VISUALS_VERSION,

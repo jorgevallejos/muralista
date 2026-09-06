@@ -1576,7 +1576,7 @@ Three angles, none decided:
 `projects/tramoya-integration/project-context.md` — "Song-aware shape types, and two levels of visual
 setup", "The `song-intro` template", "The lookup returns a set", and "Muralista's boundary does not
 move, and dummy text is why" — with the file shapes in
-`projects/tramoya-integration/docs/gig-file.md`. What follows is only what building it decided, which
+`projects/tramoya-integration/docs/formats.md`. What follows is only what building it decided, which
 is the part those documents left open.
 
 ### `TEXT_ROLES` retires into the type, and the migration is a rename
@@ -1601,7 +1601,7 @@ is below Muralista's line**, so they are placeholders that read as placeholders.
 placeholder is deliberately long: it is the fragile part of the template and the proportions are most
 likely to be wrong about it.
 
-`gig.json`'s example in `gig-file.md` carries song ids with no titles while the prose governing it
+`gig.json`'s example in `docs/formats.md` carries song ids with no titles while the prose governing it
 says titles are what Muralista reads. `readGigFile` takes a title if there is one and falls back to
 the id, which is the honest reading of a file that has neither.
 
@@ -1690,7 +1690,7 @@ of a real room**, and the QR is the second: it has to scan from where people act
 ## The warp as shared code (v1.4.0, 2026-08-25)
 
 **The contract is not in this repo, and that is deliberate.** `projects/tramoya-integration/docs/warp-contract.md`
-owns it, on the same principle as `gig-file.md`: how two tools agree is a fact about two tools at
+owns it, on the same principle as `docs/formats.md`: how two tools agree is a fact about two tools at
 once, and it belongs where both are in view. This repo owns the **code**, because ownership of the
 warp belongs where it can be proved right — Muralista has the camera and closes the loop against a
 real wall; Pregonero cannot tell you whether a warp is correct, because it cannot see the wall.

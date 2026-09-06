@@ -62,3 +62,13 @@ jobs:
       # deleted rather than fixed, the honest build is two modes and no list.
       - name: Modes test
         run: node --test mapper/modes.test.mjs
+
+      # What a song may put in a shape, and it is a cross-repo contract:
+      # Pregonero's `visualsFile.assetNameIsRelative` is the same function, and
+      # a value one side writes and the other refuses is the mismatch this
+      # workflow exists for. It is here because it has already happened - the
+      # listing learned to recurse on 2026-09-04 and this refusal did not
+      # follow, so every video assignment made from a per-song directory was
+      # dropped on the way to disk with nothing saying so.
+      - name: Asset name test
+        run: node --test mapper/assetName.test.mjs

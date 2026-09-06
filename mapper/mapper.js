@@ -729,11 +729,12 @@ function sanitizeSongAssets(value) {
     const map = {};
     Object.keys(entry).forEach((shapeId) => {
       const name = entry[shapeId];
-      // A name, so anything carrying a separator is refused rather than repaired: a path here would
-      // be a fact about one machine written into a file built to travel.
+      // **A relative path inside the folder**, refused rather than repaired when it is not one.
+      // This used to refuse any separator at all, which silently dropped every assignment made
+      // from the recursive listing — see `assetName.js`.
       if (!shapeId || typeof name !== "string") return;
       const trimmed = name.trim();
-      if (!trimmed || trimmed.includes("/") || trimmed.includes("\\")) return;
+      if (!assetNameIsRelative(trimmed)) return;
       map[shapeId] = trimmed;
     });
     if (Object.keys(map).length) out[songId] = map;
@@ -3177,6 +3178,7 @@ import {
 // The stage capture's maths, in a file of its own so `node --test` can reach
 // it without a DOM - the same reason `warp.js` is a file of its own.
 import { stageSampler } from "./stageCapture.js";
+import { assetNameIsRelative } from "./assetName.js";
 // NAMED MODES. The resolution rule is the half of this model that has to be
 // PROVED rather than looked at - see `modes.js`, and `modes.test.mjs` beside it
 // for the three-mode room that keeps the list from being a claim.

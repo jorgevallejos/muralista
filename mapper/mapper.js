@@ -2321,7 +2321,21 @@ async function initMediaFolder() {
 const GIG_FOLDER_KEY = "gigFolder";
 const GIG_FILE_NAME = "gig.json";
 const VISUALS_FILE_NAME = "visuals.json";
-const VISUALS_VERSION = 1;
+// **THE RP JSON SCHEMA THIS TOOL WRITES, AND `2` SINCE 2026-09-06.**
+//
+// The bump is a correction rather than a change. Named modes replaced per-shape `visibleWhen` on
+// 05/09 — the file's central concept — and this number did not move with it. So a build with the
+// old reader would take a new room as version 1 and MISREAD it, and the refusal below could not
+// fire at all: nothing that has ever existed declared anything but 1.
+//
+// **Nothing is migrated, and after this bump nothing CAN be.** The reader below refuses a version
+// it does not know, with the same check Pregonero uses, so this tool will not open a version-1
+// file. There is no re-save path — an old room is re-mapped at the wall or it is discarded.
+//
+// The constant lives in four places and they move together: here (the writer), Pregonero's
+// `visualsFile.ts` (the reader), Tramoya's copy of that file, and Tramoya's vendored copy of THIS
+// file. `visualsDocument()` is the only place below that reads it.
+const VISUALS_VERSION = 2;
 
 // --- HOSTED: the gig arrives as an endpoint instead of as a folder. ---
 //
